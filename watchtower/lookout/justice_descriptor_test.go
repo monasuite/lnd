@@ -14,14 +14,14 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcutil/txsort"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/watchtower/blob"
-	"github.com/wakiyamap/lnd/watchtower/lookout"
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
-	"github.com/wakiyamap/lnd/watchtower/wtmock"
-	"github.com/wakiyamap/lnd/watchtower/wtpolicy"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/watchtower/blob"
+	"github.com/monasuite/lnd/watchtower/lookout"
+	"github.com/monasuite/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/watchtower/wtmock"
+	"github.com/monasuite/lnd/watchtower/wtpolicy"
 )
 
 const csvDelay uint32 = 144

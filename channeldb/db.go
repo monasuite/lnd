@@ -13,7 +13,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/coreos/bbolt"
 	"github.com/go-errors/errors"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 const (

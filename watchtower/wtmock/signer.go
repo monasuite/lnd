@@ -6,8 +6,8 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/keychain"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/keychain"
 )
 
 // MockSigner is an input.Signer that allows one to add arbitrary private keys

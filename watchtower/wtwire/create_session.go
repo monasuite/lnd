@@ -3,8 +3,8 @@ package wtwire
 import (
 	"io"
 
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/watchtower/blob"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/watchtower/blob"
 )
 
 // CreateSession is sent from a client to tower when to negotiate a session, which

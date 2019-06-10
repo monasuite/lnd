@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/wakiyamap/lnd/buffer"
+	"github.com/monasuite/lnd/buffer"
 )
 
 // TestRecycleSlice asserts that RecycleSlice always zeros a byte slice.

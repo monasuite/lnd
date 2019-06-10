@@ -3,7 +3,7 @@ package sweep
 import (
 	"sync"
 
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 // mockFeeEstimator implements a mock fee estimator. It closely resembles

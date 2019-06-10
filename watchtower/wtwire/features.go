@@ -1,6 +1,6 @@
 package wtwire
 
-import "github.com/wakiyamap/lnd/lnwire"
+import "github.com/monasuite/lnd/lnwire"
 
 // FeatureNames holds a mapping from each feature bit understood by this
 // implementation to its common name.

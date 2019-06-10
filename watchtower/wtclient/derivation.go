@@ -2,7 +2,7 @@ package wtclient
 
 import (
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/wakiyamap/lnd/keychain"
+	"github.com/monasuite/lnd/keychain"
 )
 
 // DeriveSessionKey accepts an session key index for an existing session and

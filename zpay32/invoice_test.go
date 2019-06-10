@@ -16,9 +16,9 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/lnwire"
 
-	monacoinCfg "github.com/wakiyamap/monad/chaincfg"
+	monacoinCfg "github.com/monasuite/monad/chaincfg"
 )
 
 var (

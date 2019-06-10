@@ -3,8 +3,8 @@ package wtmock
 import (
 	"sync"
 
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/watchtower/wtdb"
 )
 
 // TowerDB is a mock, in-memory implementation of a watchtower.DB.

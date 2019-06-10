@@ -6,8 +6,8 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/chanbackup"
-	"github.com/wakiyamap/lnd/channelnotifier"
+	"github.com/monasuite/lnd/chanbackup"
+	"github.com/monasuite/lnd/channelnotifier"
 )
 
 // addrSource is an interface that allow us to get the addresses for a target

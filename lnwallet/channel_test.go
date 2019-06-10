@@ -16,11 +16,11 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/lntypes"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lntypes"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // createHTLC is a utility function for generating an HTLC with a given

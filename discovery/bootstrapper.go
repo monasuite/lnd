@@ -16,9 +16,9 @@ import (
 	"github.com/btcsuite/btcutil/bech32"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/miekg/dns"
-	"github.com/wakiyamap/lnd/autopilot"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/tor"
+	"github.com/monasuite/lnd/autopilot"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/tor"
 )
 
 func init() {

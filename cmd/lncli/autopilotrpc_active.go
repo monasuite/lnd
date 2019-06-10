@@ -6,7 +6,7 @@ import (
 	"context"
 
 	"github.com/urfave/cli"
-	"github.com/wakiyamap/lnd/lnrpc/autopilotrpc"
+	"github.com/monasuite/lnd/lnrpc/autopilotrpc"
 )
 
 func getAutopilotClient(ctx *cli.Context) (autopilotrpc.AutopilotClient, func()) {

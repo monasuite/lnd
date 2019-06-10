@@ -10,12 +10,12 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcutil"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/watchtower/blob"
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
-	"github.com/wakiyamap/lnd/watchtower/wtmock"
-	"github.com/wakiyamap/lnd/watchtower/wtserver"
-	"github.com/wakiyamap/lnd/watchtower/wtwire"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/watchtower/blob"
+	"github.com/monasuite/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/watchtower/wtmock"
+	"github.com/monasuite/lnd/watchtower/wtserver"
+	"github.com/monasuite/lnd/watchtower/wtwire"
 )
 
 var (

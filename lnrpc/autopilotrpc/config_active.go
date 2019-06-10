@@ -3,7 +3,7 @@
 package autopilotrpc
 
 import (
-	"github.com/wakiyamap/lnd/autopilot"
+	"github.com/monasuite/lnd/autopilot"
 )
 
 // Config is the primary configuration struct for the autopilot RPC server. It

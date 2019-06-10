@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // ChannelUpdateModifier is a closure that makes in-place modifications to an

@@ -3,7 +3,7 @@ package pool
 import (
 	"time"
 
-	"github.com/wakiyamap/lnd/buffer"
+	"github.com/monasuite/lnd/buffer"
 )
 
 // Read is a worker pool specifically designed for sharing access to buffer.Read

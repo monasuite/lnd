@@ -20,8 +20,8 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/wakiyamap/lnd/lnrpc"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // DefaultCSV is the CSV delay (remotedelay) we will start our test nodes with.

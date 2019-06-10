@@ -6,12 +6,12 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/wakiyamap/lnd/chanbackup"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/contractcourt"
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/shachain"
+	"github.com/monasuite/lnd/chanbackup"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/contractcourt"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/shachain"
 )
 
 // chanDBRestorer is an implementation of the chanbackup.ChannelRestorer

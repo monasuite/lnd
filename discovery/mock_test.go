@@ -7,9 +7,9 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/lnpeer"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnpeer"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // mockPeer implements the lnpeer.Peer interface and is used to test the

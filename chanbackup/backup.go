@@ -6,7 +6,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/channeldb"
+	"github.com/monasuite/lnd/channeldb"
 )
 
 // LiveChannelSource is an interface that allows us to query for the set of

@@ -6,9 +6,9 @@ import (
 	"sync/atomic"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/routing"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/routing"
 )
 
 // ManagerCfg houses a set of values and methods that is passed to the Manager

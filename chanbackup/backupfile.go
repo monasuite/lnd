@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wakiyamap/lnd/keychain"
+	"github.com/monasuite/lnd/keychain"
 )
 
 const (

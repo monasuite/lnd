@@ -20,8 +20,8 @@ import (
 	"github.com/btcsuite/btcwallet/wallet/txauthor"
 	"github.com/btcsuite/btcwallet/wallet/txrules"
 	"github.com/btcsuite/btcwallet/walletdb"
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 const (

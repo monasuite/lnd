@@ -10,8 +10,8 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/ticker"
-	"github.com/wakiyamap/lnd/lntest"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/lntest"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // randPeer creates a random peer.

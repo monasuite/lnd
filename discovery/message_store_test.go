@@ -11,8 +11,8 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/coreos/bbolt"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 func createTestMessageStore(t *testing.T) (*MessageStore, func()) {

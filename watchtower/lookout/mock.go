@@ -8,7 +8,7 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/chainntnfs"
+	"github.com/monasuite/lnd/chainntnfs"
 )
 
 type MockBackend struct {

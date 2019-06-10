@@ -2,7 +2,7 @@ package netann
 
 import (
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/channeldb"
+	"github.com/monasuite/lnd/channeldb"
 )
 
 // DB abstracts the required database functionality needed by the

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wakiyamap/lnd/macaroons"
+	"github.com/monasuite/lnd/macaroons"
 	macaroon "gopkg.in/macaroon.v2"
 )
 

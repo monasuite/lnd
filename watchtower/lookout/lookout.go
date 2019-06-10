@@ -5,9 +5,9 @@ import (
 	"sync/atomic"
 
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/watchtower/blob"
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/watchtower/blob"
+	"github.com/monasuite/lnd/watchtower/wtdb"
 )
 
 // Config houses the Lookout's required resources to properly fulfill it's duty,

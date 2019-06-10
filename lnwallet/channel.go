@@ -17,10 +17,10 @@ import (
 	"github.com/btcsuite/btcutil/txsort"
 	"github.com/davecgh/go-spew/spew"
 
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 var zeroHash chainhash.Hash

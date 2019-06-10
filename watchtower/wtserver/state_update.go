@@ -3,8 +3,8 @@ package wtserver
 import (
 	"fmt"
 
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
-	"github.com/wakiyamap/lnd/watchtower/wtwire"
+	"github.com/monasuite/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/watchtower/wtwire"
 )
 
 // handleStateUpdates processes a stream of StateUpdate requests from the

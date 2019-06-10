@@ -4,9 +4,9 @@ import (
 	"net"
 	"sync/atomic"
 
-	"github.com/wakiyamap/lnd/brontide"
-	"github.com/wakiyamap/lnd/watchtower/lookout"
-	"github.com/wakiyamap/lnd/watchtower/wtserver"
+	"github.com/monasuite/lnd/brontide"
+	"github.com/monasuite/lnd/watchtower/lookout"
+	"github.com/monasuite/lnd/watchtower/wtserver"
 )
 
 // Standalone encapsulates the server-side functionality required by watchtower

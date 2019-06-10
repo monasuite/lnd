@@ -3,8 +3,8 @@ package lookout
 import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/watchtower/wtdb"
 )
 
 // Service abstracts the lookout functionality, supporting the ability to start

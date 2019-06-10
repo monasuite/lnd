@@ -10,8 +10,8 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/watchtower/wtwire"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/watchtower/wtwire"
 )
 
 func randRawFeatureVector(r *rand.Rand) *lnwire.RawFeatureVector {

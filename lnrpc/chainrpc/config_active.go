@@ -3,8 +3,8 @@
 package chainrpc
 
 import (
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/macaroons"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/macaroons"
 )
 
 // Config is the primary configuration struct for the chain notifier RPC server.

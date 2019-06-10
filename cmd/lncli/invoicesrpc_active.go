@@ -10,7 +10,7 @@ import (
 	"strconv"
 
 	"github.com/urfave/cli"
-	"github.com/wakiyamap/lnd/lnrpc/invoicesrpc"
+	"github.com/monasuite/lnd/lnrpc/invoicesrpc"
 )
 
 // invoicesCommands will return nil for non-invoicesrpc builds.

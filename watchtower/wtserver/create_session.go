@@ -2,10 +2,10 @@ package wtserver
 
 import (
 	"github.com/btcsuite/btcd/txscript"
-	"github.com/wakiyamap/lnd/watchtower/blob"
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
-	"github.com/wakiyamap/lnd/watchtower/wtpolicy"
-	"github.com/wakiyamap/lnd/watchtower/wtwire"
+	"github.com/monasuite/lnd/watchtower/blob"
+	"github.com/monasuite/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/watchtower/wtpolicy"
+	"github.com/monasuite/lnd/watchtower/wtwire"
 )
 
 // handleCreateSession processes a CreateSession message from the peer, and returns

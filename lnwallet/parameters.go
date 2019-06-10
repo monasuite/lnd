@@ -3,7 +3,7 @@ package lnwallet
 import (
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/wallet/txrules"
-	"github.com/wakiyamap/lnd/input"
+	"github.com/monasuite/lnd/input"
 )
 
 // DefaultDustLimit is used to calculate the dust HTLC amount which will be

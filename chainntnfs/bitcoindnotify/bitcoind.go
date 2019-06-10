@@ -16,7 +16,7 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/lightningnetwork/lnd/queue"
-	"github.com/wakiyamap/lnd/chainntnfs"
+	"github.com/monasuite/lnd/chainntnfs"
 )
 
 const (

@@ -7,7 +7,7 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/wakiyamap/lnd/input"
+	"github.com/monasuite/lnd/input"
 )
 
 const (

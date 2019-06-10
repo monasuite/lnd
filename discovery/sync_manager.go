@@ -7,9 +7,9 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/ticker"
-	"github.com/wakiyamap/lnd/lnpeer"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/routing/route"
+	"github.com/monasuite/lnd/lnpeer"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/routing/route"
 )
 
 const (

@@ -6,8 +6,8 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/watchtower/blob"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/watchtower/blob"
 )
 
 const (

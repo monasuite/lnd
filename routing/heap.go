@@ -1,8 +1,8 @@
 package routing
 
 import (
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // nodeWithDist is a helper struct that couples the distance from the current

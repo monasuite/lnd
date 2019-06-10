@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/invoices"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/invoices"
 
 	"github.com/btcsuite/btcutil"
-	"github.com/wakiyamap/lnd/lntypes"
+	"github.com/monasuite/lnd/lntypes"
 )
 
 // htlcIncomingContestResolver is a ContractResolver that's able to resolve an

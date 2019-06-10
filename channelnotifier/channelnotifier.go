@@ -4,8 +4,8 @@ import (
 	"sync/atomic"
 
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/subscribe"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/subscribe"
 )
 
 // ChannelNotifier is a subsystem which all active, inactive, and closed channel

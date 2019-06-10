@@ -5,7 +5,7 @@ import (
 	"os"
 
 	flags "github.com/jessevdk/go-flags"
-	"github.com/wakiyamap/lnd"
+	"github.com/monasuite/lnd"
 )
 
 func main() {

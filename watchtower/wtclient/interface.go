@@ -4,11 +4,11 @@ import (
 	"net"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/wakiyamap/lnd/brontide"
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
-	"github.com/wakiyamap/lnd/watchtower/wtserver"
+	"github.com/monasuite/lnd/brontide"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/watchtower/wtserver"
 )
 
 // DB abstracts the required database operations required by the watchtower

@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/lntypes"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/zpay32"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lntypes"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/zpay32"
 )
 
 var (

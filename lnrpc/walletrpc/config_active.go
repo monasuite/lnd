@@ -3,9 +3,9 @@
 package walletrpc
 
 import (
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/macaroons"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/macaroons"
 )
 
 // Config is the primary configuration struct for the WalletKit RPC server. It

@@ -40,17 +40,17 @@ import (
 	proxy "github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/lightninglabs/neutrino"
 
-	"github.com/wakiyamap/lnd/autopilot"
-	"github.com/wakiyamap/lnd/build"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lncfg"
-	"github.com/wakiyamap/lnd/lnrpc"
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/lnwallet/btcwallet"
-	"github.com/wakiyamap/lnd/macaroons"
-	"github.com/wakiyamap/lnd/signal"
-	"github.com/wakiyamap/lnd/walletunlocker"
+	"github.com/monasuite/lnd/autopilot"
+	"github.com/monasuite/lnd/build"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lncfg"
+	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/btcwallet"
+	"github.com/monasuite/lnd/macaroons"
+	"github.com/monasuite/lnd/signal"
+	"github.com/monasuite/lnd/walletunlocker"
 )
 
 const (

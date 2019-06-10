@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/wakiyamap/lnd/lnrpc"
+	"github.com/monasuite/lnd/lnrpc"
 )
 
 // OutPoint displays an outpoint string in the form "<txid>:<output-index>".

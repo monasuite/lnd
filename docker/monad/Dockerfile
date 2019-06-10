@@ -16,8 +16,8 @@ EXPOSE 28901 28902
 
 # Grab and install the latest version of roasbeef's fork of monad and all
 # related dependencies.
-WORKDIR $GOPATH/src/github.com/wakiyamap/monad
-RUN git clone https://github.com/wakiyamap/monad ./
+WORKDIR $GOPATH/src/github.com/monasuite/monad
+RUN git clone https://github.com/monasuite/monad ./
 RUN go get -u github.com/Masterminds/glide
 RUN glide install
 RUN go install . ./cmd/monactl ./cmd/gencerts

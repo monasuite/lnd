@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/watchtower"
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
-	"github.com/wakiyamap/lnd/watchtower/wtmock"
-	"github.com/wakiyamap/lnd/watchtower/wtpolicy"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/watchtower"
+	"github.com/monasuite/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/watchtower/wtmock"
+	"github.com/monasuite/lnd/watchtower/wtpolicy"
 )
 
 // dbInit is a closure used to initialize a watchtower.DB instance and its

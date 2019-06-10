@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // MultiBackupVersion denotes the version of the multi channel static channel

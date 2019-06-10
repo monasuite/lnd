@@ -10,9 +10,9 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // SingleBackupVersion denotes the version of the single static channel backup.

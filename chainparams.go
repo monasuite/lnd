@@ -5,9 +5,9 @@ import (
 	bitcoinCfg "github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	bitcoinWire "github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/keychain"
-	monacoinCfg "github.com/wakiyamap/monad/chaincfg"
-	monacoinWire "github.com/wakiyamap/monad/wire"
+	"github.com/monasuite/lnd/keychain"
+	monacoinCfg "github.com/monasuite/monad/chaincfg"
+	monacoinWire "github.com/monasuite/monad/wire"
 )
 
 // activeNetParams is a pointer to the parameters specific to the currently

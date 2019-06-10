@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wakiyamap/lnd/subscribe"
+	"github.com/monasuite/lnd/subscribe"
 )
 
 // TestSubscribe tests that the subscription clients receive the updates sent

@@ -15,12 +15,12 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/go-errors/errors"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/routing/chainview"
-	"github.com/wakiyamap/lnd/routing/route"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/routing/chainview"
+	"github.com/monasuite/lnd/routing/route"
 )
 
 var (

@@ -28,7 +28,7 @@ $ git clone https://github.com/googleapis/googleapis.git
 Fetch the `rpc.proto` file (or copy it from your local source directory):
 
 ```
-$ curl -o rpc.proto -s https://raw.githubusercontent.com/wakiyamap/lnd/master/lnrpc/rpc.proto
+$ curl -o rpc.proto -s https://raw.githubusercontent.com/monasuite/lnd/master/lnrpc/rpc.proto
 ```
 
 Compile the proto file:

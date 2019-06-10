@@ -20,7 +20,7 @@
 # Installation
 
 ### Preliminaries
-  In order to work with [`lnd`](https://github.com/wakiyamap/lnd), the
+  In order to work with [`lnd`](https://github.com/monasuite/lnd), the
   following build dependencies are required:
 
   * **Go:** `lnd` is written in Go. To install, run one of the following commands:
@@ -103,8 +103,8 @@
 With the preliminary steps completed, to install `lnd`, `lncli`, and all
 related dependencies run the following commands:
 ```
-go get -d github.com/wakiyamap/lnd
-cd $GOPATH/src/github.com/wakiyamap/lnd
+go get -d github.com/monasuite/lnd
+cd $GOPATH/src/github.com/monasuite/lnd
 make && make install
 ```
 
@@ -135,7 +135,7 @@ GO111MODULE=on go install -v ./...
 To update your version of `lnd` to the latest version run the following
 commands:
 ```
-cd $GOPATH/src/github.com/wakiyamap/lnd
+cd $GOPATH/src/github.com/monasuite/lnd
 git pull
 make clean && make && make install
 ```
@@ -145,7 +145,7 @@ On FreeBSD, use gmake instead of make.
 Alternatively, if one doesn't wish to use `make`, then the `go` commands can be
 used directly:
 ```
-cd $GOPATH/src/github.com/wakiyamap/lnd
+cd $GOPATH/src/github.com/monasuite/lnd
 git pull
 GO111MODULE=on go install -v ./...
 ```
@@ -369,7 +369,7 @@ lnd --bitcoin.active --bitcoin.testnet --debuglevel=debug --bitcoin.node=bitcoin
 `lnd`'s authentication system is called **macaroons**, which are decentralized
 bearer credentials allowing for delegation, attenuation, and other cool
 features. You can learn more about them in Alex Akselrod's [writeup on
-Github](https://github.com/wakiyamap/lnd/issues/20).
+Github](https://github.com/monasuite/lnd/issues/20).
 
 Running `lnd` for the first time will by default generate the `admin.macaroon`,
 `read_only.macaroon`, and `macaroons.db` files that are used to authenticate

@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	bolt "github.com/coreos/bbolt"
-	"github.com/wakiyamap/lnd/channeldb"
+	"github.com/monasuite/lnd/channeldb"
 )
 
 const (

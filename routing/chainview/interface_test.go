@@ -23,10 +23,10 @@ import (
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/walletdb"
 	_ "github.com/btcsuite/btcwallet/walletdb/bdb" // Required to register the boltdb walletdb implementation.
-	"github.com/wakiyamap/monad/btcjson"
+	"github.com/monasuite/monad/btcjson"
 
 	"github.com/lightninglabs/neutrino"
-	"github.com/wakiyamap/lnd/channeldb"
+	"github.com/monasuite/lnd/channeldb"
 )
 
 var (

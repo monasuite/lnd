@@ -4,11 +4,11 @@ package invoicesrpc
 
 import (
 	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/invoices"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/macaroons"
-	"github.com/wakiyamap/lnd/netann"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/invoices"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/macaroons"
+	"github.com/monasuite/lnd/netann"
 )
 
 // Config is the primary configuration struct for the invoices RPC server. It

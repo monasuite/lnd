@@ -4,8 +4,8 @@ import (
 	"sync"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/wakiyamap/lnd/lnpeer"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/lnpeer"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // reliableSenderCfg contains all of necessary items for the reliableSender to

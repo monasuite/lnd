@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"testing"
 
-	"github.com/wakiyamap/lnd/lntypes"
+	"github.com/monasuite/lnd/lntypes"
 )
 
 // TestWitnessCacheSha256Retrieval tests that we're able to add and lookup new

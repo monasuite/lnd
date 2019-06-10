@@ -3,8 +3,8 @@
 package signrpc
 
 import (
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/macaroons"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/macaroons"
 )
 
 // Config is the primary configuration struct for the signer RPC server. It

@@ -1,7 +1,7 @@
 package buffer
 
 import (
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // WriteSize represents the size of the maximum plaintext message than can be

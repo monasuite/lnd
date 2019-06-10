@@ -13,9 +13,9 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/netann"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/netann"
 )
 
 // randOutpoint creates a random wire.Outpoint.

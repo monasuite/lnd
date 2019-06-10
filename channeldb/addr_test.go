@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wakiyamap/lnd/tor"
+	"github.com/monasuite/lnd/tor"
 )
 
 type unknownAddrType struct{}

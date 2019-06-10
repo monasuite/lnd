@@ -8,7 +8,7 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/keychain"
+	"github.com/monasuite/lnd/keychain"
 )
 
 var (

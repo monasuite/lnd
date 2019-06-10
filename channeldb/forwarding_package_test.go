@@ -9,8 +9,8 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/coreos/bbolt"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // TestPkgFilterBruteForce tests the behavior of a pkg filter up to size 1000,

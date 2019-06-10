@@ -7,8 +7,8 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 const (

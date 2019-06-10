@@ -17,11 +17,11 @@ import (
 	"github.com/coreos/bbolt"
 	"github.com/davecgh/go-spew/spew"
 
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/htlcswitch"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/htlcswitch"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 var (

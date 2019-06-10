@@ -1,8 +1,8 @@
 package wtserver
 
 import (
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
-	"github.com/wakiyamap/lnd/watchtower/wtwire"
+	"github.com/monasuite/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/watchtower/wtwire"
 )
 
 // handleDeleteSession processes a DeleteSession request for a client with given

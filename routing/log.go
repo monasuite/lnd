@@ -2,8 +2,8 @@ package routing
 
 import (
 	"github.com/btcsuite/btclog"
-	"github.com/wakiyamap/lnd/build"
-	"github.com/wakiyamap/lnd/routing/chainview"
+	"github.com/monasuite/lnd/build"
+	"github.com/monasuite/lnd/routing/chainview"
 )
 
 // log is a logger that is initialized with no output filters.  This means the

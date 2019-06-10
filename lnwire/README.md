@@ -1,9 +1,9 @@
 lnwire
 ======
 
-[![Build Status](http://img.shields.io/travis/wakiyamap/lnd.svg)](https://travis-ci.org/wakiyamap/lnd) 
-[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/wakiyamap/lnd/blob/master/LICENSE)
-[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/wakiyamap/lnd/lnwire)
+[![Build Status](http://img.shields.io/travis/monasuite/lnd.svg)](https://travis-ci.org/monasuite/lnd) 
+[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/monasuite/lnd/blob/master/LICENSE)
+[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/monasuite/lnd/lnwire)
 
 The lnwire package implements the Lightning Network wire protocol.
 
@@ -14,5 +14,5 @@ protocol level.
 ## Installation and Updating
 
 ```bash
-$ go get -u github.com/wakiyamap/lnd/lnwire
+$ go get -u github.com/monasuite/lnd/lnwire
 ```

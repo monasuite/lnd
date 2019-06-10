@@ -8,10 +8,10 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/htlcswitch"
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/htlcswitch"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // TestPeerChannelClosureAcceptFeeResponder tests the shutdown responder's

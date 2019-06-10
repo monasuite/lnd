@@ -5,7 +5,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/wakiyamap/lnd/keychain"
+	"github.com/monasuite/lnd/keychain"
 )
 
 // ChannelRestorer is an interface that allows the Recover method to map the

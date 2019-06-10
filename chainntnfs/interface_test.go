@@ -19,11 +19,11 @@ import (
 	"github.com/btcsuite/btcwallet/chain"
 	_ "github.com/btcsuite/btcwallet/walletdb/bdb" // Required to auto-register the boltdb walletdb implementation.
 	"github.com/lightninglabs/neutrino"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/chainntnfs/bitcoindnotify"
-	"github.com/wakiyamap/lnd/chainntnfs/btcdnotify"
-	"github.com/wakiyamap/lnd/chainntnfs/neutrinonotify"
-	"github.com/wakiyamap/lnd/channeldb"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/chainntnfs/bitcoindnotify"
+	"github.com/monasuite/lnd/chainntnfs/btcdnotify"
+	"github.com/monasuite/lnd/chainntnfs/neutrinonotify"
+	"github.com/monasuite/lnd/channeldb"
 )
 
 func testSingleConfirmationNotification(miner *rpctest.Harness,

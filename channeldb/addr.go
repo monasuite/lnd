@@ -7,7 +7,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/wakiyamap/lnd/tor"
+	"github.com/monasuite/lnd/tor"
 )
 
 // addressType specifies the network protocol and version that should be used

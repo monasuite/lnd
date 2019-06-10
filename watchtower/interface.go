@@ -1,8 +1,8 @@
 package watchtower
 
 import (
-	"github.com/wakiyamap/lnd/watchtower/lookout"
-	"github.com/wakiyamap/lnd/watchtower/wtserver"
+	"github.com/monasuite/lnd/watchtower/lookout"
+	"github.com/monasuite/lnd/watchtower/wtserver"
 )
 
 // DB abstracts the persistent functionality required to run the watchtower

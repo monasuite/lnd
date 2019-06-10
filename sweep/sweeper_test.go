@@ -11,9 +11,9 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/wakiyamap/lnd/build"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/keychain"
+	"github.com/monasuite/lnd/build"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/keychain"
 )
 
 var (

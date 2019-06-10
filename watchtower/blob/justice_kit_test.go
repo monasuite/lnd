@@ -10,9 +10,9 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/txscript"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/watchtower/blob"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/watchtower/blob"
 )
 
 func makePubKey(i uint64) blob.PubKey {

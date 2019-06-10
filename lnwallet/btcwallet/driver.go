@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcwallet/chain"
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 const (

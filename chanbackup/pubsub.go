@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/keychain"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/keychain"
 )
 
 // Swapper is an interface that allows the chanbackup.SubSwapper to update the

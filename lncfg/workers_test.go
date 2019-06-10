@@ -3,7 +3,7 @@ package lncfg_test
 import (
 	"testing"
 
-	"github.com/wakiyamap/lnd/lncfg"
+	"github.com/monasuite/lnd/lncfg"
 )
 
 const (

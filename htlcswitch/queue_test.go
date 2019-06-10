@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // TestWaitingQueueThreadSafety test the thread safety properties of the

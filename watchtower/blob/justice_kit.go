@@ -12,8 +12,8 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/txscript"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 const (

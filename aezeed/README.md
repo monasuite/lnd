@@ -18,11 +18,11 @@ been added, on my laptop I get about 100ms per attempt):
 
 goos: linux
 goarch: amd64
-pkg: github.com/wakiyamap/lnd/aezeed
+pkg: github.com/monasuite/lnd/aezeed
 BenchmarkTomnemonic-4                 20          93280730 ns/op        33559670 B/op         36 allocs/op
 BenchmarkToCipherSeed-4               10         102323892 ns/op        36915684 B/op         41 allocs/op
 PASS
-ok      github.com/wakiyamap/lnd/aezeed  4.168s
+ok      github.com/monasuite/lnd/aezeed  4.168s
 ```
 
 Aside from addressing the shortcomings of BIP 39, an aezeed cipher seed

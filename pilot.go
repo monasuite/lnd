@@ -9,9 +9,9 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/wakiyamap/lnd/autopilot"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/tor"
+	"github.com/monasuite/lnd/autopilot"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/tor"
 )
 
 // validateAtplConfig is a helper method that makes sure the passed

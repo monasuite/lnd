@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // MaxMessagePayload is the maximum bytes a message can be regardless of other

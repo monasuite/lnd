@@ -4,7 +4,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/wakiyamap/lnd/watchtower/wtpolicy"
+	"github.com/monasuite/lnd/watchtower/wtpolicy"
 )
 
 var (

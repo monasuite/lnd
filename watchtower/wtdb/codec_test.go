@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/watchtower/wtdb"
 )
 
 // dbObject is abstract object support encoding and decoding.

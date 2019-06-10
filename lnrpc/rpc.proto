@@ -4,7 +4,7 @@ import "google/api/annotations.proto";
 
 package lnrpc;
 
-option go_package = "github.com/wakiyamap/lnd/lnrpc";
+option go_package = "github.com/monasuite/lnd/lnrpc";
 
 /**
  * Comments in this file will be directly parsed into the API

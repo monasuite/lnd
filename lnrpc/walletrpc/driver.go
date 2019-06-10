@@ -5,7 +5,7 @@ package walletrpc
 import (
 	"fmt"
 
-	"github.com/wakiyamap/lnd/lnrpc"
+	"github.com/monasuite/lnd/lnrpc"
 )
 
 // createNewSubServer is a helper method that will create the new WalletKit RPC

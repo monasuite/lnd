@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/lntypes"
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lntypes"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 type mockSigner struct {

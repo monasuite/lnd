@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/coreos/bbolt"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // migrateNodeAndEdgeUpdateIndex is a migration function that will update the

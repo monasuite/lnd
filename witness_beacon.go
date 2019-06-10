@@ -3,11 +3,11 @@ package lnd
 import (
 	"sync"
 
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/contractcourt"
-	"github.com/wakiyamap/lnd/invoices"
-	"github.com/wakiyamap/lnd/lntypes"
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/contractcourt"
+	"github.com/monasuite/lnd/invoices"
+	"github.com/monasuite/lnd/lntypes"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 // preimageSubscriber reprints an active subscription to be notified once the

@@ -11,9 +11,9 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 var (

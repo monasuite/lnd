@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"time"
 
-	"github.com/wakiyamap/lnd/buffer"
+	"github.com/monasuite/lnd/buffer"
 )
 
 // Write is a worker pool specifically designed for sharing access to

@@ -15,7 +15,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/go-errors/errors"
-	"github.com/wakiyamap/lnd/tor"
+	"github.com/monasuite/lnd/tor"
 )
 
 // MaxSliceLength is the maximum allowed length for any opaque byte slices in

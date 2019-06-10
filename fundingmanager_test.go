@@ -21,16 +21,16 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/discovery"
-	"github.com/wakiyamap/lnd/htlcswitch"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lnpeer"
-	"github.com/wakiyamap/lnd/lnrpc"
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/discovery"
+	"github.com/monasuite/lnd/htlcswitch"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnpeer"
+	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 const (

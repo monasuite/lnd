@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/wakiyamap/lnd/input"
+	"github.com/monasuite/lnd/input"
 
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 // commitSweepResolver is a resolver that will attempt to sweep the commitment

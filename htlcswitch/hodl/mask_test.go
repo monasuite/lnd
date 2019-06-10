@@ -3,8 +3,8 @@ package hodl_test
 import (
 	"testing"
 
-	"github.com/wakiyamap/lnd/build"
-	"github.com/wakiyamap/lnd/htlcswitch/hodl"
+	"github.com/monasuite/lnd/build"
+	"github.com/monasuite/lnd/htlcswitch/hodl"
 )
 
 var hodlMaskTests = []struct {

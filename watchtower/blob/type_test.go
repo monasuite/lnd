@@ -3,7 +3,7 @@ package blob_test
 import (
 	"testing"
 
-	"github.com/wakiyamap/lnd/watchtower/blob"
+	"github.com/monasuite/lnd/watchtower/blob"
 )
 
 var unknownFlag = blob.Flag(16)

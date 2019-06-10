@@ -3,7 +3,7 @@ FROM golang:1.12-alpine as builder
 MAINTAINER Olaoluwa Osuntokun <lightning.engineering>
 
 # Copy in the local repository to build from.
-COPY . /go/src/github.com/wakiyamap/lnd
+COPY . /go/src/github.com/monasuite/lnd
 
 # Force Go to use the cgo based DNS resolver. This is required to ensure DNS
 # queries required to connect to linked containers succeed.
@@ -13,7 +13,7 @@ ENV GODEBUG netdns=cgo
 RUN apk add --no-cache --update alpine-sdk \
     git \
     make \
-&&  cd /go/src/github.com/wakiyamap/lnd \
+&&  cd /go/src/github.com/monasuite/lnd \
 &&  make \
 &&  make install
 

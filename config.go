@@ -21,16 +21,16 @@ import (
 
 	"github.com/btcsuite/btcutil"
 	flags "github.com/jessevdk/go-flags"
-	"github.com/wakiyamap/lnd/build"
-	"github.com/wakiyamap/lnd/chanbackup"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/discovery"
-	"github.com/wakiyamap/lnd/htlcswitch/hodl"
-	"github.com/wakiyamap/lnd/lncfg"
-	"github.com/wakiyamap/lnd/lnrpc/signrpc"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/routing"
-	"github.com/wakiyamap/lnd/tor"
+	"github.com/monasuite/lnd/build"
+	"github.com/monasuite/lnd/chanbackup"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/discovery"
+	"github.com/monasuite/lnd/htlcswitch/hodl"
+	"github.com/monasuite/lnd/lncfg"
+	"github.com/monasuite/lnd/lnrpc/signrpc"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/routing"
+	"github.com/monasuite/lnd/tor"
 )
 
 const (

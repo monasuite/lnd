@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/routing"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/routing"
 )
 
 // TestValidationBarrierSemaphore checks basic properties of the validation

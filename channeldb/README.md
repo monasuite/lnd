@@ -1,9 +1,9 @@
 channeldb
 ==========
 
-[![Build Status](http://img.shields.io/travis/wakiyamap/lnd.svg)](https://travis-ci.org/wakiyamap/lnd) 
-[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/wakiyamap/lnd/blob/master/LICENSE)
-[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/wakiyamap/lnd/channeldb)
+[![Build Status](http://img.shields.io/travis/monasuite/lnd.svg)](https://travis-ci.org/monasuite/lnd) 
+[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/monasuite/lnd/blob/master/LICENSE)
+[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/monasuite/lnd/channeldb)
 
 The channeldb implements the persistent storage engine for `lnd` and
 generically a data storage layer for the required state within the Lightning
@@ -20,5 +20,5 @@ node and channel announcements, outgoing payments, and invoices
 ## Installation and Updating
 
 ```bash
-$ go get -u github.com/wakiyamap/lnd/channeldb
+$ go get -u github.com/monasuite/lnd/channeldb
 ```

@@ -11,8 +11,8 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/integration/rpctest"
 	"github.com/btcsuite/btcwallet/chain"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/channeldb"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/channeldb"
 )
 
 var (

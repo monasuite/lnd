@@ -1,9 +1,9 @@
 brontide
 ==========
 
-[![Build Status](http://img.shields.io/travis/wakiyamap/lnd.svg)](https://travis-ci.org/wakiyamap/lnd) 
-[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/wakiyamap/lnd/blob/master/LICENSE)
-[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/wakiyamap/lnd/brontide)
+[![Build Status](http://img.shields.io/travis/monasuite/lnd.svg)](https://travis-ci.org/monasuite/lnd) 
+[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/monasuite/lnd/blob/master/LICENSE)
+[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/monasuite/lnd/brontide)
 
 The brontide package implements a secure crypto messaging protocol based off of
 the [Noise Protocol Framework](http://noiseprotocol.org/noise.html). The
@@ -24,5 +24,5 @@ between network enabled programs.
 ## Installation and Updating
 
 ```bash
-$ go get -u github.com/wakiyamap/lnd/brontide
+$ go get -u github.com/monasuite/lnd/brontide
 ```

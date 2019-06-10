@@ -13,11 +13,11 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/wallet/txauthor"
 
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/input"
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lntypes"
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lntypes"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 // The block height returned by the mock BlockChainIO's GetBestBlock.

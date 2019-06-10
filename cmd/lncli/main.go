@@ -16,10 +16,10 @@ import (
 
 	"github.com/btcsuite/btcutil"
 	"github.com/urfave/cli"
-	"github.com/wakiyamap/lnd/build"
-	"github.com/wakiyamap/lnd/lncfg"
-	"github.com/wakiyamap/lnd/lnrpc"
-	"github.com/wakiyamap/lnd/macaroons"
+	"github.com/monasuite/lnd/build"
+	"github.com/monasuite/lnd/lncfg"
+	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/macaroons"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

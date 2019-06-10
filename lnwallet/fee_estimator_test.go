@@ -10,7 +10,7 @@ import (
 
 	"github.com/btcsuite/btcutil"
 
-	"github.com/wakiyamap/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 type mockSparseConfFeeSource struct {

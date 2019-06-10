@@ -18,16 +18,16 @@ import (
 	"github.com/davecgh/go-spew/spew"
 
 	"github.com/lightningnetwork/lnd/ticker"
-	"github.com/wakiyamap/lnd/brontide"
-	"github.com/wakiyamap/lnd/buffer"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/contractcourt"
-	"github.com/wakiyamap/lnd/htlcswitch"
-	"github.com/wakiyamap/lnd/lnpeer"
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/pool"
+	"github.com/monasuite/lnd/brontide"
+	"github.com/monasuite/lnd/buffer"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/contractcourt"
+	"github.com/monasuite/lnd/htlcswitch"
+	"github.com/monasuite/lnd/lnpeer"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/pool"
 )
 
 var (

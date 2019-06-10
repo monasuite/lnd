@@ -10,9 +10,9 @@ import (
 	bitcoinCfg "github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lightning-onion"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/htlcswitch"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/htlcswitch"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 var (

@@ -1,4 +1,4 @@
-PKG := github.com/wakiyamap/lnd
+PKG := github.com/monasuite/lnd
 ESCPKG := github.com\/wakiyamap\/lnd
 
 BTCD_PKG := github.com/btcsuite/btcd

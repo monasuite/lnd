@@ -9,8 +9,8 @@ RUN apk add --no-cache --update alpine-sdk \
     git \
     make \
     gcc \
-&&  git clone https://github.com/wakiyamap/lnd /go/src/github.com/wakiyamap/lnd \
-&&  cd /go/src/github.com/wakiyamap/lnd \
+&&  git clone https://github.com/monasuite/lnd /go/src/github.com/monasuite/lnd \
+&&  cd /go/src/github.com/monasuite/lnd \
 &&  make \
 &&  make install
 

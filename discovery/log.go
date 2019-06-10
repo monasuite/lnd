@@ -2,7 +2,7 @@ package discovery
 
 import (
 	"github.com/btcsuite/btclog"
-	"github.com/wakiyamap/lnd/build"
+	"github.com/monasuite/lnd/build"
 )
 
 // log is a logger that is initialized with no output filters.  This

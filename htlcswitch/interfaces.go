@@ -2,11 +2,11 @@ package htlcswitch
 
 import (
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/invoices"
-	"github.com/wakiyamap/lnd/lnpeer"
-	"github.com/wakiyamap/lnd/lntypes"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/invoices"
+	"github.com/monasuite/lnd/lnpeer"
+	"github.com/monasuite/lnd/lntypes"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // InvoiceDatabase is an interface which represents the persistent subsystem

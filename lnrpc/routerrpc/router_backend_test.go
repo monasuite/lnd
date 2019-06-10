@@ -7,11 +7,11 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcutil"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/routing"
-	"github.com/wakiyamap/lnd/routing/route"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/routing"
+	"github.com/monasuite/lnd/routing/route"
 
-	"github.com/wakiyamap/lnd/lnrpc"
+	"github.com/monasuite/lnd/lnrpc"
 )
 
 const (

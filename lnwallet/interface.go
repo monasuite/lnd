@@ -10,7 +10,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/wallet/txauthor"
-	"github.com/wakiyamap/lnd/lntypes"
+	"github.com/monasuite/lnd/lntypes"
 )
 
 // AddressType is an enum-like type which denotes the possible address types

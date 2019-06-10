@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/coreos/bbolt"
-	"github.com/wakiyamap/lnd/lntypes"
+	"github.com/monasuite/lnd/lntypes"
 )
 
 var (

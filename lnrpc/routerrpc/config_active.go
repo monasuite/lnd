@@ -4,8 +4,8 @@ package routerrpc
 
 import (
 	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/wakiyamap/lnd/macaroons"
-	"github.com/wakiyamap/lnd/routing"
+	"github.com/monasuite/lnd/macaroons"
+	"github.com/monasuite/lnd/routing"
 )
 
 // Config is the main configuration file for the router RPC server. It contains

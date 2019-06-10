@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package signrpc;
 
-option go_package = "github.com/wakiyamap/lnd/lnrpc/signrpc";
+option go_package = "github.com/monasuite/lnd/lnrpc/signrpc";
 
 message KeyLocator {
     /// The family of key being identified.

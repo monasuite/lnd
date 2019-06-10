@@ -2,9 +2,9 @@ package watchtower
 
 import (
 	"github.com/btcsuite/btclog"
-	"github.com/wakiyamap/lnd/build"
-	"github.com/wakiyamap/lnd/watchtower/lookout"
-	"github.com/wakiyamap/lnd/watchtower/wtserver"
+	"github.com/monasuite/lnd/build"
+	"github.com/monasuite/lnd/watchtower/lookout"
+	"github.com/monasuite/lnd/watchtower/wtserver"
 )
 
 // log is a logger that is initialized with no output filters.  This

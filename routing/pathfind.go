@@ -6,9 +6,9 @@ import (
 
 	"github.com/coreos/bbolt"
 
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/routing/route"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/routing/route"
 )
 
 const (

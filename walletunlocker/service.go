@@ -9,12 +9,12 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcwallet/wallet"
-	"github.com/wakiyamap/lnd/aezeed"
-	"github.com/wakiyamap/lnd/chanbackup"
-	"github.com/wakiyamap/lnd/keychain"
-	"github.com/wakiyamap/lnd/lnrpc"
-	"github.com/wakiyamap/lnd/lnwallet"
-	"github.com/wakiyamap/lnd/lnwallet/btcwallet"
+	"github.com/monasuite/lnd/aezeed"
+	"github.com/monasuite/lnd/chanbackup"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/btcwallet"
 	"golang.org/x/net/context"
 )
 

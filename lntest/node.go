@@ -25,9 +25,9 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/go-errors/errors"
-	"github.com/wakiyamap/lnd/chanbackup"
-	"github.com/wakiyamap/lnd/lnrpc"
-	"github.com/wakiyamap/lnd/macaroons"
+	"github.com/monasuite/lnd/chanbackup"
+	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/macaroons"
 )
 
 var (

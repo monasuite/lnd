@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/wakiyamap/lnd/watchtower/wtserver"
+	"github.com/monasuite/lnd/watchtower/wtserver"
 )
 
 // MockPeer emulates a single endpoint of brontide transport.

@@ -4,7 +4,7 @@ import "signrpc/signer.proto";
 
 package walletrpc;
 
-option go_package = "github.com/wakiyamap/lnd/lnrpc/walletrpc";
+option go_package = "github.com/monasuite/lnd/lnrpc/walletrpc";
 
 message KeyReq {
     /**

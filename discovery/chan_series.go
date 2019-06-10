@@ -4,9 +4,9 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/lnwire"
-	"github.com/wakiyamap/lnd/routing/route"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/routing/route"
 )
 
 // ChannelGraphTimeSeries is an interface that provides time and block based

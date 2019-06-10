@@ -9,7 +9,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 
-	"github.com/wakiyamap/lnd/input"
+	"github.com/monasuite/lnd/input"
 )
 
 // TestTxWeightEstimator tests that transaction weight estimates are calculated

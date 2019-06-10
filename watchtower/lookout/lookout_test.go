@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/wire"
-	"github.com/wakiyamap/lnd/chainntnfs"
-	"github.com/wakiyamap/lnd/watchtower/blob"
-	"github.com/wakiyamap/lnd/watchtower/lookout"
-	"github.com/wakiyamap/lnd/watchtower/wtdb"
-	"github.com/wakiyamap/lnd/watchtower/wtmock"
-	"github.com/wakiyamap/lnd/watchtower/wtpolicy"
+	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/watchtower/blob"
+	"github.com/monasuite/lnd/watchtower/lookout"
+	"github.com/monasuite/lnd/watchtower/wtdb"
+	"github.com/monasuite/lnd/watchtower/wtmock"
+	"github.com/monasuite/lnd/watchtower/wtpolicy"
 )
 
 type mockPunisher struct {

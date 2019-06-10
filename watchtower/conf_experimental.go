@@ -5,7 +5,7 @@ package watchtower
 import (
 	"time"
 
-	"github.com/wakiyamap/lnd/lncfg"
+	"github.com/monasuite/lnd/lncfg"
 )
 
 // Conf specifies the watchtower options that can be configured from the command

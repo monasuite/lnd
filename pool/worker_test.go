@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wakiyamap/lnd/buffer"
-	"github.com/wakiyamap/lnd/pool"
+	"github.com/monasuite/lnd/buffer"
+	"github.com/monasuite/lnd/pool"
 )
 
 type workerPoolTest struct {

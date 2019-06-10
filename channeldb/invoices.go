@@ -10,8 +10,8 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/coreos/bbolt"
-	"github.com/wakiyamap/lnd/lntypes"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/lntypes"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 var (

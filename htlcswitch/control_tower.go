@@ -4,8 +4,8 @@ import (
 	"errors"
 
 	"github.com/coreos/bbolt"
-	"github.com/wakiyamap/lnd/channeldb"
-	"github.com/wakiyamap/lnd/lnwire"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 var (
