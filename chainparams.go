@@ -105,6 +105,34 @@ func applyMonacoinParams(params *bitcoinNetParams, monacoinParams *monacoinNetPa
 	params.CoinbaseMaturity = monacoinParams.CoinbaseMaturity
 
 	copy(params.GenesisHash[:], monacoinParams.GenesisHash[:])
+	copy(params.GenesisBlock.Header.MerkleRoot[:],
+		monacoinParams.GenesisBlock.Header.MerkleRoot[:])
+	params.GenesisBlock.Header.Version =
+		monacoinParams.GenesisBlock.Header.Version
+	params.GenesisBlock.Header.Timestamp =
+		monacoinParams.GenesisBlock.Header.Timestamp
+	params.GenesisBlock.Header.Bits =
+		monacoinParams.GenesisBlock.Header.Bits
+	params.GenesisBlock.Header.Nonce =
+		monacoinParams.GenesisBlock.Header.Nonce
+	params.GenesisBlock.Transactions[0].Version =
+		monacoinParams.GenesisBlock.Transactions[0].Version
+	params.GenesisBlock.Transactions[0].LockTime =
+		monacoinParams.GenesisBlock.Transactions[0].LockTime
+	params.GenesisBlock.Transactions[0].TxIn[0].Sequence =
+		monacoinParams.GenesisBlock.Transactions[0].TxIn[0].Sequence
+	params.GenesisBlock.Transactions[0].TxIn[0].PreviousOutPoint.Index =
+		monacoinParams.GenesisBlock.Transactions[0].TxIn[0].PreviousOutPoint.Index
+	copy(params.GenesisBlock.Transactions[0].TxIn[0].SignatureScript[:],
+		monacoinParams.GenesisBlock.Transactions[0].TxIn[0].SignatureScript[:])
+	copy(params.GenesisBlock.Transactions[0].TxOut[0].PkScript[:],
+		monacoinParams.GenesisBlock.Transactions[0].TxOut[0].PkScript[:])
+	params.GenesisBlock.Transactions[0].TxOut[0].Value =
+		monacoinParams.GenesisBlock.Transactions[0].TxOut[0].Value
+	params.GenesisBlock.Transactions[0].TxIn[0].PreviousOutPoint.Hash =
+		chainhash.Hash{}
+	params.PowLimitBits = monacoinParams.PowLimitBits
+	params.PowLimit = monacoinParams.PowLimit
 
 	// Address encoding magics
 	params.PubKeyHashAddrID = monacoinParams.PubKeyHashAddrID
