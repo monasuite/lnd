@@ -15,11 +15,11 @@ import (
 	macaroon "gopkg.in/macaroon.v2"
 
 	"github.com/btcsuite/btcutil"
-	"github.com/urfave/cli"
 	"github.com/monasuite/lnd/build"
 	"github.com/monasuite/lnd/lncfg"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/macaroons"
+	"github.com/urfave/cli"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

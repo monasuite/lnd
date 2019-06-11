@@ -9,8 +9,8 @@ import (
 
 	"strconv"
 
-	"github.com/urfave/cli"
 	"github.com/monasuite/lnd/lnrpc/invoicesrpc"
+	"github.com/urfave/cli"
 )
 
 // invoicesCommands will return nil for non-invoicesrpc builds.

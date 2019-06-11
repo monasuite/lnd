@@ -134,6 +134,15 @@ func applyMonacoinParams(params *bitcoinNetParams, monacoinParams *monacoinNetPa
 	params.PowLimitBits = monacoinParams.PowLimitBits
 	params.PowLimit = monacoinParams.PowLimit
 
+	dnsSeeds := make([]chaincfg.DNSSeed, len(monacoinParams.DNSSeeds))
+	for i := 0; i < len(monacoinParams.DNSSeeds); i++ {
+		dnsSeeds[i] = chaincfg.DNSSeed{
+			Host:         monacoinParams.DNSSeeds[i].Host,
+			HasFiltering: monacoinParams.DNSSeeds[i].HasFiltering,
+		}
+	}
+	params.DNSSeeds = dnsSeeds
+
 	// Address encoding magics
 	params.PubKeyHashAddrID = monacoinParams.PubKeyHashAddrID
 	params.ScriptHashAddrID = monacoinParams.ScriptHashAddrID
