@@ -9,7 +9,7 @@ import (
 	"github.com/btcsuite/btcd/connmgr"
 	"github.com/btcsuite/btclog"
 	"github.com/jrick/logrotate/rotator"
-	"github.com/lightninglabs/neutrino"
+	"github.com/monasuite/neutrino"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/build"

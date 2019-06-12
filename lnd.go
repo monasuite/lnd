@@ -38,7 +38,7 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcwallet/wallet"
 	proxy "github.com/grpc-ecosystem/grpc-gateway/runtime"
-	"github.com/lightninglabs/neutrino"
+	"github.com/monasuite/neutrino"
 
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/build"

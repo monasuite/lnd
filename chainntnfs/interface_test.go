@@ -18,7 +18,7 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/chain"
 	_ "github.com/btcsuite/btcwallet/walletdb/bdb" // Required to auto-register the boltdb walletdb implementation.
-	"github.com/lightninglabs/neutrino"
+	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chainntnfs/bitcoindnotify"
 	"github.com/monasuite/lnd/chainntnfs/btcdnotify"

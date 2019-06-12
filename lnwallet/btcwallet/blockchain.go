@@ -11,7 +11,7 @@ import (
 
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/waddrmgr"
-	"github.com/lightninglabs/neutrino"
+	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/lnwallet"
 )
 

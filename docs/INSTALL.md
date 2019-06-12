@@ -409,7 +409,7 @@ of your `sendpayment` commands.
 
 There are currently two primary ways to run `lnd`: one requires a local `btcd`
 instance with the RPC service exposed, and the other uses a fully integrated
-light client powered by [neutrino](https://github.com/lightninglabs/neutrino).
+light client powered by [neutrino](https://github.com/monasuite/neutrino).
 
 # Creating an lnd.conf (Optional)
 
