@@ -27,21 +27,18 @@ require (
 	github.com/juju/utils v0.0.0-20180820210520-bf9cc5bdd62d // indirect
 	github.com/juju/version v0.0.0-20180108022336-b64dbd566305 // indirect
 	github.com/kkdai/bstream v1.0.0
-	github.com/monasuite/neutrino v0.0.0-20190426010803-a655679fe131
 	github.com/lightningnetwork/lightning-onion v0.0.0-20190430041606-751fb4dd8b72
 	github.com/lightningnetwork/lnd/queue v1.0.1
 	github.com/lightningnetwork/lnd/ticker v1.0.0
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
 	github.com/monasuite/monad v0.0.0-20190606163121-f0d2a15b1f44
-	github.com/onsi/ginkgo v1.8.0 // indirect
-	github.com/onsi/gomega v1.5.0 // indirect
+	github.com/monasuite/neutrino v0.0.0-20190611152721-1b5b2c95d70c
 	github.com/rogpeppe/fastuuid v0.0.0-20150106093220-6724a57986af // indirect
 	github.com/tv42/zbase32 v0.0.0-20160707012821-501572607d02
 	github.com/urfave/cli v1.18.0
 	golang.org/x/crypto v0.0.0-20190605123033-f99c8df09eb5
 	golang.org/x/net v0.0.0-20190607181551-461777fb6f67
 	golang.org/x/sys v0.0.0-20190610081024-1e42afee0f76 // indirect
-	golang.org/x/text v0.3.2 // indirect
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2
 	golang.org/x/tools v0.0.0-20190610181509-5ae6a9745e44 // indirect
 	google.golang.org/genproto v0.0.0-20190201180003-4b09977fb922
