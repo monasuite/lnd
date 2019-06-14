@@ -32,8 +32,9 @@ require (
 	github.com/lightningnetwork/lnd/queue v1.0.1
 	github.com/lightningnetwork/lnd/ticker v1.0.0
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
-	github.com/monaarchives/btcwallet v0.0.0-20190614161550-3182e603887d // indirect
-	github.com/monasuite/monad v0.0.0-20190614102927-b024b3975103 // indirect
+	github.com/monaarchives/btcwallet v0.0.0-20190614161550-3182e603887d
+	github.com/monasuite/monad v0.0.0-20190614102927-b024b3975103
+	github.com/monasuite/neutrino v0.0.0-20190614161342-a9fd954e69b8
 	github.com/prometheus/client_golang v0.9.3
 	github.com/rogpeppe/fastuuid v0.0.0-20150106093220-6724a57986af // indirect
 	github.com/tv42/zbase32 v0.0.0-20160707012821-501572607d02
