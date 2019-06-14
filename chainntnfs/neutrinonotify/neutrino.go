@@ -15,7 +15,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcutil/gcs/builder"
-	"github.com/btcsuite/btcwallet/waddrmgr"
+	"github.com/monaarchives/btcwallet/waddrmgr"
 	"github.com/lightningnetwork/lnd/queue"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/neutrino"

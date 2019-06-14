@@ -11,7 +11,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwallet/wallet/txauthor"
+	"github.com/monaarchives/btcwallet/wallet/txauthor"
 
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/input"

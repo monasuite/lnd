@@ -20,9 +20,9 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwallet/chain"
-	"github.com/btcsuite/btcwallet/walletdb"
-	_ "github.com/btcsuite/btcwallet/walletdb/bdb" // Required to register the boltdb walletdb implementation.
+	"github.com/monaarchives/btcwallet/chain"
+	"github.com/monaarchives/btcwallet/walletdb"
+	_ "github.com/monaarchives/btcwallet/walletdb/bdb" // Required to register the boltdb walletdb implementation.
 	"github.com/monasuite/monad/btcjson"
 
 	"github.com/monasuite/lnd/channeldb"

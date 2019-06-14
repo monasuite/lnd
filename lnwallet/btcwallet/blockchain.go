@@ -9,8 +9,8 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 
-	"github.com/btcsuite/btcwallet/chain"
-	"github.com/btcsuite/btcwallet/waddrmgr"
+	"github.com/monaarchives/btcwallet/chain"
+	"github.com/monaarchives/btcwallet/waddrmgr"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/neutrino"
 )

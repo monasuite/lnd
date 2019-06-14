@@ -2,9 +2,9 @@ package lnwallet
 
 import (
 	"github.com/btcsuite/btclog"
-	"github.com/btcsuite/btcwallet/chain"
-	btcwallet "github.com/btcsuite/btcwallet/wallet"
-	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/monaarchives/btcwallet/chain"
+	btcwallet "github.com/monaarchives/btcwallet/wallet"
+	"github.com/monaarchives/btcwallet/wtxmgr"
 
 	"github.com/monasuite/lnd/build"
 )

@@ -8,7 +8,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwallet/wallet/txrules"
+	"github.com/monaarchives/btcwallet/wallet/txrules"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/lnwallet"
 )

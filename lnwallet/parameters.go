@@ -2,7 +2,7 @@ package lnwallet
 
 import (
 	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwallet/wallet/txrules"
+	"github.com/monaarchives/btcwallet/wallet/txrules"
 	"github.com/monasuite/lnd/input"
 )
 

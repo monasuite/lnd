@@ -21,8 +21,8 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwallet/chain"
-	"github.com/btcsuite/btcwallet/walletdb"
+	"github.com/monaarchives/btcwallet/chain"
+	"github.com/monaarchives/btcwallet/walletdb"
 	"github.com/monasuite/neutrino"
 )
 

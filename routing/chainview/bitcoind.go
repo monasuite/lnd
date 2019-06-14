@@ -10,8 +10,8 @@ import (
 	"github.com/btcsuite/btcd/btcjson"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcwallet/chain"
-	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/monaarchives/btcwallet/chain"
+	"github.com/monaarchives/btcwallet/wtxmgr"
 	"github.com/monasuite/lnd/channeldb"
 )
 

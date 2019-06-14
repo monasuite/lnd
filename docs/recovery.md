@@ -183,10 +183,10 @@ The recovery methods described above assume a clean slate for a node, so
 there's no existing UTXO or key data in the node's database. However, there're
 times when an _existing_ node may want to _manually_ rescan the chain. We have
 a tool for that! The tool is called
-[`dropwtxmgr`](https://github.com/btcsuite/btcwallet/tree/master/cmd/dropwtxmgr).
+[`dropwtxmgr`](https://github.com/monaarchives/btcwallet/tree/master/cmd/dropwtxmgr).
 It can be installed with the following command:
 ```
-⛰  go get -v -u github.com/btcsuite/btcwallet/cmd/dropwtxmgr
+⛰  go get -v -u github.com/monaarchives/btcwallet/cmd/dropwtxmgr
 ```
 
 The `dropwtxmgr` tool will _reset_ the best synced height of the wallet back to
