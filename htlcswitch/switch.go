@@ -18,6 +18,7 @@ import (
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/contractcourt"
+	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
 )
@@ -62,22 +63,6 @@ var (
 	// some errors.
 	zeroPreimage [sha256.Size]byte
 )
-
-// pendingPayment represents the payment which made by user and waits for
-// updates to be received whether the payment has been rejected or proceed
-// successfully.
-type pendingPayment struct {
-	paymentHash lnwallet.PaymentHash
-	amount      lnwire.MilliSatoshi
-
-	preimage chan [sha256.Size]byte
-	err      chan error
-
-	// deobfuscator is a serializable entity which is used if we received
-	// an error, it deobfuscates the onion failure blob, and extracts the
-	// exact error from it.
-	deobfuscator ErrorDecrypter
-}
 
 // plexPacket encapsulates switch packet and adds error channel to receive
 // error from request handler.
@@ -206,17 +191,12 @@ type Switch struct {
 	// service was initialized with.
 	cfg *Config
 
-	// pendingPayments stores payments initiated by the user that are not yet
-	// settled. The map is used to later look up the payments and notify the
-	// user of the result when they are complete. Each payment is given a unique
-	// integer ID when it is created.
-	pendingPayments map[uint64]*pendingPayment
-	pendingMutex    sync.RWMutex
-
-	paymentSequencer Sequencer
-
-	// control provides verification of sending htlc mesages
-	control ControlTower
+	// networkResults stores the results of payments initiated by the user.
+	// results. The store is used to later look up the payments and notify
+	// the user of the result when they are complete. Each payment attempt
+	// should be given a unique integer ID when it is created, otherwise
+	// results might be overwritten.
+	networkResults *networkResultStore
 
 	// circuits is storage for payment circuits which are used to
 	// forward the settle/fail htlc updates back to the add htlc initiator.
@@ -293,23 +273,16 @@ func New(cfg Config, currentHeight uint32) (*Switch, error) {
 		return nil, err
 	}
 
-	sequencer, err := NewPersistentSequencer(cfg.DB)
-	if err != nil {
-		return nil, err
-	}
-
 	return &Switch{
 		bestHeight:        currentHeight,
 		cfg:               &cfg,
 		circuits:          circuitMap,
-		paymentSequencer:  sequencer,
-		control:           NewPaymentControl(false, cfg.DB),
 		linkIndex:         make(map[lnwire.ChannelID]ChannelLink),
 		mailOrchestrator:  newMailOrchestrator(),
 		forwardingIndex:   make(map[lnwire.ShortChannelID]ChannelLink),
 		interfaceIndex:    make(map[[33]byte]map[lnwire.ChannelID]ChannelLink),
 		pendingLinkIndex:  make(map[lnwire.ChannelID]ChannelLink),
-		pendingPayments:   make(map[uint64]*pendingPayment),
+		networkResults:    newNetworkResultStore(cfg.DB),
 		htlcPlex:          make(chan *plexPacket),
 		chanCloseRequests: make(chan *ChanClose),
 		resolutionMsgs:    make(chan *resolutionMsg),
@@ -353,37 +326,88 @@ func (s *Switch) ProcessContractResolution(msg contractcourt.ResolutionMsg) erro
 	return nil
 }
 
+// GetPaymentResult returns the the result of the payment attempt with the
+// given paymentID. The method returns a channel where the payment result will
+// be sent when available, or an error is encountered during forwarding. When a
+// result is received on the channel, the HTLC is guaranteed to no longer be in
+// flight. The switch shutting down is signaled by closing the channel. If the
+// paymentID is unknown, ErrPaymentIDNotFound will be returned.
+func (s *Switch) GetPaymentResult(paymentID uint64, paymentHash lntypes.Hash,
+	deobfuscator ErrorDecrypter) (<-chan *PaymentResult, error) {
+
+	var (
+		nChan  <-chan *networkResult
+		err    error
+		outKey = CircuitKey{
+			ChanID: sourceHop,
+			HtlcID: paymentID,
+		}
+	)
+
+	// If the payment is not found in the circuit map, check whether a
+	// result is already available.
+	// Assumption: no one will add this payment ID other than the caller.
+	if s.circuits.LookupCircuit(outKey) == nil {
+		res, err := s.networkResults.getResult(paymentID)
+		if err != nil {
+			return nil, err
+		}
+		c := make(chan *networkResult, 1)
+		c <- res
+		nChan = c
+	} else {
+		// The payment was committed to the circuits, subscribe for a
+		// result.
+		nChan, err = s.networkResults.subscribeResult(paymentID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	resultChan := make(chan *PaymentResult, 1)
+
+	// Since the payment was known, we can start a goroutine that can
+	// extract the result when it is available, and pass it on to the
+	// caller.
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+
+		var n *networkResult
+		select {
+		case n = <-nChan:
+		case <-s.quit:
+			// We close the result channel to signal a shutdown. We
+			// don't send any result in this case since the HTLC is
+			// still in flight.
+			close(resultChan)
+			return
+		}
+
+		// Extract the result and pass it to the result channel.
+		result, err := s.extractResult(
+			deobfuscator, n, paymentID, paymentHash,
+		)
+		if err != nil {
+			e := fmt.Errorf("Unable to extract result: %v", err)
+			log.Error(e)
+			resultChan <- &PaymentResult{
+				Error: e,
+			}
+			return
+		}
+		resultChan <- result
+	}()
+
+	return resultChan, nil
+}
+
 // SendHTLC is used by other subsystems which aren't belong to htlc switch
-// package in order to send the htlc update.
-func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID,
-	htlc *lnwire.UpdateAddHTLC,
-	deobfuscator ErrorDecrypter) ([sha256.Size]byte, error) {
-
-	// Before sending, double check that we don't already have 1) an
-	// in-flight payment to this payment hash, or 2) a complete payment for
-	// the same hash.
-	if err := s.control.ClearForTakeoff(htlc); err != nil {
-		return zeroPreimage, err
-	}
-
-	// Create payment and add to the map of payment in order later to be
-	// able to retrieve it and return response to the user.
-	payment := &pendingPayment{
-		err:          make(chan error, 1),
-		preimage:     make(chan [sha256.Size]byte, 1),
-		paymentHash:  htlc.PaymentHash,
-		amount:       htlc.Amount,
-		deobfuscator: deobfuscator,
-	}
-
-	paymentID, err := s.paymentSequencer.NextID()
-	if err != nil {
-		return zeroPreimage, err
-	}
-
-	s.pendingMutex.Lock()
-	s.pendingPayments[paymentID] = payment
-	s.pendingMutex.Unlock()
+// package in order to send the htlc update. The paymentID used MUST be unique
+// for this HTLC, and MUST be used only once, otherwise the switch might reject
+// it.
+func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, paymentID uint64,
+	htlc *lnwire.UpdateAddHTLC) error {
 
 	// Generate and send new update packet, if error will be received on
 	// this stage it means that packet haven't left boundaries of our
@@ -395,34 +419,7 @@ func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID,
 		htlc:           htlc,
 	}
 
-	if err := s.forward(packet); err != nil {
-		s.removePendingPayment(paymentID)
-		if err := s.control.Fail(htlc.PaymentHash); err != nil {
-			return zeroPreimage, err
-		}
-
-		return zeroPreimage, err
-	}
-
-	// Returns channels so that other subsystem might wait/skip the
-	// waiting of handling of payment.
-	var preimage [sha256.Size]byte
-
-	select {
-	case e := <-payment.err:
-		err = e
-	case <-s.quit:
-		return zeroPreimage, ErrSwitchExiting
-	}
-
-	select {
-	case p := <-payment.preimage:
-		preimage = p
-	case <-s.quit:
-		return zeroPreimage, ErrSwitchExiting
-	}
-
-	return preimage, err
+	return s.forward(packet)
 }
 
 // UpdateForwardingPolicies sends a message to the switch to update the
@@ -847,14 +844,33 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 // multiple db transactions. The guarantees of the circuit map are stringent
 // enough such that we are able to tolerate reordering of these operations
 // without side effects. The primary operations handled are:
-//  1. Ack settle/fail references, to avoid resending this response internally
-//  2. Teardown the closing circuit in the circuit map
-//  3. Transition the payment status to grounded or completed.
-//  4. Respond to an in-mem pending payment, if it is found.
+//  1. Save the payment result to the pending payment store.
+//  2. Notify subscribers about the payment result.
+//  3. Ack settle/fail references, to avoid resending this response internally
+//  4. Teardown the closing circuit in the circuit map
 //
 // NOTE: This method MUST be spawned as a goroutine.
 func (s *Switch) handleLocalResponse(pkt *htlcPacket) {
 	defer s.wg.Done()
+
+	paymentID := pkt.incomingHTLCID
+
+	// The error reason will be unencypted in case this a local
+	// failure or a converted error.
+	unencrypted := pkt.localFailure || pkt.convertedError
+	n := &networkResult{
+		msg:          pkt.htlc,
+		unencrypted:  unencrypted,
+		isResolution: pkt.isResolution,
+	}
+
+	// Store the result to the db. This will also notify subscribers about
+	// the result.
+	if err := s.networkResults.storeResult(paymentID, n); err != nil {
+		log.Errorf("Unable to complete payment for pid=%v: %v",
+			paymentID, err)
+		return
+	}
 
 	// First, we'll clean up any fwdpkg references, circuit entries, and
 	// mark in our db that the payment for this payment hash has either
@@ -883,71 +899,50 @@ func (s *Switch) handleLocalResponse(pkt *htlcPacket) {
 			pkt.inKey(), err)
 		return
 	}
+}
 
-	// Locate the pending payment to notify the application that this
-	// payment has failed. If one is not found, it likely means the daemon
-	// has been restarted since sending the payment.
-	payment := s.findPayment(pkt.incomingHTLCID)
+// extractResult uses the given deobfuscator to extract the payment result from
+// the given network message.
+func (s *Switch) extractResult(deobfuscator ErrorDecrypter, n *networkResult,
+	paymentID uint64, paymentHash lntypes.Hash) (*PaymentResult, error) {
 
-	var (
-		preimage   [32]byte
-		paymentErr error
-	)
-
-	switch htlc := pkt.htlc.(type) {
+	switch htlc := n.msg.(type) {
 
 	// We've received a settle update which means we can finalize the user
 	// payment and return successful response.
 	case *lnwire.UpdateFulfillHTLC:
-		// Persistently mark that a payment to this payment hash
-		// succeeded. This will prevent us from ever making another
-		// payment to this hash.
-		err := s.control.Success(pkt.circuit.PaymentHash)
-		if err != nil && err != ErrPaymentAlreadyCompleted {
-			log.Warnf("Unable to mark completed payment %x: %v",
-				pkt.circuit.PaymentHash, err)
-			return
-		}
+		return &PaymentResult{
+			Preimage: htlc.PaymentPreimage,
+		}, nil
 
-		preimage = htlc.PaymentPreimage
-
-	// We've received a fail update which means we can finalize the user
-	// payment and return fail response.
+	// We've received a fail update which means we can finalize the
+	// user payment and return fail response.
 	case *lnwire.UpdateFailHTLC:
-		// Persistently mark that a payment to this payment hash failed.
-		// This will permit us to make another attempt at a successful
-		// payment.
-		err := s.control.Fail(pkt.circuit.PaymentHash)
-		if err != nil && err != ErrPaymentAlreadyCompleted {
-			log.Warnf("Unable to ground payment %x: %v",
-				pkt.circuit.PaymentHash, err)
-			return
-		}
+		paymentErr := s.parseFailedPayment(
+			deobfuscator, paymentID, paymentHash, n.unencrypted,
+			n.isResolution, htlc,
+		)
 
-		paymentErr = s.parseFailedPayment(payment, pkt, htlc)
+		return &PaymentResult{
+			Error: paymentErr,
+		}, nil
 
 	default:
-		log.Warnf("Received unknown response type: %T", pkt.htlc)
-		return
-	}
-
-	// Deliver the payment error and preimage to the application, if it is
-	// waiting for a response.
-	if payment != nil {
-		payment.err <- paymentErr
-		payment.preimage <- preimage
-		s.removePendingPayment(pkt.incomingHTLCID)
+		return nil, fmt.Errorf("Received unknown response type: %T",
+			htlc)
 	}
 }
 
 // parseFailedPayment determines the appropriate failure message to return to
 // a user initiated payment. The three cases handled are:
-// 1) A local failure, which should already plaintext.
-// 2) A resolution from the chain arbitrator,
-// 3) A failure from the remote party, which will need to be decrypted using the
-//      payment deobfuscator.
-func (s *Switch) parseFailedPayment(payment *pendingPayment, pkt *htlcPacket,
-	htlc *lnwire.UpdateFailHTLC) *ForwardingError {
+// 1) An unencrypted failure, which should already plaintext.
+// 2) A resolution from the chain arbitrator, which possibly has no failure
+//    reason attached.
+// 3) A failure from the remote party, which will need to be decrypted using
+//    the payment deobfuscator.
+func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
+	paymentID uint64, paymentHash lntypes.Hash, unencrypted,
+	isResolution bool, htlc *lnwire.UpdateFailHTLC) *ForwardingError {
 
 	var failure *ForwardingError
 
@@ -956,14 +951,14 @@ func (s *Switch) parseFailedPayment(payment *pendingPayment, pkt *htlcPacket,
 	// The payment never cleared the link, so we don't need to
 	// decrypt the error, simply decode it them report back to the
 	// user.
-	case pkt.localFailure || pkt.convertedError:
+	case unencrypted:
 		var userErr string
 		r := bytes.NewReader(htlc.Reason)
 		failureMsg, err := lnwire.DecodeFailure(r, 0)
 		if err != nil {
-			userErr = fmt.Sprintf("unable to decode onion failure, "+
-				"htlc with hash(%x): %v",
-				pkt.circuit.PaymentHash[:], err)
+			userErr = fmt.Sprintf("unable to decode onion "+
+				"failure (hash=%v, pid=%d): %v",
+				paymentHash, paymentID, err)
 			log.Error(userErr)
 
 			// As this didn't even clear the link, we don't need to
@@ -981,25 +976,14 @@ func (s *Switch) parseFailedPayment(payment *pendingPayment, pkt *htlcPacket,
 	// the first hop. In this case, we'll report a permanent
 	// channel failure as this means us, or the remote party had to
 	// go on chain.
-	case pkt.isResolution && htlc.Reason == nil:
-		userErr := fmt.Sprintf("payment was resolved " +
-			"on-chain, then cancelled back")
+	case isResolution && htlc.Reason == nil:
+		userErr := fmt.Sprintf("payment was resolved "+
+			"on-chain, then cancelled back (hash=%v, pid=%d)",
+			paymentHash, paymentID)
 		failure = &ForwardingError{
 			ErrorSource:    s.cfg.SelfKey,
 			ExtraMsg:       userErr,
 			FailureMessage: lnwire.FailPermanentChannelFailure{},
-		}
-
-	// If the provided payment is nil, we have discarded the error decryptor
-	// due to a restart. We'll return a fixed error and signal a temporary
-	// channel failure to the router.
-	case payment == nil:
-		userErr := fmt.Sprintf("error decryptor for payment " +
-			"could not be located, likely due to restart")
-		failure = &ForwardingError{
-			ErrorSource:    s.cfg.SelfKey,
-			ExtraMsg:       userErr,
-			FailureMessage: lnwire.NewTemporaryChannelFailure(nil),
 		}
 
 	// A regular multi-hop payment error that we'll need to
@@ -1008,11 +992,11 @@ func (s *Switch) parseFailedPayment(payment *pendingPayment, pkt *htlcPacket,
 		var err error
 		// We'll attempt to fully decrypt the onion encrypted
 		// error. If we're unable to then we'll bail early.
-		failure, err = payment.deobfuscator.DecryptError(htlc.Reason)
+		failure, err = deobfuscator.DecryptError(htlc.Reason)
 		if err != nil {
-			userErr := fmt.Sprintf("unable to de-obfuscate onion "+
-				"failure, htlc with hash(%x): %v",
-				pkt.circuit.PaymentHash[:], err)
+			userErr := fmt.Sprintf("unable to de-obfuscate "+
+				"onion failure (hash=%v, pid=%d): %v",
+				paymentHash, paymentID, err)
 			log.Error(userErr)
 			failure = &ForwardingError{
 				ErrorSource:    s.cfg.SelfKey,
@@ -2176,43 +2160,10 @@ func (s *Switch) getLinks(destination [33]byte) ([]ChannelLink, error) {
 	return channelLinks, nil
 }
 
-// removePendingPayment is the helper function which removes the pending user
-// payment.
-func (s *Switch) removePendingPayment(paymentID uint64) {
-	s.pendingMutex.Lock()
-	defer s.pendingMutex.Unlock()
-
-	delete(s.pendingPayments, paymentID)
-}
-
-// findPayment is the helper function which find the payment.
-func (s *Switch) findPayment(paymentID uint64) *pendingPayment {
-	s.pendingMutex.RLock()
-	defer s.pendingMutex.RUnlock()
-
-	payment, ok := s.pendingPayments[paymentID]
-	if !ok {
-		log.Errorf("Cannot find pending payment with ID %d",
-			paymentID)
-		return nil
-	}
-
-	return payment
-}
-
 // CircuitModifier returns a reference to subset of the interfaces provided by
 // the circuit map, to allow links to open and close circuits.
 func (s *Switch) CircuitModifier() CircuitModifier {
 	return s.circuits
-}
-
-// numPendingPayments is helper function which returns the overall number of
-// pending user payments.
-func (s *Switch) numPendingPayments() int {
-	s.pendingMutex.RLock()
-	defer s.pendingMutex.RUnlock()
-
-	return len(s.pendingPayments)
 }
 
 // commitCircuits persistently adds a circuit to the switch's circuit map.

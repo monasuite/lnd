@@ -18,7 +18,6 @@ import (
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/wallet"
 	"github.com/btcsuite/btcwallet/walletdb"
-	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chainntnfs/bitcoindnotify"
 	"github.com/monasuite/lnd/chainntnfs/btcdnotify"
@@ -31,13 +30,22 @@ import (
 	"github.com/monasuite/lnd/lnwallet/btcwallet"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing/chainview"
+	"github.com/monasuite/neutrino"
+	"github.com/monasuite/neutrino/headerfs"
 )
 
 const (
-	defaultBitcoinMinHTLCMSat   = lnwire.MilliSatoshi(1000)
-	defaultBitcoinBaseFeeMSat   = lnwire.MilliSatoshi(1000)
-	defaultBitcoinFeeRate       = lnwire.MilliSatoshi(1)
-	defaultBitcoinTimeLockDelta = 40
+	defaultBitcoinMinHTLCMSat = lnwire.MilliSatoshi(1000)
+
+	// DefaultBitcoinBaseFeeMSat is the default forwarding base fee.
+	DefaultBitcoinBaseFeeMSat = lnwire.MilliSatoshi(1000)
+
+	// DefaultBitcoinFeeRate is the default forwarding fee rate.
+	DefaultBitcoinFeeRate = lnwire.MilliSatoshi(1)
+
+	// DefaultBitcoinTimeLockDelta is the default forwarding time lock
+	// delta.
+	DefaultBitcoinTimeLockDelta = 40
 
 	defaultMonacoinMinHTLCMSat   = lnwire.MilliSatoshi(1000)
 	defaultMonacoinBaseFeeMSat   = lnwire.MilliSatoshi(1000)
@@ -697,6 +705,13 @@ func initNeutrinoBackend(chainDir string) (*neutrino.ChainService, func(), error
 			"database: %v", err)
 	}
 
+	headerStateAssertion, err := parseHeaderStateAssertion(
+		cfg.NeutrinoMode.AssertFilterHeader,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// With the database open, we can now create an instance of the
 	// neutrino light client. We pass in relevant configuration parameters
 	// required.
@@ -727,6 +742,7 @@ func initNeutrinoBackend(chainDir string) (*neutrino.ChainService, func(), error
 
 			return ips, nil
 		},
+		AssertFilterHeader: headerStateAssertion,
 	}
 
 	neutrino.MaxPeers = 8
@@ -749,4 +765,33 @@ func initNeutrinoBackend(chainDir string) (*neutrino.ChainService, func(), error
 	}
 
 	return neutrinoCS, cleanUp, nil
+}
+
+// parseHeaderStateAssertion parses the user-specified neutrino header state
+// into a headerfs.FilterHeader.
+func parseHeaderStateAssertion(state string) (*headerfs.FilterHeader, error) {
+	if len(state) == 0 {
+		return nil, nil
+	}
+
+	split := strings.Split(state, ":")
+	if len(split) != 2 {
+		return nil, fmt.Errorf("header state assertion %v in "+
+			"unexpected format, expected format height:hash", state)
+	}
+
+	height, err := strconv.ParseUint(split[0], 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("invalid filter header height: %v", err)
+	}
+
+	hash, err := chainhash.NewHashFromStr(split[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid filter header hash: %v", err)
+	}
+
+	return &headerfs.FilterHeader{
+		Height:     uint32(height),
+		FilterHash: *hash,
+	}, nil
 }

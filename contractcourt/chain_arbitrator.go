@@ -12,7 +12,6 @@ import (
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/input"
-	"github.com/monasuite/lnd/invoices"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/sweep"
@@ -146,7 +145,7 @@ type ChainArbitratorConfig struct {
 
 	// Registry is the invoice database that is used by resolvers to lookup
 	// preimages and settle invoices.
-	Registry *invoices.InvoiceRegistry
+	Registry Registry
 
 	// NotifyClosedChannel is a function closure that the ChainArbitrator
 	// will use to notify the ChannelNotifier about a newly closed channel.
@@ -259,7 +258,7 @@ func newActiveChannelArbitrator(channel *channeldb.OpenChannel,
 			// Finally, we'll force close the channel completing
 			// the force close workflow.
 			chanMachine, err := lnwallet.NewLightningChannel(
-				c.cfg.Signer, c.cfg.PreimageDB, channel, nil,
+				c.cfg.Signer, channel, nil,
 			)
 			if err != nil {
 				return nil, err
@@ -297,8 +296,25 @@ func newActiveChannelArbitrator(channel *channeldb.OpenChannel,
 		return c.resolveContract(chanPoint, chanLog)
 	}
 
+	// Finally, we'll need to construct a series of htlc Sets based on all
+	// currently known valid commitments.
+	htlcSets := make(map[HtlcSetKey]htlcSet)
+	htlcSets[LocalHtlcSet] = newHtlcSet(channel.LocalCommitment.Htlcs)
+	htlcSets[RemoteHtlcSet] = newHtlcSet(channel.RemoteCommitment.Htlcs)
+
+	pendingRemoteCommitment, err := channel.RemoteCommitChainTip()
+	if err != nil && err != channeldb.ErrNoPendingCommit {
+		blockEpoch.Cancel()
+		return nil, err
+	}
+	if pendingRemoteCommitment != nil {
+		htlcSets[RemotePendingHtlcSet] = newHtlcSet(
+			pendingRemoteCommitment.Commitment.Htlcs,
+		)
+	}
+
 	return NewChannelArbitrator(
-		arbCfg, channel.LocalCommitment.Htlcs, chanLog,
+		arbCfg, htlcSets, chanLog,
 	), nil
 }
 
@@ -375,7 +391,6 @@ func (c *ChainArbitrator) Start() error {
 			chainWatcherConfig{
 				chanState: channel,
 				notifier:  c.cfg.Notifier,
-				pCache:    c.cfg.PreimageDB,
 				signer:    c.cfg.Signer,
 				isOurAddr: c.cfg.IsOurAddress,
 				contractBreach: func(retInfo *lnwallet.BreachRetribution) error {
@@ -448,7 +463,7 @@ func (c *ChainArbitrator) Start() error {
 
 		// We can also leave off the set of HTLC's here as since the
 		// channel is already in the process of being full resolved, no
-		// new HTLC's we be added.
+		// new HTLC's will be added.
 		c.activeChannels[chanPoint] = NewChannelArbitrator(
 			arbCfg, nil, chanLog,
 		)
@@ -559,15 +574,27 @@ func (c *ChainArbitrator) Stop() error {
 	return nil
 }
 
+// ContractUpdate is a message packages the latest set of active HTLCs on a
+// commitment, and also identifies which commitment received a new set of
+// HTLCs.
+type ContractUpdate struct {
+	// HtlcKey identifies which commitment the HTLCs below are present on.
+	HtlcKey HtlcSetKey
+
+	// Htlcs are the of active HTLCs on the commitment identified by the
+	// above HtlcKey.
+	Htlcs []channeldb.HTLC
+}
+
 // ContractSignals wraps the two signals that affect the state of a channel
 // being watched by an arbitrator. The two signals we care about are: the
 // channel has a new set of HTLC's, and the remote party has just broadcast
 // their version of the commitment transaction.
 type ContractSignals struct {
-	// HtlcUpdates is a channel that once we new commitment updates takes
-	// place, the later set of HTLC's on the commitment transaction should
-	// be sent over.
-	HtlcUpdates chan []channeldb.HTLC
+	// HtlcUpdates is a channel that the link will use to update the
+	// designated channel arbitrator when the set of HTLCs on any valid
+	// commitment changes.
+	HtlcUpdates chan *ContractUpdate
 
 	// ShortChanID is the up to date short channel ID for a contract. This
 	// can change either if when the contract was added it didn't yet have
@@ -709,7 +736,6 @@ func (c *ChainArbitrator) WatchNewChannel(newChan *channeldb.OpenChannel) error 
 		chainWatcherConfig{
 			chanState: newChan,
 			notifier:  c.cfg.Notifier,
-			pCache:    c.cfg.PreimageDB,
 			signer:    c.cfg.Signer,
 			isOurAddr: c.cfg.IsOurAddress,
 			contractBreach: func(retInfo *lnwallet.BreachRetribution) error {

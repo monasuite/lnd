@@ -104,7 +104,7 @@ func TestChainWatcherRemoteUnilateralClose(t *testing.T) {
 
 	// We should get a new spend event over the remote unilateral close
 	// event channel.
-	var uniClose *lnwallet.UnilateralCloseSummary
+	var uniClose *RemoteUnilateralCloseInfo
 	select {
 	case uniClose = <-chanEvents.RemoteUnilateralClosure:
 	case <-time.After(time.Second * 15):
@@ -186,7 +186,7 @@ func TestChainWatcherRemoteUnilateralClosePendingCommit(t *testing.T) {
 
 	// With the HTLC added, we'll now manually initiate a state transition
 	// from Alice to Bob.
-	_, _, err = aliceChannel.SignNextCommitment()
+	_, _, _, err = aliceChannel.SignNextCommitment()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestChainWatcherRemoteUnilateralClosePendingCommit(t *testing.T) {
 
 	// We should get a new spend event over the remote unilateral close
 	// event channel.
-	var uniClose *lnwallet.UnilateralCloseSummary
+	var uniClose *RemoteUnilateralCloseInfo
 	select {
 	case uniClose = <-chanEvents.RemoteUnilateralClosure:
 	case <-time.After(time.Second * 15):
@@ -225,7 +225,7 @@ func TestChainWatcherRemoteUnilateralClosePendingCommit(t *testing.T) {
 	}
 }
 
-// dlpTestCase is a speical struct that we'll use to generate randomized test
+// dlpTestCase is a special struct that we'll use to generate randomized test
 // cases for the main TestChainWatcherDataLossProtect test. This struct has a
 // special Generate method that will generate a random state number, and a
 // broadcast state number which is greater than that state number.
@@ -343,7 +343,7 @@ func TestChainWatcherDataLossProtect(t *testing.T) {
 
 		// We should get a new uni close resolution that indicates we
 		// processed the DLP scenario.
-		var uniClose *lnwallet.UnilateralCloseSummary
+		var uniClose *RemoteUnilateralCloseInfo
 		select {
 		case uniClose = <-chanEvents.RemoteUnilateralClosure:
 			// If we processed this as a DLP case, then the remote

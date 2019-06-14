@@ -10,8 +10,8 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcutil/gcs/builder"
-	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/neutrino"
 )
 
 // CfFilteredChainView is an implementation of the FilteredChainView interface

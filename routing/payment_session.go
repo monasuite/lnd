@@ -2,24 +2,52 @@ package routing
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing/route"
 )
 
+// PaymentSession is used during SendPayment attempts to provide routes to
+// attempt. It also defines methods to give the PaymentSession additional
+// information learned during the previous attempts.
+type PaymentSession interface {
+	// RequestRoute returns the next route to attempt for routing the
+	// specified HTLC payment to the target node.
+	RequestRoute(payment *LightningPayment,
+		height uint32, finalCltvDelta uint16) (*route.Route, error)
+
+	// ReportVertexFailure reports to the PaymentSession that the passsed
+	// vertex failed to route the previous payment attempt. The
+	// PaymentSession will use this information to produce a better next
+	// route.
+	ReportVertexFailure(v route.Vertex)
+
+	// ReportEdgeFailure reports to the PaymentSession that the passed edge
+	// failed to route the previous payment attempt. A minimum penalization
+	// amount is included to attenuate the failure. This is set to a
+	// non-zero value for channel balance failures. The PaymentSession will
+	// use this information to produce a better next route.
+	ReportEdgeFailure(failedEdge edge, minPenalizeAmt lnwire.MilliSatoshi)
+
+	// ReportEdgePolicyFailure reports to the PaymentSession that we
+	// received a failure message that relates to a channel policy. For
+	// these types of failures, the PaymentSession can decide whether to to
+	// keep the edge included in the next attempted route. The
+	// PaymentSession will use this information to produce a better next
+	// route.
+	ReportEdgePolicyFailure(failedEdge edge)
+}
+
 // paymentSession is used during an HTLC routings session to prune the local
 // chain view in response to failures, and also report those failures back to
-// missionControl. The snapshot copied for this session will only ever grow,
+// MissionControl. The snapshot copied for this session will only ever grow,
 // and will now be pruned after a decay like the main view within mission
 // control. We do this as we want to avoid the case where we continually try a
 // bad edge or route multiple times in a session. This can lead to an infinite
 // loop if payment attempts take long enough. An additional set of edges can
 // also be provided to assist in reaching the payment's destination.
 type paymentSession struct {
-	pruneViewSnapshot graphPruneView
-
 	additionalEdges map[route.Vertex][]*channeldb.ChannelEdgePolicy
 
 	bandwidthHints map[uint64]lnwire.MilliSatoshi
@@ -28,79 +56,76 @@ type paymentSession struct {
 	// source of policy related routing failures during this payment attempt.
 	// We'll use this map to prune out channels when the first error may not
 	// require pruning, but any subsequent ones do.
-	errFailedPolicyChans map[EdgeLocator]struct{}
+	errFailedPolicyChans map[nodeChannel]struct{}
 
-	mc *missionControl
+	mc *MissionControl
 
-	haveRoutes     bool
-	preBuiltRoutes []*route.Route
+	preBuiltRoute      *route.Route
+	preBuiltRouteTried bool
 
 	pathFinder pathFinder
 }
+
+// A compile time assertion to ensure paymentSession meets the PaymentSession
+// interface.
+var _ PaymentSession = (*paymentSession)(nil)
 
 // ReportVertexFailure adds a vertex to the graph prune view after a client
 // reports a routing failure localized to the vertex. The time the vertex was
 // added is noted, as it'll be pruned from the shared view after a period of
 // vertexDecay. However, the vertex will remain pruned for the *local* session.
 // This ensures we don't retry this vertex during the payment attempt.
+//
+// NOTE: Part of the PaymentSession interface.
 func (p *paymentSession) ReportVertexFailure(v route.Vertex) {
-	log.Debugf("Reporting vertex %v failure to Mission Control", v)
-
-	// First, we'll add the failed vertex to our local prune view snapshot.
-	p.pruneViewSnapshot.vertexes[v] = struct{}{}
-
-	// With the vertex added, we'll now report back to the global prune
-	// view, with this new piece of information so it can be utilized for
-	// new payment sessions.
-	p.mc.Lock()
-	p.mc.failedVertexes[v] = time.Now()
-	p.mc.Unlock()
+	p.mc.reportVertexFailure(v)
 }
 
-// ReportChannelFailure adds a channel to the graph prune view. The time the
+// ReportEdgeFailure adds a channel to the graph prune view. The time the
 // channel was added is noted, as it'll be pruned from the global view after a
 // period of edgeDecay. However, the edge will remain pruned for the duration
 // of the *local* session. This ensures that we don't flap by continually
 // retrying an edge after its pruning has expired.
 //
 // TODO(roasbeef): also add value attempted to send and capacity of channel
-func (p *paymentSession) ReportEdgeFailure(e *EdgeLocator) {
-	log.Debugf("Reporting edge %v failure to Mission Control", e)
+//
+// NOTE: Part of the PaymentSession interface.
+func (p *paymentSession) ReportEdgeFailure(failedEdge edge,
+	minPenalizeAmt lnwire.MilliSatoshi) {
 
-	// First, we'll add the failed edge to our local prune view snapshot.
-	p.pruneViewSnapshot.edges[*e] = struct{}{}
-
-	// With the edge added, we'll now report back to the global prune view,
-	// with this new piece of information so it can be utilized for new
-	// payment sessions.
-	p.mc.Lock()
-	p.mc.failedEdges[*e] = time.Now()
-	p.mc.Unlock()
+	p.mc.reportEdgeFailure(failedEdge, minPenalizeAmt)
 }
 
-// ReportChannelPolicyFailure handles a failure message that relates to a
+// ReportEdgePolicyFailure handles a failure message that relates to a
 // channel policy. For these types of failures, the policy is updated and we
 // want to keep it included during path finding. This function does mark the
 // edge as 'policy failed once'. The next time it fails, the whole node will be
 // pruned. This is to prevent nodes from keeping us busy by continuously sending
 // new channel updates.
-func (p *paymentSession) ReportEdgePolicyFailure(
-	errSource route.Vertex, failedEdge *EdgeLocator) {
+//
+// NOTE: Part of the PaymentSession interface.
+//
+// TODO(joostjager): Move this logic into global mission control.
+func (p *paymentSession) ReportEdgePolicyFailure(failedEdge edge) {
+	key := nodeChannel{
+		node:    failedEdge.from,
+		channel: failedEdge.channel,
+	}
 
 	// Check to see if we've already reported a policy related failure for
 	// this channel. If so, then we'll prune out the vertex.
-	_, ok := p.errFailedPolicyChans[*failedEdge]
+	_, ok := p.errFailedPolicyChans[key]
 	if ok {
-		// TODO(joostjager): is this aggresive pruning still necessary?
+		// TODO(joostjager): is this aggressive pruning still necessary?
 		// Just pruning edges may also work unless there is a huge
 		// number of failing channels from that node?
-		p.ReportVertexFailure(errSource)
+		p.ReportVertexFailure(key.node)
 
 		return
 	}
 
 	// Finally, we'll record a policy failure from this node and move on.
-	p.errFailedPolicyChans[*failedEdge] = struct{}{}
+	p.errFailedPolicyChans[key] = struct{}{}
 }
 
 // RequestRoute returns a route which is likely to be capable for successfully
@@ -111,33 +136,23 @@ func (p *paymentSession) ReportEdgePolicyFailure(
 // will be explored, which feeds into the recommendations made for routing.
 //
 // NOTE: This function is safe for concurrent access.
+// NOTE: Part of the PaymentSession interface.
 func (p *paymentSession) RequestRoute(payment *LightningPayment,
 	height uint32, finalCltvDelta uint16) (*route.Route, error) {
 
 	switch {
-	// If we have a set of pre-built routes, then we'll just pop off the
-	// next route from the queue, and use it directly.
-	case p.haveRoutes && len(p.preBuiltRoutes) > 0:
-		nextRoute := p.preBuiltRoutes[0]
-		p.preBuiltRoutes[0] = nil // Set to nil to avoid GC leak.
-		p.preBuiltRoutes = p.preBuiltRoutes[1:]
 
-		return nextRoute, nil
+	// If we have a pre-built route, use that directly.
+	case p.preBuiltRoute != nil && !p.preBuiltRouteTried:
+		p.preBuiltRouteTried = true
 
-	// If we were instantiated with a set of pre-built routes, and we've
-	// run out, then we'll return a terminal error.
-	case p.haveRoutes && len(p.preBuiltRoutes) == 0:
-		return nil, fmt.Errorf("pre-built routes exhausted")
+		return p.preBuiltRoute, nil
+
+	// If the pre-built route has been tried already, the payment session is
+	// over.
+	case p.preBuiltRoute != nil:
+		return nil, fmt.Errorf("pre-built route already tried")
 	}
-
-	// Otherwise we actually need to perform path finding, so we'll obtain
-	// our current prune view snapshot. This view will only ever grow
-	// during the duration of this payment session, never shrinking.
-	pruneView := p.pruneViewSnapshot
-
-	log.Debugf("Mission Control session using prune view of %v "+
-		"edges, %v vertexes", len(pruneView.edges),
-		len(pruneView.vertexes))
 
 	// If a route cltv limit was specified, we need to subtract the final
 	// delta before passing it into path finding. The optimal path is
@@ -153,7 +168,7 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 
 	// Taking into account this prune view, we'll attempt to locate a path
 	// to our destination, respecting the recommendations from
-	// missionControl.
+	// MissionControl.
 	path, err := p.pathFinder(
 		&graphParams{
 			graph:           p.mc.graph,
@@ -161,11 +176,12 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 			bandwidthHints:  p.bandwidthHints,
 		},
 		&RestrictParams{
-			IgnoredNodes:      pruneView.vertexes,
-			IgnoredEdges:      pruneView.edges,
-			FeeLimit:          payment.FeeLimit,
-			OutgoingChannelID: payment.OutgoingChannelID,
-			CltvLimit:         cltvLimit,
+			ProbabilitySource:     p.mc.getEdgeProbability,
+			FeeLimit:              payment.FeeLimit,
+			OutgoingChannelID:     payment.OutgoingChannelID,
+			CltvLimit:             cltvLimit,
+			PaymentAttemptPenalty: p.mc.cfg.PaymentAttemptPenalty,
+			MinProbability:        p.mc.cfg.MinRouteProbability,
 		},
 		p.mc.selfNode.PubKeyBytes, payment.Target,
 		payment.Amount,
@@ -187,4 +203,10 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 	}
 
 	return route, err
+}
+
+// nodeChannel is a combination of the node pubkey and one of its channels.
+type nodeChannel struct {
+	node    route.Vertex
+	channel uint64
 }

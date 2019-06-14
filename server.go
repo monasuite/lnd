@@ -24,7 +24,6 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/coreos/bbolt"
 	"github.com/go-errors/errors"
-
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/autopilot"
@@ -40,6 +39,7 @@ import (
 	"github.com/monasuite/lnd/lncfg"
 	"github.com/monasuite/lnd/lnpeer"
 	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/lnrpc/routerrpc"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/nat"
@@ -188,7 +188,11 @@ type server struct {
 
 	breachArbiter *breachArbiter
 
+	missionControl *routing.MissionControl
+
 	chanRouter *routing.ChannelRouter
+
+	controlTower routing.ControlTower
 
 	authGossiper *discovery.AuthenticatedGossiper
 
@@ -343,7 +347,10 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 		readPool:       readPool,
 		chansToRestore: chansToRestore,
 
-		invoices: invoices.NewRegistry(chanDB, decodeFinalCltvExpiry),
+		invoices: invoices.NewRegistry(
+			chanDB, decodeFinalCltvExpiry,
+			defaultFinalCltvRejectDelta,
+		),
 
 		channelNotifier: channelnotifier.New(chanDB),
 
@@ -375,7 +382,6 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 	}
 
 	s.witnessBeacon = &preimageBeacon{
-		invoices:    s.invoices,
 		wCache:      chanDB.NewWitnessCache(),
 		subscribers: make(map[uint64]*preimageSubscriber),
 	}
@@ -608,57 +614,59 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 	}
 	s.currentNodeAnn = nodeAnn
 
+	// The router will get access to the payment ID sequencer, such that it
+	// can generate unique payment IDs.
+	sequencer, err := htlcswitch.NewPersistentSequencer(chanDB)
+	if err != nil {
+		return nil, err
+	}
+
+	queryBandwidth := func(edge *channeldb.ChannelEdgeInfo) lnwire.MilliSatoshi {
+		cid := lnwire.NewChanIDFromOutPoint(&edge.ChannelPoint)
+		link, err := s.htlcSwitch.GetLink(cid)
+		if err != nil {
+			// If the link isn't online, then we'll report
+			// that it has zero bandwidth to the router.
+			return 0
+		}
+
+		// If the link is found within the switch, but it isn't
+		// yet eligible to forward any HTLCs, then we'll treat
+		// it as if it isn't online in the first place.
+		if !link.EligibleToForward() {
+			return 0
+		}
+
+		// Otherwise, we'll return the current best estimate
+		// for the available bandwidth for the link.
+		return link.Bandwidth()
+	}
+
+	// Instantiate mission control with config from the sub server.
+	//
+	// TODO(joostjager): When we are further in the process of moving to sub
+	// servers, the mission control instance itself can be moved there too.
+	s.missionControl = routing.NewMissionControl(
+		chanGraph, selfNode, queryBandwidth,
+		routerrpc.GetMissionControlConfig(cfg.SubRPCServers.RouterRPC),
+	)
+
+	paymentControl := channeldb.NewPaymentControl(chanDB)
+
+	s.controlTower = routing.NewControlTower(paymentControl)
+
 	s.chanRouter, err = routing.New(routing.Config{
-		Graph:     chanGraph,
-		Chain:     cc.chainIO,
-		ChainView: cc.chainView,
-		SendToSwitch: func(firstHop lnwire.ShortChannelID,
-			htlcAdd *lnwire.UpdateAddHTLC,
-			circuit *sphinx.Circuit) ([32]byte, error) {
-
-			// Using the created circuit, initialize the error
-			// decrypter so we can parse+decode any failures
-			// incurred by this payment within the switch.
-			errorDecryptor := &htlcswitch.SphinxErrorDecrypter{
-				OnionErrorDecrypter: sphinx.NewOnionErrorDecrypter(circuit),
-			}
-
-			return s.htlcSwitch.SendHTLC(
-				firstHop, htlcAdd, errorDecryptor,
-			)
-		},
+		Graph:              chanGraph,
+		Chain:              cc.chainIO,
+		ChainView:          cc.chainView,
+		Payer:              s.htlcSwitch,
+		Control:            s.controlTower,
+		MissionControl:     s.missionControl,
 		ChannelPruneExpiry: routing.DefaultChannelPruneExpiry,
 		GraphPruneInterval: time.Duration(time.Hour),
-		QueryBandwidth: func(edge *channeldb.ChannelEdgeInfo) lnwire.MilliSatoshi {
-			// If we aren't on either side of this edge, then we'll
-			// just thread through the capacity of the edge as we
-			// know it.
-			if !bytes.Equal(edge.NodeKey1Bytes[:], selfNode.PubKeyBytes[:]) &&
-				!bytes.Equal(edge.NodeKey2Bytes[:], selfNode.PubKeyBytes[:]) {
-
-				return lnwire.NewMSatFromSatoshis(edge.Capacity)
-			}
-
-			cid := lnwire.NewChanIDFromOutPoint(&edge.ChannelPoint)
-			link, err := s.htlcSwitch.GetLink(cid)
-			if err != nil {
-				// If the link isn't online, then we'll report
-				// that it has zero bandwidth to the router.
-				return 0
-			}
-
-			// If the link is found within the switch, but it isn't
-			// yet eligible to forward any HTLCs, then we'll treat
-			// it as if it isn't online in the first place.
-			if !link.EligibleToForward() {
-				return 0
-			}
-
-			// Otherwise, we'll return the current best estimate
-			// for the available bandwidth for the link.
-			return link.Bandwidth()
-		},
+		QueryBandwidth:     queryBandwidth,
 		AssumeChannelValid: cfg.Routing.UseAssumeChannelValid(),
+		NextPaymentID:      sequencer.NextID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create router: %v", err)
@@ -691,6 +699,8 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 		RotateTicker:         ticker.New(discovery.DefaultSyncerRotationInterval),
 		HistoricalSyncTicker: ticker.New(cfg.HistoricalSyncInterval),
 		NumActiveSyncers:     cfg.NumGraphSyncPeers,
+		MinimumBatchSize:     10,
+		SubBatchDelay:        time.Second * 5,
 	},
 		s.identityPriv.PubKey(),
 	)
@@ -722,13 +732,14 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 		NewBatchTimer: func() <-chan time.Time {
 			return time.NewTimer(sweep.DefaultBatchWindowDuration).C
 		},
-		SweepTxConfTarget:    6,
 		Notifier:             cc.chainNotifier,
 		ChainIO:              cc.chainIO,
 		Store:                sweeperStore,
 		MaxInputsPerTx:       sweep.DefaultMaxInputsPerTx,
 		MaxSweepAttempts:     sweep.DefaultMaxSweepAttempts,
 		NextAttemptDeltaFunc: sweep.DefaultNextAttemptDeltaFunc,
+		MaxFeeRate:           sweep.DefaultMaxFeeRate,
+		FeeRateBucketSize:    sweep.DefaultFeeRateBucketSize,
 	})
 
 	s.utxoNursery = newUtxoNursery(&NurseryConfig{
@@ -756,8 +767,8 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 
 	s.chainArb = contractcourt.NewChainArbitrator(contractcourt.ChainArbitratorConfig{
 		ChainHash:              *activeNetParams.GenesisHash,
-		IncomingBroadcastDelta: defaultIncomingBroadcastDelta,
-		OutgoingBroadcastDelta: defaultOutgoingBroadcastDelta,
+		IncomingBroadcastDelta: DefaultIncomingBroadcastDelta,
+		OutgoingBroadcastDelta: DefaultOutgoingBroadcastDelta,
 		NewSweepAddr: func() ([]byte, error) {
 			return newSweepPkScript(cc.wallet)
 		},
@@ -935,7 +946,7 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 			minConf := uint64(3)
 			maxConf := uint64(6)
 			maxChannelSize := uint64(
-				lnwire.NewMSatFromSatoshis(maxFundingAmount))
+				lnwire.NewMSatFromSatoshis(MaxFundingAmount))
 			stake := lnwire.NewMSatFromSatoshis(chanAmt) + pushAmt
 			conf := maxConf * uint64(stake) / maxChannelSize
 			if conf < minConf {
@@ -951,7 +962,7 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 			// remote have to claim funds in case of a unilateral
 			// close) linearly from minRemoteDelay blocks
 			// for small channels, to maxRemoteDelay blocks
-			// for channels of size maxFundingAmount.
+			// for channels of size MaxFundingAmount.
 			// TODO(halseth): Monacoin parameter for MONA.
 
 			// In case the user has explicitly specified
@@ -964,7 +975,7 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB, cc *chainControl,
 
 			// If not we scale according to channel size.
 			delay := uint16(btcutil.Amount(maxRemoteDelay) *
-				chanAmt / maxFundingAmount)
+				chanAmt / MaxFundingAmount)
 			if delay < minRemoteDelay {
 				delay = minRemoteDelay
 			}
@@ -2114,21 +2125,20 @@ func (s *server) BroadcastMessage(skips map[route.Vertex]struct{},
 // particular peer comes online. The peer itself is sent across the peerChan.
 //
 // NOTE: This function is safe for concurrent access.
-func (s *server) NotifyWhenOnline(peerKey *btcec.PublicKey,
+func (s *server) NotifyWhenOnline(peerKey [33]byte,
 	peerChan chan<- lnpeer.Peer) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Compute the target peer's identifier.
-	pubStr := string(peerKey.SerializeCompressed())
+	pubStr := string(peerKey[:])
 
 	// Check if peer is connected.
 	peer, ok := s.peersByPub[pubStr]
 	if ok {
 		// Connected, can return early.
-		srvrLog.Debugf("Notifying that peer %x is online",
-			peerKey.SerializeCompressed())
+		srvrLog.Debugf("Notifying that peer %x is online", peerKey)
 
 		select {
 		case peerChan <- peer:
@@ -2558,7 +2568,6 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 	p, err := newPeer(
 		conn, connReq, s, peerAddr, inbound, localFeatures,
 		cfg.ChanEnableTimeout,
-		defaultFinalCltvRejectDelta,
 		defaultOutgoingCltvRejectDelta,
 	)
 	if err != nil {

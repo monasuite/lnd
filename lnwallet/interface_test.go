@@ -31,7 +31,6 @@ import (
 	_ "github.com/btcsuite/btcwallet/walletdb/bdb"
 	"github.com/coreos/bbolt"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chainntnfs/btcdnotify"
 	"github.com/monasuite/lnd/channeldb"
@@ -40,6 +39,7 @@ import (
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwallet/btcwallet"
 	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/neutrino"
 )
 
 var (

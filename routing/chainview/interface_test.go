@@ -25,8 +25,8 @@ import (
 	_ "github.com/btcsuite/btcwallet/walletdb/bdb" // Required to register the boltdb walletdb implementation.
 	"github.com/monasuite/monad/btcjson"
 
-	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/neutrino"
 )
 
 var (

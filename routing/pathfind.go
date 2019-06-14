@@ -40,6 +40,22 @@ type pathFinder = func(g *graphParams, r *RestrictParams,
 	source, target route.Vertex, amt lnwire.MilliSatoshi) (
 	[]*channeldb.ChannelEdgePolicy, error)
 
+var (
+	// DefaultPaymentAttemptPenalty is the virtual cost in path finding weight
+	// units of executing a payment attempt that fails. It is used to trade
+	// off potentially better routes against their probability of
+	// succeeding.
+	DefaultPaymentAttemptPenalty = lnwire.NewMSatFromSatoshis(100)
+
+	// DefaultMinRouteProbability is the default minimum probability for routes
+	// returned from findPath.
+	DefaultMinRouteProbability = float64(0.01)
+
+	// DefaultAprioriHopProbability is the default a priori probability for
+	// a hop.
+	DefaultAprioriHopProbability = float64(0.95)
+)
+
 // edgePolicyWithSource is a helper struct to keep track of the source node
 // of a channel edge. ChannelEdgePolicy only contains to destination node
 // of the edge.
@@ -228,13 +244,10 @@ type graphParams struct {
 // RestrictParams wraps the set of restrictions passed to findPath that the
 // found path must adhere to.
 type RestrictParams struct {
-	// IgnoredNodes is an optional set of nodes that should be ignored if
-	// encountered during path finding.
-	IgnoredNodes map[route.Vertex]struct{}
-
-	// IgnoredEdges is an optional set of edges that should be ignored if
-	// encountered during path finding.
-	IgnoredEdges map[EdgeLocator]struct{}
+	// ProbabilitySource is a callback that is expected to return the
+	// success probability of traversing the channel from the node.
+	ProbabilitySource func(route.Vertex, EdgeLocator,
+		lnwire.MilliSatoshi) float64
 
 	// FeeLimit is a maximum fee amount allowed to be used on the path from
 	// the source to the target.
@@ -248,6 +261,16 @@ type RestrictParams struct {
 	// ctlv. After path finding is complete, the caller needs to increase
 	// all cltv expiry heights with the required final cltv delta.
 	CltvLimit *uint32
+
+	// PaymentAttemptPenalty is the virtual cost in path finding weight
+	// units of executing a payment attempt that fails. It is used to trade
+	// off potentially better routes against their probability of
+	// succeeding.
+	PaymentAttemptPenalty lnwire.MilliSatoshi
+
+	// MinProbability defines the minimum success probability of the
+	// returned route.
+	MinProbability float64
 }
 
 // findPath attempts to find a path from the source node within the
@@ -331,25 +354,17 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 	targetNode := &channeldb.LightningNode{PubKeyBytes: target}
 	distance[target] = nodeWithDist{
 		dist:            0,
+		weight:          0,
 		node:            targetNode,
 		amountToReceive: amt,
-		fee:             0,
 		incomingCltv:    0,
+		probability:     1,
 	}
 
 	// We'll use this map as a series of "next" hop pointers. So to get
 	// from `Vertex` to the target node, we'll take the edge that it's
 	// mapped to within `next`.
 	next := make(map[route.Vertex]*channeldb.ChannelEdgePolicy)
-
-	ignoredEdges := r.IgnoredEdges
-	if ignoredEdges == nil {
-		ignoredEdges = make(map[EdgeLocator]struct{})
-	}
-	ignoredNodes := r.IgnoredNodes
-	if ignoredNodes == nil {
-		ignoredNodes = make(map[route.Vertex]struct{})
-	}
 
 	// processEdge is a helper closure that will be used to make sure edges
 	// satisfy our specific requirements.
@@ -380,20 +395,25 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 			return
 		}
 
-		// If this vertex or edge has been black listed, then we'll
-		// skip exploring this edge.
-		if _, ok := ignoredNodes[fromVertex]; ok {
-			return
-		}
-
-		locator := newEdgeLocator(edge)
-		if _, ok := ignoredEdges[*locator]; ok {
-			return
-		}
-
+		// Calculate amount that the candidate node would have to sent
+		// out.
 		toNodeDist := distance[toNode]
-
 		amountToSend := toNodeDist.amountToReceive
+
+		// Request the success probability for this edge.
+		locator := newEdgeLocator(edge)
+		edgeProbability := r.ProbabilitySource(
+			fromVertex, *locator, amountToSend,
+		)
+
+		log.Tracef("path finding probability: fromnode=%v, chanid=%v, "+
+			"probability=%v", fromVertex, locator.ChannelID,
+			edgeProbability)
+
+		// If the probability is zero, there is no point in trying.
+		if edgeProbability == 0 {
+			return
+		}
 
 		// If the estimated bandwidth of the channel edge is not able
 		// to carry the amount that needs to be send, return.
@@ -453,19 +473,39 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 			return
 		}
 
+		// Calculate total probability of successfully reaching target
+		// by multiplying the probabilities. Both this edge and the rest
+		// of the route must succeed.
+		probability := toNodeDist.probability * edgeProbability
+
+		// If the probability is below the specified lower bound, we can
+		// abandon this direction. Adding further nodes can only lower
+		// the probability more.
+		if probability < r.MinProbability {
+			return
+		}
+
 		// By adding fromNode in the route, there will be an extra
 		// weight composed of the fee that this node will charge and
 		// the amount that will be locked for timeLockDelta blocks in
 		// the HTLC that is handed out to fromNode.
 		weight := edgeWeight(amountToReceive, fee, timeLockDelta)
 
-		// Compute the tentative distance to this new channel/edge
-		// which is the distance from our toNode to the target node
+		// Compute the tentative weight to this new channel/edge
+		// which is the weight from our toNode to the target node
 		// plus the weight of this edge.
-		tempDist := toNodeDist.dist + weight
+		tempWeight := toNodeDist.weight + weight
 
-		// If this new tentative distance is not better than the current
-		// best known distance to this node, return.
+		// Add an extra factor to the weight to take into account the
+		// probability.
+		tempDist := getProbabilityBasedDist(
+			tempWeight, probability, int64(r.PaymentAttemptPenalty),
+		)
+
+		// If the current best route is better than this candidate
+		// route, return. It is important to also return if the distance
+		// is equal, because otherwise the algorithm could run into an
+		// endless loop.
 		if tempDist >= distance[fromVertex].dist {
 			return
 		}
@@ -483,10 +523,11 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 		// map is populated with this edge.
 		distance[fromVertex] = nodeWithDist{
 			dist:            tempDist,
+			weight:          tempWeight,
 			node:            fromNode,
 			amountToReceive: amountToReceive,
-			fee:             fee,
 			incomingCltv:    incomingCltv,
+			probability:     probability,
 		}
 
 		next[fromVertex] = edge
@@ -614,182 +655,53 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 			"too many hops")
 	}
 
+	log.Debugf("Found route: probability=%v, hops=%v, fee=%v\n",
+		distance[source].probability, numEdges,
+		distance[source].amountToReceive-amt)
+
 	return pathEdges, nil
 }
 
-// findPaths implements a k-shortest paths algorithm to find all the reachable
-// paths between the passed source and target. The algorithm will continue to
-// traverse the graph until all possible candidate paths have been depleted.
-// This function implements a modified version of Yen's. To find each path
-// itself, we utilize our modified version of Dijkstra's found above. When
-// examining possible spur and root paths, rather than removing edges or
-// Vertexes from the graph, we instead utilize a Vertex+edge black-list that
-// will be ignored by our modified Dijkstra's algorithm. With this approach, we
-// make our inner path finding algorithm aware of our k-shortest paths
-// algorithm, rather than attempting to use an unmodified path finding
-// algorithm in a block box manner.
-func findPaths(tx *bbolt.Tx, graph *channeldb.ChannelGraph,
-	source, target route.Vertex, amt lnwire.MilliSatoshi,
-	restrictions *RestrictParams, numPaths uint32,
-	bandwidthHints map[uint64]lnwire.MilliSatoshi) (
-	[][]*channeldb.ChannelEdgePolicy, error) {
+// getProbabilityBasedDist converts a weight into a distance that takes into
+// account the success probability and the (virtual) cost of a failed payment
+// attempt.
+//
+// Derivation:
+//
+// Suppose there are two routes A and B with fees Fa and Fb and success
+// probabilities Pa and Pb.
+//
+// Is the expected cost of trying route A first and then B lower than trying the
+// other way around?
+//
+// The expected cost of A-then-B is: Pa*Fa + (1-Pa)*Pb*(c+Fb)
+//
+// The expected cost of B-then-A is: Pb*Fb + (1-Pb)*Pa*(c+Fa)
+//
+// In these equations, the term representing the case where both A and B fail is
+// left out because its value would be the same in both cases.
+//
+// Pa*Fa + (1-Pa)*Pb*(c+Fb) < Pb*Fb + (1-Pb)*Pa*(c+Fa)
+//
+// Pa*Fa + Pb*c + Pb*Fb - Pa*Pb*c - Pa*Pb*Fb < Pb*Fb + Pa*c + Pa*Fa - Pa*Pb*c - Pa*Pb*Fa
+//
+// Removing terms that cancel out:
+// Pb*c - Pa*Pb*Fb < Pa*c - Pa*Pb*Fa
+//
+// Divide by Pa*Pb:
+// c/Pa - Fb < c/Pb - Fa
+//
+// Move terms around:
+// Fa + c/Pa < Fb + c/Pb
+//
+// So the value of F + c/P can be used to compare routes.
+func getProbabilityBasedDist(weight int64, probability float64, penalty int64) int64 {
+	// Clamp probability to prevent overflow.
+	const minProbability = 0.00001
 
-	// TODO(roasbeef): modifying ordering within heap to eliminate final
-	// sorting step?
-	var (
-		shortestPaths  [][]*channeldb.ChannelEdgePolicy
-		candidatePaths pathHeap
-	)
-
-	// First we'll find a single shortest path from the source (our
-	// selfNode) to the target destination that's capable of carrying amt
-	// satoshis along the path before fees are calculated.
-	startingPath, err := findPath(
-		&graphParams{
-			tx:             tx,
-			graph:          graph,
-			bandwidthHints: bandwidthHints,
-		},
-		restrictions, source, target, amt,
-	)
-	if err != nil {
-		log.Errorf("Unable to find path: %v", err)
-		return nil, err
+	if probability < minProbability {
+		return infinity
 	}
 
-	// Manually insert a "self" edge emanating from ourselves. This
-	// self-edge is required in order for the path finding algorithm to
-	// function properly.
-	firstPath := make([]*channeldb.ChannelEdgePolicy, 0, len(startingPath)+1)
-	firstPath = append(firstPath, &channeldb.ChannelEdgePolicy{
-		Node: &channeldb.LightningNode{PubKeyBytes: source},
-	})
-	firstPath = append(firstPath, startingPath...)
-
-	shortestPaths = append(shortestPaths, firstPath)
-
-	// While we still have candidate paths to explore we'll keep exploring
-	// the sub-graphs created to find the next k-th shortest path.
-	for k := uint32(1); k < numPaths; k++ {
-		prevShortest := shortestPaths[k-1]
-
-		// We'll examine each edge in the previous iteration's shortest
-		// path in order to find path deviations from each node in the
-		// path.
-		for i := 0; i < len(prevShortest)-1; i++ {
-			// These two maps will mark the edges and Vertexes
-			// we'll exclude from the next path finding attempt.
-			// These are required to ensure the paths are unique
-			// and loopless.
-			ignoredEdges := make(map[EdgeLocator]struct{})
-			ignoredVertexes := make(map[route.Vertex]struct{})
-
-			for e := range restrictions.IgnoredEdges {
-				ignoredEdges[e] = struct{}{}
-			}
-			for n := range restrictions.IgnoredNodes {
-				ignoredVertexes[n] = struct{}{}
-			}
-
-			// Our spur node is the i-th node in the prior shortest
-			// path, and our root path will be all nodes in the
-			// path leading up to our spurNode.
-			spurNode := prevShortest[i].Node
-			rootPath := prevShortest[:i+1]
-
-			// Before we kickoff our next path finding iteration,
-			// we'll find all the edges we need to ignore in this
-			// next round. This ensures that we create a new unique
-			// path.
-			for _, path := range shortestPaths {
-				// If our current rootPath is a prefix of this
-				// shortest path, then we'll remove the edge
-				// directly _after_ our spur node from the
-				// graph so we don't repeat paths.
-				if len(path) > i+1 &&
-					isSamePath(rootPath, path[:i+1]) {
-
-					locator := newEdgeLocator(path[i+1])
-					ignoredEdges[*locator] = struct{}{}
-				}
-			}
-
-			// Next we'll remove all entries in the root path that
-			// aren't the current spur node from the graph. This
-			// ensures we don't create a path with loops.
-			for _, hop := range rootPath {
-				node := hop.Node.PubKeyBytes
-				if node == spurNode.PubKeyBytes {
-					continue
-				}
-
-				ignoredVertexes[route.Vertex(node)] = struct{}{}
-			}
-
-			// With the edges that are part of our root path, and
-			// the Vertexes (other than the spur path) within the
-			// root path removed, we'll attempt to find another
-			// shortest path from the spur node to the destination.
-			//
-			// TODO: Fee limit passed to spur path finding isn't
-			// correct, because it doesn't take into account the
-			// fees already paid on the root path.
-			//
-			// TODO: Outgoing channel restriction isn't obeyed for
-			// spur paths.
-			spurRestrictions := &RestrictParams{
-				IgnoredEdges: ignoredEdges,
-				IgnoredNodes: ignoredVertexes,
-				FeeLimit:     restrictions.FeeLimit,
-			}
-
-			spurPath, err := findPath(
-				&graphParams{
-					tx:             tx,
-					graph:          graph,
-					bandwidthHints: bandwidthHints,
-				},
-				spurRestrictions, spurNode.PubKeyBytes,
-				target, amt,
-			)
-
-			// If we weren't able to find a path, we'll continue to
-			// the next round.
-			if IsError(err, ErrNoPathFound) {
-				continue
-			} else if err != nil {
-				return nil, err
-			}
-
-			// Create the new combined path by concatenating the
-			// rootPath to the spurPath.
-			newPathLen := len(rootPath) + len(spurPath)
-			newPath := path{
-				hops: make([]*channeldb.ChannelEdgePolicy, 0, newPathLen),
-				dist: newPathLen,
-			}
-			newPath.hops = append(newPath.hops, rootPath...)
-			newPath.hops = append(newPath.hops, spurPath...)
-
-			// TODO(roasbeef): add and consult path finger print
-
-			// We'll now add this newPath to the heap of candidate
-			// shortest paths.
-			heap.Push(&candidatePaths, newPath)
-		}
-
-		// If our min-heap of candidate paths is empty, then we can
-		// exit early.
-		if candidatePaths.Len() == 0 {
-			break
-		}
-
-		// To conclude this latest iteration, we'll take the shortest
-		// path in our set of candidate paths and add it to our
-		// shortestPaths list as the *next* shortest path.
-		nextShortestPath := heap.Pop(&candidatePaths).(path).hops
-		shortestPaths = append(shortestPaths, nextShortestPath)
-	}
-
-	return shortestPaths, nil
+	return weight + int64(float64(penalty)/probability)
 }

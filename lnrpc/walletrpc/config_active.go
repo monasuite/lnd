@@ -6,6 +6,7 @@ import (
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/macaroons"
+	"github.com/monasuite/lnd/sweep"
 )
 
 // Config is the primary configuration struct for the WalletKit RPC server. It
@@ -38,4 +39,8 @@ type Config struct {
 	// KeyRing is an interface that the WalletKit will use to derive any
 	// keys due to incoming client requests.
 	KeyRing keychain.KeyRing
+
+	// Sweeper is the central batching engine of lnd. It is responsible for
+	// sweeping inputs in batches back into the wallet.
+	Sweeper *sweep.UtxoSweeper
 }

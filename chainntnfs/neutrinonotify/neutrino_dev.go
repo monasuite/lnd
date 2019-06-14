@@ -8,8 +8,8 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/rpcclient"
-	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/neutrino"
 )
 
 // UnsafeStart starts the notifier with a specified best height and optional

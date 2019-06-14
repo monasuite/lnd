@@ -33,11 +33,11 @@ func TestRequestRoute(t *testing.T) {
 	}
 
 	session := &paymentSession{
-		mc: &missionControl{
+		mc: &MissionControl{
 			selfNode: &channeldb.LightningNode{},
+			cfg:      &MissionControlConfig{},
 		},
-		pruneViewSnapshot: graphPruneView{},
-		pathFinder:        findPath,
+		pathFinder: findPath,
 	}
 
 	cltvLimit := uint32(30)
@@ -45,7 +45,7 @@ func TestRequestRoute(t *testing.T) {
 
 	payment := &LightningPayment{
 		CltvLimit:      &cltvLimit,
-		FinalCLTVDelta: &finalCltvDelta,
+		FinalCLTVDelta: finalCltvDelta,
 	}
 
 	route, err := session.RequestRoute(payment, height, finalCltvDelta)

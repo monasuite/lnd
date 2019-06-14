@@ -9,7 +9,6 @@ import (
 	"github.com/btcsuite/btcd/connmgr"
 	"github.com/btcsuite/btclog"
 	"github.com/jrick/logrotate/rotator"
-	"github.com/monasuite/neutrino"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/build"
@@ -28,11 +27,13 @@ import (
 	"github.com/monasuite/lnd/lnrpc/signrpc"
 	"github.com/monasuite/lnd/lnrpc/walletrpc"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/monitoring"
 	"github.com/monasuite/lnd/netann"
 	"github.com/monasuite/lnd/routing"
 	"github.com/monasuite/lnd/signal"
 	"github.com/monasuite/lnd/sweep"
 	"github.com/monasuite/lnd/watchtower"
+	"github.com/monasuite/neutrino"
 )
 
 // Loggers per subsystem.  A single backend logger is created and all subsystem
@@ -85,6 +86,7 @@ var (
 	irpcLog = build.NewSubLogger("IRPC", backendLog.Logger)
 	chnfLog = build.NewSubLogger("CHNF", backendLog.Logger)
 	chbuLog = build.NewSubLogger("CHBU", backendLog.Logger)
+	promLog = build.NewSubLogger("PROM", backendLog.Logger)
 )
 
 // Initialize package-global logger variables.
@@ -112,6 +114,7 @@ func init() {
 	invoicesrpc.UseLogger(irpcLog)
 	channelnotifier.UseLogger(chnfLog)
 	chanbackup.UseLogger(chbuLog)
+	monitoring.UseLogger(promLog)
 
 	addSubLogger(routerrpc.Subsystem, routerrpc.UseLogger)
 }
@@ -155,6 +158,7 @@ var subsystemLoggers = map[string]btclog.Logger{
 	"IRPC": irpcLog,
 	"CHNF": chnfLog,
 	"CHBU": chbuLog,
+	"PROM": promLog,
 }
 
 // initLogRotator initializes the logging rotator to write logs to logFile and

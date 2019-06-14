@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec"
@@ -49,29 +48,29 @@ const (
 	maxMonaRemoteDelay uint16 = 13440
 
 	// maxWaitNumBlocksFundingConf is the maximum number of blocks to wait
-	// for the funding transaction to be confirmed before forgetting about
-	// the channel. 288 blocks is ~48 hrs
-	maxWaitNumBlocksFundingConf = 288
+	// for the funding transaction to be confirmed before forgetting
+	// channels that aren't initiated by us. 2016 blocks is ~2 weeks.
+	maxWaitNumBlocksFundingConf = 2016
 
 	// minChanFundingSize is the smallest channel that we'll allow to be
 	// created over the RPC interface.
 	minChanFundingSize = btcutil.Amount(20000)
 
-	// maxBtcFundingAmount is a soft-limit of the maximum channel size
+	// MaxBtcFundingAmount is a soft-limit of the maximum channel size
 	// currently accepted on the Bitcoin chain within the Lightning
 	// Protocol. This limit is defined in BOLT-0002, and serves as an
 	// initial precautionary limit while implementations are battle tested
 	// in the real world.
-	maxBtcFundingAmount = btcutil.Amount(1<<24) - 1
+	MaxBtcFundingAmount = btcutil.Amount(1<<24) - 1
 
 	// maxMonaFundingAmount is a soft-limit of the maximum channel size
 	// currently accepted on the Monacoin chain within the Lightning
 	// Protocol.
-	maxMonaFundingAmount = maxBtcFundingAmount * btcToMonaConversionRate
+	maxMonaFundingAmount = MaxBtcFundingAmount * btcToMonaConversionRate
 )
 
 var (
-	// maxFundingAmount is a soft-limit of the maximum channel size
+	// MaxFundingAmount is a soft-limit of the maximum channel size
 	// currently accepted within the Lightning Protocol. This limit is
 	// defined in BOLT-0002, and serves as an initial precautionary limit
 	// while implementations are battle tested in the real world.
@@ -80,7 +79,7 @@ var (
 	// to the value under the Bitcoin chain as default.
 	//
 	// TODO(roasbeef): add command line param to modify
-	maxFundingAmount = maxBtcFundingAmount
+	MaxFundingAmount = MaxBtcFundingAmount
 
 	// ErrFundingManagerShuttingDown is an error returned when attempting to
 	// process a funding request/message but the funding manager has already
@@ -241,7 +240,7 @@ type fundingConfig struct {
 	// so that the channel creation process can be completed.
 	Notifier chainntnfs.ChainNotifier
 
-	// SignMessage signs an arbitrary method with a given public key. The
+	// SignMessage signs an arbitrary message with a given public key. The
 	// actual digest signed is the double sha-256 of the message. In the
 	// case that the private key corresponding to the passed public key
 	// cannot be located, then an error is returned.
@@ -268,7 +267,7 @@ type fundingConfig struct {
 	// delivered after the funding transaction is confirmed.
 	//
 	// NOTE: The peerChan channel must be buffered.
-	NotifyWhenOnline func(peer *btcec.PublicKey, peerChan chan<- lnpeer.Peer)
+	NotifyWhenOnline func(peer [33]byte, peerChan chan<- lnpeer.Peer)
 
 	// FindChannel queries the database for the channel with the given
 	// channel ID.
@@ -346,16 +345,15 @@ type fundingConfig struct {
 // fundingManager acts as an orchestrator/bridge between the wallet's
 // 'ChannelReservation' workflow, and the wire protocol's funding initiation
 // messages. Any requests to initiate the funding workflow for a channel,
-// either kicked-off locally or remotely handled by the funding manager.
+// either kicked-off locally or remotely are handled by the funding manager.
 // Once a channel's funding workflow has been completed, any local callers, the
 // local peer, and possibly the remote peer are notified of the completion of
 // the channel workflow. Additionally, any temporary or permanent access
 // controls between the wallet and remote peers are enforced via the funding
 // manager.
 type fundingManager struct {
-	// MUST be used atomically.
-	started int32
-	stopped int32
+	started sync.Once
+	stopped sync.Once
 
 	// cfg is a copy of the configuration struct that the FundingManager
 	// was initialized with.
@@ -471,10 +469,14 @@ func newFundingManager(cfg fundingConfig) (*fundingManager, error) {
 // Start launches all helper goroutines required for handling requests sent
 // to the funding manager.
 func (f *fundingManager) Start() error {
-	if atomic.AddInt32(&f.started, 1) != 1 { // TODO(roasbeef): CAS instead
-		return nil
-	}
+	var err error
+	f.started.Do(func() {
+		err = f.start()
+	})
+	return err
+}
 
+func (f *fundingManager) start() error {
 	fndgLog.Tracef("Funding manager running")
 
 	// Upon restart, the Funding Manager will check the database to load any
@@ -563,7 +565,11 @@ func (f *fundingManager) Start() error {
 				// we'll attempt to retrieve the remote peer
 				// to complete the rest of the funding flow.
 				peerChan := make(chan lnpeer.Peer, 1)
-				f.cfg.NotifyWhenOnline(ch.IdentityPub, peerChan)
+
+				var peerKey [33]byte
+				copy(peerKey[:], ch.IdentityPub.SerializeCompressed())
+
+				f.cfg.NotifyWhenOnline(peerKey, peerChan)
 
 				var peer lnpeer.Peer
 				select {
@@ -635,7 +641,11 @@ func (f *fundingManager) Start() error {
 				defer f.wg.Done()
 
 				peerChan := make(chan lnpeer.Peer, 1)
-				f.cfg.NotifyWhenOnline(dbChan.IdentityPub, peerChan)
+
+				var peerKey [33]byte
+				copy(peerKey[:], dbChan.IdentityPub.SerializeCompressed())
+
+				f.cfg.NotifyWhenOnline(peerKey, peerChan)
 
 				var peer lnpeer.Peer
 				select {
@@ -710,10 +720,14 @@ func (f *fundingManager) Start() error {
 // Stop signals all helper goroutines to execute a graceful shutdown. This
 // method will block until all goroutines have exited.
 func (f *fundingManager) Stop() error {
-	if atomic.AddInt32(&f.stopped, 1) != 1 {
-		return nil
-	}
+	var err error
+	f.stopped.Do(func() {
+		err = f.stop()
+	})
+	return err
+}
 
+func (f *fundingManager) stop() error {
 	fndgLog.Infof("Funding manager shutting down")
 
 	close(f.quit)
@@ -1023,7 +1037,7 @@ func (f *fundingManager) handleFundingOpen(fmsg *fundingOpenMsg) {
 
 	// We'll reject any request to create a channel that's above the
 	// current soft-limit for channel size.
-	if msg.FundingAmount > maxFundingAmount {
+	if msg.FundingAmount > MaxFundingAmount {
 		f.failFundingFlow(
 			fmsg.peer, fmsg.msg.PendingChannelID,
 			lnwire.ErrChanTooLarge,
@@ -1083,7 +1097,7 @@ func (f *fundingManager) handleFundingOpen(fmsg *fundingOpenMsg) {
 
 	// As we're the responder, we get to specify the number of confirmations
 	// that we require before both of us consider the channel open. We'll
-	// use out mapping to derive the proper number of confirmations based on
+	// use our mapping to derive the proper number of confirmations based on
 	// the amount of the channel, and also if any funds are being pushed to
 	// us.
 	numConfsReq := f.cfg.NumRequiredConfs(msg.FundingAmount, msg.PushAmount)
@@ -1644,7 +1658,7 @@ func (f *fundingManager) handleFundingSigned(fmsg *fundingSignedMsg) {
 
 	// Now that we have a finalized reservation for this funding flow,
 	// we'll send the to be active channel to the ChainArbitrator so it can
-	// watch for any on-chin actions before the channel has fully
+	// watch for any on-chain actions before the channel has fully
 	// confirmed.
 	if err := f.cfg.WatchNewChannel(completeChan, peerKey); err != nil {
 		fndgLog.Errorf("Unable to send new ChannelPoint(%v) for "+
@@ -1712,7 +1726,7 @@ func (f *fundingManager) handleFundingSigned(fmsg *fundingSignedMsg) {
 		// Go on adding the channel to the channel graph, and crafting
 		// channel announcements.
 		lnChannel, err := lnwallet.NewLightningChannel(
-			nil, nil, completeChan, nil,
+			nil, completeChan, nil,
 		)
 		if err != nil {
 			fndgLog.Errorf("failed creating lnChannel: %v", err)
@@ -2005,7 +2019,7 @@ func (f *fundingManager) handleFundingConfirmation(peer lnpeer.Peer,
 
 	// We create the state-machine object which wraps the database state.
 	lnChannel, err := lnwallet.NewLightningChannel(
-		nil, nil, completeChan, nil,
+		nil, completeChan, nil,
 	)
 	if err != nil {
 		return err
@@ -2040,7 +2054,9 @@ func (f *fundingManager) sendFundingLocked(peer lnpeer.Peer,
 	shortChanID *lnwire.ShortChannelID) error {
 
 	chanID := lnwire.NewChanIDFromOutPoint(&completeChan.FundingOutpoint)
-	peerKey := completeChan.IdentityPub
+
+	var peerKey [33]byte
+	copy(peerKey[:], completeChan.IdentityPub.SerializeCompressed())
 
 	// Next, we'll send over the funding locked message which marks that we
 	// consider the channel open by presenting the remote party with our
@@ -2065,7 +2081,7 @@ func (f *fundingManager) sendFundingLocked(peer lnpeer.Peer,
 	// down.
 	for {
 		fndgLog.Debugf("Sending FundingLocked for ChannelID(%v) to "+
-			"peer %x", chanID, peerKey.SerializeCompressed())
+			"peer %x", chanID, peerKey)
 
 		if err := peer.SendMessage(false, fundingLockedMsg); err == nil {
 			// Sending succeeded, we can break out and continue the
@@ -2074,17 +2090,16 @@ func (f *fundingManager) sendFundingLocked(peer lnpeer.Peer,
 		}
 
 		fndgLog.Warnf("Unable to send fundingLocked to peer %x: %v. "+
-			"Will retry when online", peerKey.SerializeCompressed(),
-			err)
+			"Will retry when online", peerKey, err)
 
 		connected := make(chan lnpeer.Peer, 1)
-		f.cfg.NotifyWhenOnline(completeChan.IdentityPub, connected)
+		f.cfg.NotifyWhenOnline(peerKey, connected)
 
 		select {
 		case <-connected:
 			fndgLog.Infof("Peer(%x) came back online, will retry "+
 				"sending FundingLocked for ChannelID(%v)",
-				peerKey.SerializeCompressed(), chanID)
+				peerKey, chanID)
 
 			// Retry sending.
 		case <-f.quit:
@@ -2213,7 +2228,11 @@ func (f *fundingManager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			shortChanID.ToUint64())
 
 		peerChan := make(chan lnpeer.Peer, 1)
-		f.cfg.NotifyWhenOnline(completeChan.IdentityPub, peerChan)
+
+		var peerKey [33]byte
+		copy(peerKey[:], completeChan.IdentityPub.SerializeCompressed())
+
+		f.cfg.NotifyWhenOnline(peerKey, peerChan)
 
 		var peer lnpeer.Peer
 		select {
@@ -2407,8 +2426,8 @@ func (f *fundingManager) handleFundingLocked(fmsg *fundingLockedMsg) {
 		f.localDiscoveryMtx.Unlock()
 	}
 
-	// First, we'll attempt to locate the channel who's funding workflow is
-	// being finalized by this message. We got to the database rather than
+	// First, we'll attempt to locate the channel whose funding workflow is
+	// being finalized by this message. We go to the database rather than
 	// our reservation map as we may have restarted, mid funding flow.
 	chanID := fmsg.msg.ChanID
 	channel, err := f.cfg.FindChannel(chanID)
@@ -2437,7 +2456,7 @@ func (f *fundingManager) handleFundingLocked(fmsg *fundingLockedMsg) {
 	}
 
 	// Launch a defer so we _ensure_ that the channel barrier is properly
-	// closed even if the target peer is not longer online at this point.
+	// closed even if the target peer is no longer online at this point.
 	defer func() {
 		// Close the active channel barrier signalling the readHandler
 		// that commitment related modifications to this channel can
@@ -2644,7 +2663,7 @@ func (f *fundingManager) announceChannel(localIDKey, remoteIDKey, localFundingKe
 	}
 
 	// We only send the channel proof announcement and the node announcement
-	// because addToRouterGraph previously send the ChannelAnnouncement and
+	// because addToRouterGraph previously sent the ChannelAnnouncement and
 	// the ChannelUpdate announcement messages. The channel proof and node
 	// announcements are broadcast to the greater network.
 	errChan := f.cfg.SendAnnouncement(ann.chanProof)

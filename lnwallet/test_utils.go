@@ -301,13 +301,11 @@ func CreateTestChannels() (*LightningChannel, *LightningChannel, func(), error) 
 	aliceSigner := &input.MockSigner{Privkeys: aliceKeys}
 	bobSigner := &input.MockSigner{Privkeys: bobKeys}
 
-	pCache := newMockPreimageCache()
-
 	// TODO(roasbeef): make mock version of pre-image store
 
 	alicePool := NewSigPool(1, aliceSigner)
 	channelAlice, err := NewLightningChannel(
-		aliceSigner, pCache, aliceChannelState, alicePool,
+		aliceSigner, aliceChannelState, alicePool,
 	)
 	if err != nil {
 		return nil, nil, nil, err
@@ -316,7 +314,7 @@ func CreateTestChannels() (*LightningChannel, *LightningChannel, func(), error) 
 
 	bobPool := NewSigPool(1, bobSigner)
 	channelBob, err := NewLightningChannel(
-		bobSigner, pCache, bobChannelState, bobPool,
+		bobSigner, bobChannelState, bobPool,
 	)
 	if err != nil {
 		return nil, nil, nil, err
@@ -498,7 +496,7 @@ func calcStaticFee(numHTLCs int) btcutil.Amount {
 // pending updates. This method is useful when testing interactions between two
 // live state machines.
 func ForceStateTransition(chanA, chanB *LightningChannel) error {
-	aliceSig, aliceHtlcSigs, err := chanA.SignNextCommitment()
+	aliceSig, aliceHtlcSigs, _, err := chanA.SignNextCommitment()
 	if err != nil {
 		return err
 	}
@@ -510,12 +508,12 @@ func ForceStateTransition(chanA, chanB *LightningChannel) error {
 	if err != nil {
 		return err
 	}
-	bobSig, bobHtlcSigs, err := chanB.SignNextCommitment()
+	bobSig, bobHtlcSigs, _, err := chanB.SignNextCommitment()
 	if err != nil {
 		return err
 	}
 
-	if _, _, _, err := chanA.ReceiveRevocation(bobRevocation); err != nil {
+	if _, _, _, _, err := chanA.ReceiveRevocation(bobRevocation); err != nil {
 		return err
 	}
 	if err := chanA.ReceiveNewCommitment(bobSig, bobHtlcSigs); err != nil {
@@ -526,7 +524,7 @@ func ForceStateTransition(chanA, chanB *LightningChannel) error {
 	if err != nil {
 		return err
 	}
-	if _, _, _, err := chanB.ReceiveRevocation(aliceRevocation); err != nil {
+	if _, _, _, _, err := chanB.ReceiveRevocation(aliceRevocation); err != nil {
 		return err
 	}
 

@@ -4,12 +4,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing"
 	"github.com/monasuite/lnd/routing/route"
+	"github.com/monasuite/lnd/zpay32"
 	context "golang.org/x/net/context"
 )
 
@@ -26,12 +29,28 @@ type RouterBackend struct {
 	// capacity of a channel to populate in responses.
 	FetchChannelCapacity func(chanID uint64) (btcutil.Amount, error)
 
+	// FetchChannelEndpoints returns the pubkeys of both endpoints of the
+	// given channel id.
+	FetchChannelEndpoints func(chanID uint64) (route.Vertex,
+		route.Vertex, error)
+
 	// FindRoutes is a closure that abstracts away how we locate/query for
 	// routes.
-	FindRoutes func(source, target route.Vertex,
+	FindRoute func(source, target route.Vertex,
 		amt lnwire.MilliSatoshi, restrictions *routing.RestrictParams,
-		numPaths uint32, finalExpiry ...uint16) (
-		[]*route.Route, error)
+		finalExpiry ...uint16) (*route.Route, error)
+
+	MissionControl *routing.MissionControl
+
+	// ActiveNetParams are the network parameters of the primary network
+	// that the route is operating on. This is necessary so we can ensure
+	// that we receive payment requests that send to destinations on our
+	// network.
+	ActiveNetParams *chaincfg.Params
+
+	// Tower is the ControlTower instance that is used to track pending
+	// payments.
+	Tower routing.ControlTower
 }
 
 // QueryRoutes attempts to query the daemons' Channel Router for a possible
@@ -117,58 +136,53 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 	}
 
 	restrictions := &routing.RestrictParams{
-		FeeLimit:     feeLimit,
-		IgnoredNodes: ignoredNodes,
-		IgnoredEdges: ignoredEdges,
-	}
+		FeeLimit: feeLimit,
+		ProbabilitySource: func(node route.Vertex,
+			edge routing.EdgeLocator,
+			amt lnwire.MilliSatoshi) float64 {
 
-	// numRoutes will default to 10 if not specified explicitly.
-	numRoutesIn := uint32(in.NumRoutes)
-	if numRoutesIn == 0 {
-		numRoutesIn = 10
+			if _, ok := ignoredNodes[node]; ok {
+				return 0
+			}
+
+			if _, ok := ignoredEdges[edge]; ok {
+				return 0
+			}
+
+			return 1
+		},
+		PaymentAttemptPenalty: routing.DefaultPaymentAttemptPenalty,
 	}
 
 	// Query the channel router for a possible path to the destination that
 	// can carry `in.Amt` satoshis _including_ the total fee required on
 	// the route.
 	var (
-		routes  []*route.Route
+		route   *route.Route
 		findErr error
 	)
 
 	if in.FinalCltvDelta == 0 {
-		routes, findErr = r.FindRoutes(
+		route, findErr = r.FindRoute(
 			sourcePubKey, targetPubKey, amtMSat, restrictions,
-			numRoutesIn,
 		)
 	} else {
-		routes, findErr = r.FindRoutes(
+		route, findErr = r.FindRoute(
 			sourcePubKey, targetPubKey, amtMSat, restrictions,
-			numRoutesIn, uint16(in.FinalCltvDelta),
+			uint16(in.FinalCltvDelta),
 		)
 	}
 	if findErr != nil {
 		return nil, findErr
 	}
 
-	// As the number of returned routes can be less than the number of
-	// requested routes, we'll clamp down the length of the response to the
-	// minimum of the two.
-	numRoutes := uint32(len(routes))
-	if numRoutesIn < numRoutes {
-		numRoutes = numRoutesIn
-	}
-
 	// For each valid route, we'll convert the result into the format
 	// required by the RPC system.
+
+	rpcRoute := r.MarshallRoute(route)
+
 	routeResp := &lnrpc.QueryRoutesResponse{
-		Routes: make([]*lnrpc.Route, 0, in.NumRoutes),
-	}
-	for i := uint32(0); i < numRoutes; i++ {
-		routeResp.Routes = append(
-			routeResp.Routes,
-			r.MarshallRoute(routes[i]),
-		)
+		Routes: []*lnrpc.Route{rpcRoute},
 	}
 
 	return routeResp, nil
@@ -199,8 +213,8 @@ func calculateFeeLimit(feeLimit *lnrpc.FeeLimit,
 func (r *RouterBackend) MarshallRoute(route *route.Route) *lnrpc.Route {
 	resp := &lnrpc.Route{
 		TotalTimeLock: route.TotalTimeLock,
-		TotalFees:     int64(route.TotalFees.ToSatoshis()),
-		TotalFeesMsat: int64(route.TotalFees),
+		TotalFees:     int64(route.TotalFees().ToSatoshis()),
+		TotalFeesMsat: int64(route.TotalFees()),
 		TotalAmt:      int64(route.TotalAmount.ToSatoshis()),
 		TotalAmtMsat:  int64(route.TotalAmount),
 		Hops:          make([]*lnrpc.Hop, len(route.Hops)),
@@ -236,4 +250,257 @@ func (r *RouterBackend) MarshallRoute(route *route.Route) *lnrpc.Route {
 	}
 
 	return resp
+}
+
+// UnmarshallHopByChannelLookup unmarshalls an rpc hop for which the pub key is
+// not known. This function will query the channel graph with channel id to
+// retrieve both endpoints and determine the hop pubkey using the previous hop
+// pubkey. If the channel is unknown, an error is returned.
+func (r *RouterBackend) UnmarshallHopByChannelLookup(hop *lnrpc.Hop,
+	prevPubKeyBytes [33]byte) (*route.Hop, error) {
+
+	// Discard edge policies, because they may be nil.
+	node1, node2, err := r.FetchChannelEndpoints(hop.ChanId)
+	if err != nil {
+		return nil, err
+	}
+
+	var pubKeyBytes [33]byte
+	switch {
+	case prevPubKeyBytes == node1:
+		pubKeyBytes = node2
+	case prevPubKeyBytes == node2:
+		pubKeyBytes = node1
+	default:
+		return nil, fmt.Errorf("channel edge does not match expected node")
+	}
+
+	return &route.Hop{
+		OutgoingTimeLock: hop.Expiry,
+		AmtToForward:     lnwire.MilliSatoshi(hop.AmtToForwardMsat),
+		PubKeyBytes:      pubKeyBytes,
+		ChannelID:        hop.ChanId,
+	}, nil
+}
+
+// UnmarshallKnownPubkeyHop unmarshalls an rpc hop that contains the hop pubkey.
+// The channel graph doesn't need to be queried because all information required
+// for sending the payment is present.
+func UnmarshallKnownPubkeyHop(hop *lnrpc.Hop) (*route.Hop, error) {
+	pubKey, err := hex.DecodeString(hop.PubKey)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode pubkey %s", hop.PubKey)
+	}
+
+	var pubKeyBytes [33]byte
+	copy(pubKeyBytes[:], pubKey)
+
+	return &route.Hop{
+		OutgoingTimeLock: hop.Expiry,
+		AmtToForward:     lnwire.MilliSatoshi(hop.AmtToForwardMsat),
+		PubKeyBytes:      pubKeyBytes,
+		ChannelID:        hop.ChanId,
+	}, nil
+}
+
+// UnmarshallHop unmarshalls an rpc hop that may or may not contain a node
+// pubkey.
+func (r *RouterBackend) UnmarshallHop(hop *lnrpc.Hop,
+	prevNodePubKey [33]byte) (*route.Hop, error) {
+
+	if hop.PubKey == "" {
+		// If no pub key is given of the hop, the local channel
+		// graph needs to be queried to complete the information
+		// necessary for routing.
+		return r.UnmarshallHopByChannelLookup(hop, prevNodePubKey)
+	}
+
+	return UnmarshallKnownPubkeyHop(hop)
+}
+
+// UnmarshallRoute unmarshalls an rpc route. For hops that don't specify a
+// pubkey, the channel graph is queried.
+func (r *RouterBackend) UnmarshallRoute(rpcroute *lnrpc.Route) (
+	*route.Route, error) {
+
+	prevNodePubKey := r.SelfNode
+
+	hops := make([]*route.Hop, len(rpcroute.Hops))
+	for i, hop := range rpcroute.Hops {
+		routeHop, err := r.UnmarshallHop(hop, prevNodePubKey)
+		if err != nil {
+			return nil, err
+		}
+
+		hops[i] = routeHop
+
+		prevNodePubKey = routeHop.PubKeyBytes
+	}
+
+	route, err := route.NewRouteFromHops(
+		lnwire.MilliSatoshi(rpcroute.TotalAmtMsat),
+		rpcroute.TotalTimeLock,
+		r.SelfNode,
+		hops,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return route, nil
+}
+
+// extractIntentFromSendRequest attempts to parse the SendRequest details
+// required to dispatch a client from the information presented by an RPC
+// client.
+func (r *RouterBackend) extractIntentFromSendRequest(
+	rpcPayReq *SendPaymentRequest) (*routing.LightningPayment, error) {
+
+	payIntent := &routing.LightningPayment{}
+
+	// Pass along an outgoing channel restriction if specified.
+	if rpcPayReq.OutgoingChanId != 0 {
+		payIntent.OutgoingChannelID = &rpcPayReq.OutgoingChanId
+	}
+
+	// Take cltv limit from request if set.
+	if rpcPayReq.CltvLimit != 0 {
+		cltvLimit := uint32(rpcPayReq.CltvLimit)
+		payIntent.CltvLimit = &cltvLimit
+	}
+
+	// Take fee limit from request.
+	payIntent.FeeLimit = lnwire.NewMSatFromSatoshis(
+		btcutil.Amount(rpcPayReq.FeeLimitSat),
+	)
+
+	// Set payment attempt timeout.
+	if rpcPayReq.TimeoutSeconds == 0 {
+		return nil, errors.New("timeout_seconds must be specified")
+	}
+
+	payIntent.PayAttemptTimeout = time.Second *
+		time.Duration(rpcPayReq.TimeoutSeconds)
+
+	// If the payment request field isn't blank, then the details of the
+	// invoice are encoded entirely within the encoded payReq.  So we'll
+	// attempt to decode it, populating the payment accordingly.
+	if rpcPayReq.PaymentRequest != "" {
+		switch {
+
+		case len(rpcPayReq.Dest) > 0:
+			return nil, errors.New("dest and payment_request " +
+				"cannot appear together")
+
+		case len(rpcPayReq.PaymentHash) > 0:
+			return nil, errors.New("dest and payment_hash " +
+				"cannot appear together")
+
+		case rpcPayReq.FinalCltvDelta != 0:
+			return nil, errors.New("dest and final_cltv_delta " +
+				"cannot appear together")
+		}
+
+		payReq, err := zpay32.Decode(
+			rpcPayReq.PaymentRequest, r.ActiveNetParams,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Next, we'll ensure that this payreq hasn't already expired.
+		err = ValidatePayReqExpiry(payReq)
+		if err != nil {
+			return nil, err
+		}
+
+		// If the amount was not included in the invoice, then we let
+		// the payee specify the amount of satoshis they wish to send.
+		// We override the amount to pay with the amount provided from
+		// the payment request.
+		if payReq.MilliSat == nil {
+			if rpcPayReq.Amt == 0 {
+				return nil, errors.New("amount must be " +
+					"specified when paying a zero amount " +
+					"invoice")
+			}
+
+			payIntent.Amount = lnwire.NewMSatFromSatoshis(
+				btcutil.Amount(rpcPayReq.Amt),
+			)
+		} else {
+			if rpcPayReq.Amt != 0 {
+				return nil, errors.New("amount must not be " +
+					"specified when paying a non-zero " +
+					" amount invoice")
+			}
+
+			payIntent.Amount = *payReq.MilliSat
+		}
+
+		copy(payIntent.PaymentHash[:], payReq.PaymentHash[:])
+		destKey := payReq.Destination.SerializeCompressed()
+		copy(payIntent.Target[:], destKey)
+
+		payIntent.FinalCLTVDelta = uint16(payReq.MinFinalCLTVExpiry())
+		payIntent.RouteHints = payReq.RouteHints
+	} else {
+		// Otherwise, If the payment request field was not specified
+		// (and a custom route wasn't specified), construct the payment
+		// from the other fields.
+
+		// Payment destination.
+		if len(rpcPayReq.Dest) != 33 {
+			return nil, errors.New("invalid key length")
+
+		}
+		pubBytes := rpcPayReq.Dest
+		copy(payIntent.Target[:], pubBytes)
+
+		// Final payment CLTV delta.
+		if rpcPayReq.FinalCltvDelta != 0 {
+			payIntent.FinalCLTVDelta =
+				uint16(rpcPayReq.FinalCltvDelta)
+		} else {
+			payIntent.FinalCLTVDelta = zpay32.DefaultFinalCLTVDelta
+		}
+
+		// Amount.
+		if rpcPayReq.Amt == 0 {
+			return nil, errors.New("amount must be specified")
+		}
+
+		payIntent.Amount = lnwire.NewMSatFromSatoshis(
+			btcutil.Amount(rpcPayReq.Amt),
+		)
+
+		// Payment hash.
+		copy(payIntent.PaymentHash[:], rpcPayReq.PaymentHash)
+	}
+
+	// Currently, within the bootstrap phase of the network, we limit the
+	// largest payment size allotted to (2^32) - 1 mSAT or 4.29 million
+	// satoshis.
+	if payIntent.Amount > r.MaxPaymentMSat {
+		// In this case, we'll send an error to the caller, but
+		// continue our loop for the next payment.
+		return payIntent, fmt.Errorf("payment of %v is too large, "+
+			"max payment allowed is %v", payIntent.Amount,
+			r.MaxPaymentMSat)
+
+	}
+
+	return payIntent, nil
+}
+
+// ValidatePayReqExpiry checks if the passed payment request has expired. In
+// the case it has expired, an error will be returned.
+func ValidatePayReqExpiry(payReq *zpay32.Invoice) error {
+	expiry := payReq.Expiry()
+	validUntil := payReq.Timestamp.Add(expiry)
+	if time.Now().After(validUntil) {
+		return fmt.Errorf("invoice expired. Valid until %v", validUntil)
+	}
+
+	return nil
 }

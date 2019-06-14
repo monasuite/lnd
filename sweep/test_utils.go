@@ -10,6 +10,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 var (
@@ -237,12 +238,14 @@ func (m *MockNotifier) RegisterSpendNtfn(outpoint *wire.OutPoint,
 
 type mockChainIO struct{}
 
+var _ lnwallet.BlockChainIO = (*mockChainIO)(nil)
+
 func (m *mockChainIO) GetBestBlock() (*chainhash.Hash, int32, error) {
 	return nil, mockChainIOHeight, nil
 }
 
 func (m *mockChainIO) GetUtxo(op *wire.OutPoint, pkScript []byte,
-	heightHint uint32) (*wire.TxOut, error) {
+	heightHint uint32, _ <-chan struct{}) (*wire.TxOut, error) {
 
 	return nil, nil
 }

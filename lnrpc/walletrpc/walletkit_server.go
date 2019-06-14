@@ -9,11 +9,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lnrpc/signrpc"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/sweep"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"gopkg.in/macaroon-bakery.v2/bakery"
@@ -73,6 +77,14 @@ var (
 		"/walletrpc.WalletKit/EstimateFee": {{
 			Entity: "onchain",
 			Action: "read",
+		}},
+		"/walletrpc.WalletKit/PendingSweeps": {{
+			Entity: "onchain",
+			Action: "read",
+		}},
+		"/walletrpc.WalletKit/BumpFee": {{
+			Entity: "onchain",
+			Action: "write",
 		}},
 	}
 
@@ -330,4 +342,180 @@ func (w *WalletKit) EstimateFee(ctx context.Context,
 	return &EstimateFeeResponse{
 		SatPerKw: int64(satPerKw),
 	}, nil
+}
+
+// PendingSweeps returns lists of on-chain outputs that lnd is currently
+// attempting to sweep within its central batching engine. Outputs with similar
+// fee rates are batched together in order to sweep them within a single
+// transaction. The fee rate of each sweeping transaction is determined by
+// taking the average fee rate of all the outputs it's trying to sweep.
+func (w *WalletKit) PendingSweeps(ctx context.Context,
+	in *PendingSweepsRequest) (*PendingSweepsResponse, error) {
+
+	// Retrieve all of the outputs the UtxoSweeper is currently trying to
+	// sweep.
+	pendingInputs, err := w.cfg.Sweeper.PendingInputs()
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert them into their respective RPC format.
+	rpcPendingSweeps := make([]*PendingSweep, 0, len(pendingInputs))
+	for _, pendingInput := range pendingInputs {
+		var witnessType WitnessType
+		switch pendingInput.WitnessType {
+		case input.CommitmentTimeLock:
+			witnessType = WitnessType_COMMITMENT_TIME_LOCK
+		case input.CommitmentNoDelay:
+			witnessType = WitnessType_COMMITMENT_NO_DELAY
+		case input.CommitmentRevoke:
+			witnessType = WitnessType_COMMITMENT_REVOKE
+		case input.HtlcOfferedRevoke:
+			witnessType = WitnessType_HTLC_OFFERED_REVOKE
+		case input.HtlcAcceptedRevoke:
+			witnessType = WitnessType_HTLC_ACCEPTED_REVOKE
+		case input.HtlcOfferedTimeoutSecondLevel:
+			witnessType = WitnessType_HTLC_OFFERED_TIMEOUT_SECOND_LEVEL
+		case input.HtlcAcceptedSuccessSecondLevel:
+			witnessType = WitnessType_HTLC_ACCEPTED_SUCCESS_SECOND_LEVEL
+		case input.HtlcOfferedRemoteTimeout:
+			witnessType = WitnessType_HTLC_OFFERED_REMOTE_TIMEOUT
+		case input.HtlcAcceptedRemoteSuccess:
+			witnessType = WitnessType_HTLC_ACCEPTED_REMOTE_SUCCESS
+		case input.HtlcSecondLevelRevoke:
+			witnessType = WitnessType_HTLC_SECOND_LEVEL_REVOKE
+		case input.WitnessKeyHash:
+			witnessType = WitnessType_WITNESS_KEY_HASH
+		case input.NestedWitnessKeyHash:
+			witnessType = WitnessType_NESTED_WITNESS_KEY_HASH
+		default:
+			log.Warnf("Unhandled witness type %v for input %v",
+				pendingInput.WitnessType, pendingInput.OutPoint)
+		}
+
+		op := &lnrpc.OutPoint{
+			TxidBytes:   pendingInput.OutPoint.Hash[:],
+			OutputIndex: pendingInput.OutPoint.Index,
+		}
+		amountSat := uint32(pendingInput.Amount)
+		satPerByte := uint32(pendingInput.LastFeeRate.FeePerKVByte() / 1000)
+		broadcastAttempts := uint32(pendingInput.BroadcastAttempts)
+		nextBroadcastHeight := uint32(pendingInput.NextBroadcastHeight)
+
+		rpcPendingSweeps = append(rpcPendingSweeps, &PendingSweep{
+			Outpoint:            op,
+			WitnessType:         witnessType,
+			AmountSat:           amountSat,
+			SatPerByte:          satPerByte,
+			BroadcastAttempts:   broadcastAttempts,
+			NextBroadcastHeight: nextBroadcastHeight,
+		})
+	}
+
+	return &PendingSweepsResponse{
+		PendingSweeps: rpcPendingSweeps,
+	}, nil
+}
+
+// unmarshallOutPoint converts an outpoint from its lnrpc type to its canonical
+// type.
+func unmarshallOutPoint(op *lnrpc.OutPoint) (*wire.OutPoint, error) {
+	var hash chainhash.Hash
+	switch {
+	case len(op.TxidBytes) == 0 && len(op.TxidStr) == 0:
+		fallthrough
+
+	case len(op.TxidBytes) != 0 && len(op.TxidStr) != 0:
+		return nil, fmt.Errorf("either TxidBytes or TxidStr must be " +
+			"specified, but not both")
+
+	// The hash was provided as raw bytes.
+	case len(op.TxidBytes) != 0:
+		copy(hash[:], op.TxidBytes)
+
+	// The hash was provided as a hex-encoded string.
+	case len(op.TxidStr) != 0:
+		h, err := chainhash.NewHashFromStr(op.TxidStr)
+		if err != nil {
+			return nil, err
+		}
+		hash = *h
+	}
+
+	return &wire.OutPoint{
+		Hash:  hash,
+		Index: op.OutputIndex,
+	}, nil
+}
+
+// BumpFee allows bumping the fee rate of an arbitrary input. A fee preference
+// can be expressed either as a specific fee rate or a delta of blocks in which
+// the output should be swept on-chain within. If a fee preference is not
+// explicitly specified, then an error is returned. The status of the input
+// sweep can be checked through the PendingSweeps RPC.
+func (w *WalletKit) BumpFee(ctx context.Context,
+	in *BumpFeeRequest) (*BumpFeeResponse, error) {
+
+	// Parse the outpoint from the request.
+	op, err := unmarshallOutPoint(in.Outpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	// Construct the request's fee preference.
+	satPerKw := lnwallet.SatPerKVByte(in.SatPerByte * 1000).FeePerKWeight()
+	feePreference := sweep.FeePreference{
+		ConfTarget: uint32(in.TargetConf),
+		FeeRate:    satPerKw,
+	}
+
+	// We'll attempt to bump the fee of the input through the UtxoSweeper.
+	// If it is currently attempting to sweep the input, then it'll simply
+	// bump its fee, which will result in a replacement transaction (RBF)
+	// being broadcast. If it is not aware of the input however,
+	// lnwallet.ErrNotMine is returned.
+	_, err = w.cfg.Sweeper.BumpFee(*op, feePreference)
+	switch err {
+	case nil:
+		return &BumpFeeResponse{}, nil
+	case lnwallet.ErrNotMine:
+		break
+	default:
+		return nil, err
+	}
+
+	// Since we're unable to perform a bump through RBF, we'll assume the
+	// user is attempting to bump an unconfirmed transaction's fee rate by
+	// sweeping an output within it under control of the wallet with a
+	// higher fee rate, essentially performing a Child-Pays-For-Parent
+	// (CPFP).
+	//
+	// We'll gather all of the information required by the UtxoSweeper in
+	// order to sweep the output.
+	txOut, err := w.cfg.Wallet.FetchInputInfo(op)
+	if err != nil {
+		return nil, err
+	}
+
+	var witnessType input.WitnessType
+	switch {
+	case txscript.IsPayToWitnessPubKeyHash(txOut.PkScript):
+		witnessType = input.WitnessKeyHash
+	case txscript.IsPayToScriptHash(txOut.PkScript):
+		witnessType = input.NestedWitnessKeyHash
+	default:
+		return nil, fmt.Errorf("unknown input witness %v", op)
+	}
+
+	signDesc := &input.SignDescriptor{
+		Output:   txOut,
+		HashType: txscript.SigHashAll,
+	}
+
+	input := input.NewBaseInput(op, witnessType, signDesc, 0)
+	if _, err = w.cfg.Sweeper.SweepInput(input, feePreference); err != nil {
+		return nil, err
+	}
+
+	return &BumpFeeResponse{}, nil
 }

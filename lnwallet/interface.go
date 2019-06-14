@@ -10,7 +10,6 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/wallet/txauthor"
-	"github.com/monasuite/lnd/lntypes"
 )
 
 // AddressType is an enum-like type which denotes the possible address types
@@ -101,6 +100,9 @@ type TransactionDetail struct {
 
 	// DestAddresses are the destinations for a transaction
 	DestAddresses []btcutil.Address
+
+	// RawTx returns the raw serialized transaction.
+	RawTx []byte
 }
 
 // TransactionSubscription is an interface which describes an object capable of
@@ -268,8 +270,10 @@ type BlockChainIO interface {
 	// script that the outpoint creates. In the case that the output is in
 	// the UTXO set, then the output corresponding to that output is
 	// returned.  Otherwise, a non-nil error will be returned.
-	GetUtxo(op *wire.OutPoint, pkScript []byte,
-		heightHint uint32) (*wire.TxOut, error)
+	// As for some backends this call can initiate a rescan, the passed
+	// cancel channel can be closed to abort the call.
+	GetUtxo(op *wire.OutPoint, pkScript []byte, heightHint uint32,
+		cancel <-chan struct{}) (*wire.TxOut, error)
 
 	// GetBlockHash returns the hash of the block in the best blockchain
 	// at the given height.
@@ -290,21 +294,6 @@ type MessageSigner interface {
 	// is unable to be found, then an error will be returned. The actual
 	// digest signed is the double SHA-256 of the passed message.
 	SignMessage(pubKey *btcec.PublicKey, msg []byte) (*btcec.Signature, error)
-}
-
-// PreimageCache is an interface that represents a global cache for preimages.
-// We'll utilize this cache to communicate the discovery of new preimages
-// across sub-systems.
-type PreimageCache interface {
-	// LookupPreimage attempts to look up a preimage according to its hash.
-	// If found, the preimage is returned along with true for the second
-	// argument. Otherwise, it'll return false.
-	LookupPreimage(hash lntypes.Hash) (lntypes.Preimage, bool)
-
-	// AddPreimages adds a batch of newly discovered preimages to the global
-	// cache, and also signals any subscribers of the newly discovered
-	// witness.
-	AddPreimages(preimages ...lntypes.Preimage) error
 }
 
 // WalletDriver represents a "driver" for a particular concrete

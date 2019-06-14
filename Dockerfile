@@ -12,7 +12,7 @@ RUN apk add --no-cache --update alpine-sdk \
 &&  git clone https://github.com/monasuite/lnd /go/src/github.com/monasuite/lnd \
 &&  cd /go/src/github.com/monasuite/lnd \
 &&  make \
-&&  make install
+&&  make install tags="signrpc walletrpc chainrpc invoicesrpc"
 
 # Start a new, final image.
 FROM alpine as final

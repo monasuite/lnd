@@ -1844,14 +1844,12 @@ func createInitChannels(revocationWindow int) (*lnwallet.LightningChannel, *lnwa
 		Packager:                channeldb.NewChannelPackager(shortChanID),
 	}
 
-	pCache := newMockPreimageCache()
-
 	aliceSigner := &mockSigner{aliceKeyPriv}
 	bobSigner := &mockSigner{bobKeyPriv}
 
 	alicePool := lnwallet.NewSigPool(1, aliceSigner)
 	channelAlice, err := lnwallet.NewLightningChannel(
-		aliceSigner, pCache, aliceChannelState, alicePool,
+		aliceSigner, aliceChannelState, alicePool,
 	)
 	if err != nil {
 		return nil, nil, nil, err
@@ -1860,7 +1858,7 @@ func createInitChannels(revocationWindow int) (*lnwallet.LightningChannel, *lnwa
 
 	bobPool := lnwallet.NewSigPool(1, bobSigner)
 	channelBob, err := lnwallet.NewLightningChannel(
-		bobSigner, pCache, bobChannelState, bobPool,
+		bobSigner, bobChannelState, bobPool,
 	)
 	if err != nil {
 		return nil, nil, nil, err
@@ -1948,7 +1946,7 @@ func createHTLC(data int, amount lnwire.MilliSatoshi) (*lnwire.UpdateAddHTLC, [3
 // pending updates.
 // TODO(conner) remove code duplication
 func forceStateTransition(chanA, chanB *lnwallet.LightningChannel) error {
-	aliceSig, aliceHtlcSigs, err := chanA.SignNextCommitment()
+	aliceSig, aliceHtlcSigs, _, err := chanA.SignNextCommitment()
 	if err != nil {
 		return err
 	}
@@ -1960,12 +1958,13 @@ func forceStateTransition(chanA, chanB *lnwallet.LightningChannel) error {
 	if err != nil {
 		return err
 	}
-	bobSig, bobHtlcSigs, err := chanB.SignNextCommitment()
+	bobSig, bobHtlcSigs, _, err := chanB.SignNextCommitment()
 	if err != nil {
 		return err
 	}
 
-	if _, _, _, err := chanA.ReceiveRevocation(bobRevocation); err != nil {
+	_, _, _, _, err = chanA.ReceiveRevocation(bobRevocation)
+	if err != nil {
 		return err
 	}
 	if err := chanA.ReceiveNewCommitment(bobSig, bobHtlcSigs); err != nil {
@@ -1976,7 +1975,8 @@ func forceStateTransition(chanA, chanB *lnwallet.LightningChannel) error {
 	if err != nil {
 		return err
 	}
-	if _, _, _, err := chanB.ReceiveRevocation(aliceRevocation); err != nil {
+	_, _, _, _, err = chanB.ReceiveRevocation(aliceRevocation)
+	if err != nil {
 		return err
 	}
 

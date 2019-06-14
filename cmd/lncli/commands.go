@@ -333,7 +333,7 @@ var listUnspentCommand = cli.Command{
 				"to be MaxInt32, otherwise max_confs remains " +
 				"zero. An error is returned if the value is " +
 				"true and both min_confs and max_confs are " +
-				"non-zero. (defualt: false)",
+				"non-zero. (default: false)",
 		},
 	},
 	Action: actionDecorator(listUnspent),
@@ -675,12 +675,14 @@ func openChannel(ctx *cli.Context) error {
 		return nil
 	}
 
+	minConfs := int32(ctx.Uint64("min_confs"))
 	req := &lnrpc.OpenChannelRequest{
-		TargetConf:     int32(ctx.Int64("conf_target")),
-		SatPerByte:     ctx.Int64("sat_per_byte"),
-		MinHtlcMsat:    ctx.Int64("min_htlc_msat"),
-		RemoteCsvDelay: uint32(ctx.Uint64("remote_csv_delay")),
-		MinConfs:       int32(ctx.Uint64("min_confs")),
+		TargetConf:       int32(ctx.Int64("conf_target")),
+		SatPerByte:       ctx.Int64("sat_per_byte"),
+		MinHtlcMsat:      ctx.Int64("min_htlc_msat"),
+		RemoteCsvDelay:   uint32(ctx.Uint64("remote_csv_delay")),
+		MinConfs:         minConfs,
+		SpendUnconfirmed: minConfs == 0,
 	}
 
 	switch {
@@ -985,7 +987,12 @@ var closeAllChannelsCommand = cli.Command{
 	By default, one is prompted for confirmation every time an inactive
 	channel is requested to be closed. To avoid this, one can set the
 	--force flag, which will only prompt for confirmation once for all
-	inactive channels and proceed to close them.`,
+	inactive channels and proceed to close them.
+
+	In the case of cooperative closures, one can manually set the fee to
+	be used for the closing transactions via either the --conf_target or
+	--sat_per_byte arguments. This will be the starting value used during
+	fee negotiation. This is optional.`,
 	Flags: []cli.Flag{
 		cli.BoolFlag{
 			Name:  "inactive_only",
@@ -995,6 +1002,18 @@ var closeAllChannelsCommand = cli.Command{
 			Name: "force",
 			Usage: "ask for confirmation once before attempting " +
 				"to close existing channels",
+		},
+		cli.Int64Flag{
+			Name: "conf_target",
+			Usage: "(optional) the number of blocks that the " +
+				"closing transactions *should* confirm in, will be " +
+				"used for fee estimation",
+		},
+		cli.Int64Flag{
+			Name: "sat_per_byte",
+			Usage: "(optional) a manual fee expressed in " +
+				"sat/byte that should be used when crafting " +
+				"the closing transactions",
 		},
 	},
 	Action: actionDecorator(closeAllChannels),
@@ -1130,7 +1149,9 @@ func closeAllChannels(ctx *cli.Context) error {
 					},
 					OutputIndex: uint32(index),
 				},
-				Force: !channel.GetActive(),
+				Force:      !channel.GetActive(),
+				TargetConf: int32(ctx.Int64("conf_target")),
+				SatPerByte: ctx.Int64("sat_per_byte"),
 			}
 
 			txidChan := make(chan string, 1)
@@ -1586,23 +1607,27 @@ mnemonicCheck:
 	// We'll also check to see if they provided any static channel backups,
 	// if so, then we'll also tack these onto the final innit wallet
 	// request.
-	var chanBackups *lnrpc.ChanBackupSnapshot
 	backups, err := parseChanBackups(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to parse chan "+
 			"backups: %v", err)
 	}
 
+	var chanBackups *lnrpc.ChanBackupSnapshot
 	if backups != nil {
 		switch {
 		case backups.GetChanBackups() != nil:
 			singleBackup := backups.GetChanBackups()
-			chanBackups.SingleChanBackups = singleBackup
+			chanBackups = &lnrpc.ChanBackupSnapshot{
+				SingleChanBackups: singleBackup,
+			}
 
 		case backups.GetMultiChanBackup() != nil:
 			multiBackup := backups.GetMultiChanBackup()
-			chanBackups.MultiChanBackup = &lnrpc.MultiChanBackup{
-				MultiChanBackup: multiBackup,
+			chanBackups = &lnrpc.ChanBackupSnapshot{
+				MultiChanBackup: &lnrpc.MultiChanBackup{
+					MultiChanBackup: multiBackup,
+				},
 			}
 		}
 	}
@@ -1834,6 +1859,7 @@ func getInfo(ctx *cli.Context) error {
 		Version             string   `json:"version"`
 		IdentityPubkey      string   `json:"identity_pubkey"`
 		Alias               string   `json:"alias"`
+		Color               string   `json:"color"`
 		NumPendingChannels  uint32   `json:"num_pending_channels"`
 		NumActiveChannels   uint32   `json:"num_active_channels"`
 		NumInactiveChannels uint32   `json:"num_inactive_channels"`
@@ -1849,6 +1875,7 @@ func getInfo(ctx *cli.Context) error {
 		Version:             resp.Version,
 		IdentityPubkey:      resp.IdentityPubkey,
 		Alias:               resp.Alias,
+		Color:               resp.Color,
 		NumPendingChannels:  resp.NumPendingChannels,
 		NumActiveChannels:   resp.NumActiveChannels,
 		NumInactiveChannels: resp.NumInactiveChannels,
@@ -2004,6 +2031,38 @@ var cltvLimitFlag = cli.UintFlag{
 		"this payment",
 }
 
+// paymentFlags returns common flags for sendpayment and payinvoice.
+func paymentFlags() []cli.Flag {
+	return []cli.Flag{
+		cli.StringFlag{
+			Name:  "pay_req",
+			Usage: "a zpay32 encoded payment request to fulfill",
+		},
+		cli.Int64Flag{
+			Name: "fee_limit",
+			Usage: "maximum fee allowed in satoshis when " +
+				"sending the payment",
+		},
+		cli.Int64Flag{
+			Name: "fee_limit_percent",
+			Usage: "percentage of the payment's amount used as " +
+				"the maximum fee allowed when sending the " +
+				"payment",
+		},
+		cltvLimitFlag,
+		cli.Uint64Flag{
+			Name: "outgoing_chan_id",
+			Usage: "short channel id of the outgoing channel to " +
+				"use for the first hop of the payment",
+			Value: 0,
+		},
+		cli.BoolFlag{
+			Name:  "force, f",
+			Usage: "will skip payment request confirmation",
+		},
+	}
+}
+
 var sendPaymentCommand = cli.Command{
 	Name:     "sendpayment",
 	Category: "Payments",
@@ -2030,7 +2089,7 @@ var sendPaymentCommand = cli.Command{
 	destination.
 	`,
 	ArgsUsage: "dest amt payment_hash final_cltv_delta | --pay_req=[payment request]",
-	Flags: []cli.Flag{
+	Flags: append(paymentFlags(),
 		cli.StringFlag{
 			Name: "dest, d",
 			Usage: "the compressed identity pubkey of the " +
@@ -2040,17 +2099,6 @@ var sendPaymentCommand = cli.Command{
 			Name:  "amt, a",
 			Usage: "number of satoshis to send",
 		},
-		cli.Int64Flag{
-			Name: "fee_limit",
-			Usage: "maximum fee allowed in satoshis when sending" +
-				"the payment",
-		},
-		cli.Int64Flag{
-			Name: "fee_limit_percent",
-			Usage: "percentage of the payment's amount used as the" +
-				"maximum fee allowed when sending the payment",
-		},
-		cltvLimitFlag,
 		cli.StringFlag{
 			Name:  "payment_hash, r",
 			Usage: "the hash to use within the payment's HTLC",
@@ -2059,25 +2107,11 @@ var sendPaymentCommand = cli.Command{
 			Name:  "debug_send",
 			Usage: "use the debug rHash when sending the HTLC",
 		},
-		cli.StringFlag{
-			Name:  "pay_req",
-			Usage: "a zpay32 encoded payment request to fulfill",
-		},
 		cli.Int64Flag{
 			Name:  "final_cltv_delta",
 			Usage: "the number of blocks the last hop has to reveal the preimage",
 		},
-		cli.Uint64Flag{
-			Name: "outgoing_chan_id",
-			Usage: "short channel id of the outgoing channel to " +
-				"use for the first hop of the payment",
-			Value: 0,
-		},
-		cli.BoolFlag{
-			Name:  "force, f",
-			Usage: "will skip payment request confirmation",
-		},
-	},
+	),
 	Action: sendPayment,
 }
 
@@ -2107,26 +2141,7 @@ func retrieveFeeLimit(ctx *cli.Context) (*lnrpc.FeeLimit, error) {
 	return nil, nil
 }
 
-func confirmPayReq(ctx *cli.Context, client lnrpc.LightningClient, payReq string) error {
-	ctxb := context.Background()
-
-	req := &lnrpc.PayReqString{PayReq: payReq}
-	resp, err := client.DecodePayReq(ctxb, req)
-	if err != nil {
-		return err
-	}
-
-	// If the amount was not included in the invoice, then we let
-	// the payee specify the amount of satoshis they wish to send.
-	amt := resp.GetNumSatoshis()
-	if amt == 0 {
-		amt = ctx.Int64("amt")
-		if amt == 0 {
-			return fmt.Errorf("amount must be specified when " +
-				"paying a zero amount invoice")
-		}
-	}
-
+func confirmPayReq(resp *lnrpc.PayReq, amt int64) error {
 	fmt.Printf("Description: %v\n", resp.GetDescription())
 	fmt.Printf("Amount (in satoshis): %v\n", amt)
 	fmt.Printf("Destination: %v\n", resp.GetDestination())
@@ -2140,45 +2155,27 @@ func confirmPayReq(ctx *cli.Context, client lnrpc.LightningClient, payReq string
 }
 
 func sendPayment(ctx *cli.Context) error {
-	client, cleanUp := getClient(ctx)
-	defer cleanUp()
 	// Show command help if no arguments provided
 	if ctx.NArg() == 0 && ctx.NumFlags() == 0 {
 		cli.ShowCommandHelp(ctx, "sendpayment")
 		return nil
 	}
 
-	// First, we'll retrieve the fee limit value passed since it can apply
-	// to both ways of sending payments (with the payment request or
-	// providing the details manually).
-	feeLimit, err := retrieveFeeLimit(ctx)
-	if err != nil {
-		return err
-	}
-
 	// If a payment request was provided, we can exit early since all of the
 	// details of the payment are encoded within the request.
 	if ctx.IsSet("pay_req") {
-		if !ctx.Bool("force") {
-			err = confirmPayReq(ctx, client, ctx.String("pay_req"))
-			if err != nil {
-				return err
-			}
-		}
 		req := &lnrpc.SendRequest{
 			PaymentRequest: ctx.String("pay_req"),
 			Amt:            ctx.Int64("amt"),
-			FeeLimit:       feeLimit,
-			OutgoingChanId: ctx.Uint64("outgoing_chan_id"),
-			CltvLimit:      uint32(ctx.Int(cltvLimitFlag.Name)),
 		}
 
-		return sendPaymentRequest(client, req)
+		return sendPaymentRequest(ctx, req)
 	}
 
 	var (
 		destNode []byte
 		amount   int64
+		err      error
 	)
 
 	args := ctx.Args()
@@ -2212,9 +2209,8 @@ func sendPayment(ctx *cli.Context) error {
 	}
 
 	req := &lnrpc.SendRequest{
-		Dest:     destNode,
-		Amt:      amount,
-		FeeLimit: feeLimit,
+		Dest: destNode,
+		Amt:  amount,
 	}
 
 	if ctx.Bool("debug_send") && (ctx.IsSet("payment_hash") || args.Present()) {
@@ -2253,10 +2249,47 @@ func sendPayment(ctx *cli.Context) error {
 		}
 	}
 
-	return sendPaymentRequest(client, req)
+	return sendPaymentRequest(ctx, req)
 }
 
-func sendPaymentRequest(client lnrpc.LightningClient, req *lnrpc.SendRequest) error {
+func sendPaymentRequest(ctx *cli.Context, req *lnrpc.SendRequest) error {
+	client, cleanUp := getClient(ctx)
+	defer cleanUp()
+
+	// First, we'll retrieve the fee limit value passed since it can apply
+	// to both ways of sending payments (with the payment request or
+	// providing the details manually).
+	feeLimit, err := retrieveFeeLimit(ctx)
+	if err != nil {
+		return err
+	}
+	req.FeeLimit = feeLimit
+
+	req.OutgoingChanId = ctx.Uint64("outgoing_chan_id")
+	req.CltvLimit = uint32(ctx.Int(cltvLimitFlag.Name))
+
+	amt := req.Amt
+
+	if req.PaymentRequest != "" {
+		req := &lnrpc.PayReqString{PayReq: req.PaymentRequest}
+		resp, err := client.DecodePayReq(context.Background(), req)
+		if err != nil {
+			return err
+		}
+
+		invoiceAmt := resp.GetNumSatoshis()
+		if invoiceAmt != 0 {
+			amt = invoiceAmt
+		}
+
+		if !ctx.Bool("force") {
+			err := confirmPayReq(resp, amt)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	paymentStream, err := client.SendPayment(context.Background())
 	if err != nil {
 		return err
@@ -2298,45 +2331,18 @@ var payInvoiceCommand = cli.Command{
 	Category:  "Payments",
 	Usage:     "Pay an invoice over lightning.",
 	ArgsUsage: "pay_req",
-	Flags: []cli.Flag{
-		cli.StringFlag{
-			Name:  "pay_req",
-			Usage: "a zpay32 encoded payment request to fulfill",
-		},
+	Flags: append(paymentFlags(),
 		cli.Int64Flag{
 			Name: "amt",
 			Usage: "(optional) number of satoshis to fulfill the " +
 				"invoice",
 		},
-		cli.Int64Flag{
-			Name: "fee_limit",
-			Usage: "maximum fee allowed in satoshis when sending " +
-				"the payment",
-		},
-		cli.Int64Flag{
-			Name: "fee_limit_percent",
-			Usage: "percentage of the payment's amount used as the" +
-				"maximum fee allowed when sending the payment",
-		},
-		cltvLimitFlag,
-		cli.Uint64Flag{
-			Name: "outgoing_chan_id",
-			Usage: "short channel id of the outgoing channel to " +
-				"use for the first hop of the payment",
-			Value: 0,
-		},
-		cli.BoolFlag{
-			Name:  "force, f",
-			Usage: "will skip payment request confirmation",
-		},
-	},
+	),
 	Action: actionDecorator(payInvoice),
 }
 
 func payInvoice(ctx *cli.Context) error {
 	args := ctx.Args()
-	client, cleanUp := getClient(ctx)
-	defer cleanUp()
 
 	var payReq string
 	switch {
@@ -2348,27 +2354,12 @@ func payInvoice(ctx *cli.Context) error {
 		return fmt.Errorf("pay_req argument missing")
 	}
 
-	feeLimit, err := retrieveFeeLimit(ctx)
-	if err != nil {
-		return err
-	}
-
-	if !ctx.Bool("force") {
-		err = confirmPayReq(ctx, client, payReq)
-		if err != nil {
-			return err
-		}
-	}
-
 	req := &lnrpc.SendRequest{
 		PaymentRequest: payReq,
 		Amt:            ctx.Int64("amt"),
-		FeeLimit:       feeLimit,
-		OutgoingChanId: ctx.Uint64("outgoing_chan_id"),
-		CltvLimit:      uint32(ctx.Int(cltvLimitFlag.Name)),
 	}
 
-	return sendPaymentRequest(client, req)
+	return sendPaymentRequest(ctx, req)
 }
 
 var sendToRouteCommand = cli.Command{
@@ -2476,9 +2467,18 @@ func sendToRoute(ctx *cli.Context) error {
 			"from incoming array of routes: %v", err)
 	}
 
+	if len(routes.Routes) == 0 {
+		return fmt.Errorf("no routes provided")
+	}
+
+	if len(routes.Routes) != 1 {
+		return fmt.Errorf("expected a single route, but got %v",
+			len(routes.Routes))
+	}
+
 	req := &lnrpc.SendToRouteRequest{
 		PaymentHash: rHash,
-		Routes:      routes.Routes,
+		Route:       routes.Routes[0],
 	}
 
 	return sendToRouteRequest(ctx, req)
@@ -2839,14 +2839,22 @@ var listPaymentsCommand = cli.Command{
 	Name:     "listpayments",
 	Category: "Payments",
 	Usage:    "List all outgoing payments.",
-	Action:   actionDecorator(listPayments),
+	Flags: []cli.Flag{
+		cli.BoolFlag{
+			Name:  "include_incomplete",
+			Usage: "if set to true, payments still in flight (or failed) will be returned as well",
+		},
+	},
+	Action: actionDecorator(listPayments),
 }
 
 func listPayments(ctx *cli.Context) error {
 	client, cleanUp := getClient(ctx)
 	defer cleanUp()
 
-	req := &lnrpc.ListPaymentsRequest{}
+	req := &lnrpc.ListPaymentsRequest{
+		IncludeIncomplete: ctx.Bool("include_incomplete"),
+	}
 
 	payments, err := client.ListPayments(context.Background(), req)
 	if err != nil {
@@ -2978,11 +2986,6 @@ var queryRoutesCommand = cli.Command{
 				"maximum fee allowed when sending the payment",
 		},
 		cli.Int64Flag{
-			Name:  "num_max_routes",
-			Usage: "the max number of routes to be returned",
-			Value: 10,
-		},
-		cli.Int64Flag{
 			Name: "final_cltv_delta",
 			Usage: "(optional) number of blocks the last hop has to reveal " +
 				"the preimage",
@@ -3035,7 +3038,6 @@ func queryRoutes(ctx *cli.Context) error {
 		PubKey:         dest,
 		Amt:            amt,
 		FeeLimit:       feeLimit,
-		NumRoutes:      int32(ctx.Int("num_max_routes")),
 		FinalCltvDelta: int32(ctx.Int("final_cltv_delta")),
 	}
 

@@ -649,7 +649,7 @@
     },
     "/v1/graph/routes/{pub_key}/{amt}": {
       "get": {
-        "summary": "* lncli: `queryroutes`\nQueryRoutes attempts to query the daemon's Channel Router for a possible\nroute to a target destination capable of carrying a specific amount of\nsatoshis. The retuned route contains the full details required to craft and\nsend an HTLC, also including the necessary information that should be\npresent within the Sphinx packet encapsulated within the HTLC.",
+        "summary": "* lncli: `queryroutes`\nQueryRoutes attempts to query the daemon's Channel Router for a possible\nroute to a target destination capable of carrying a specific amount of\nsatoshis. The returned route contains the full details required to craft and\nsend an HTLC, also including the necessary information that should be\npresent within the Sphinx packet encapsulated within the HTLC.",
         "operationId": "QueryRoutes",
         "responses": {
           "200": {
@@ -672,14 +672,6 @@
             "required": true,
             "type": "string",
             "format": "int64"
-          },
-          {
-            "name": "num_routes",
-            "description": "*\nDeprecated. The max number of routes to return. In the future, QueryRoutes\nwill only return a single route.",
-            "in": "query",
-            "required": false,
-            "type": "integer",
-            "format": "int32"
           },
           {
             "name": "final_cltv_delta",
@@ -946,6 +938,16 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "include_incomplete",
+            "description": "*\nIf true, then return payments that have not yet fully completed. This means\nthat pending payments, as well as failed payments will show up if this\nfield is set to True.",
+            "in": "query",
+            "required": false,
+            "type": "boolean",
+            "format": "boolean"
+          }
+        ],
         "tags": [
           "Lightning"
         ]
@@ -1305,6 +1307,16 @@
       ],
       "default": "OPEN"
     },
+    "PaymentPaymentStatus": {
+      "type": "string",
+      "enum": [
+        "UNKNOWN",
+        "IN_FLIGHT",
+        "SUCCEEDED",
+        "FAILED"
+      ],
+      "default": "UNKNOWN"
+    },
     "PeerSyncType": {
       "type": "string",
       "enum": [
@@ -1347,7 +1359,7 @@
         "maturity_height": {
           "type": "integer",
           "format": "int64",
-          "title": "/ The height at which funds can be sweeped into the wallet"
+          "title": "/ The height at which funds can be swept into the wallet"
         },
         "blocks_til_maturity": {
           "type": "integer",
@@ -1605,7 +1617,7 @@
         },
         "chan_status_flags": {
           "type": "string",
-          "description": "/ A set of flags showing the current state of the cahnnel."
+          "description": "/ A set of flags showing the current state of the channel."
         }
       }
     },
@@ -1619,7 +1631,7 @@
         "chan_backup": {
           "type": "string",
           "format": "byte",
-          "description": "*\nIs an encrypted single-chan backup. this can be passed to\nRestoreChannelBackups, or the WalletUnlocker Innit and Unlock methods in\norder to trigger the recovery protocol."
+          "description": "*\nIs an encrypted single-chan backup. this can be passed to\nRestoreChannelBackups, or the WalletUnlocker Init and Unlock methods in\norder to trigger the recovery protocol."
         }
       }
     },
@@ -2166,6 +2178,10 @@
             "$ref": "#/definitions/lnrpcChain"
           },
           "title": "/ A list of active chains the node is connected to"
+        },
+        "color": {
+          "type": "string",
+          "title": "/ The color of the current node in hex code format"
         }
       }
     },
@@ -2621,11 +2637,20 @@
         },
         "num_channels": {
           "type": "integer",
-          "format": "int64"
+          "format": "int64",
+          "description": "/ The total number of channels for the node."
         },
         "total_capacity": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "description": "/ The sum of all channels capacity for the node, denominated in satoshis."
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/lnrpcChannelEdge"
+          },
+          "description": "/ A list of all public channels for the node."
         }
       }
     },
@@ -2646,6 +2671,9 @@
           "format": "byte"
         },
         "alias": {
+          "type": "string"
+        },
+        "color": {
           "type": "string"
         }
       }
@@ -2823,6 +2851,14 @@
           "type": "string",
           "format": "int64",
           "title": "/ The value of the payment in milli-satoshis"
+        },
+        "payment_request": {
+          "type": "string",
+          "description": "/ The optional payment request being fulfilled."
+        },
+        "status": {
+          "$ref": "#/definitions/PaymentPaymentStatus",
+          "description": "The status of the payment."
         }
       }
     },
@@ -3027,7 +3063,7 @@
         "total_fees": {
           "type": "string",
           "format": "int64",
-          "description": "*\nThe sum of the fees paid at each hop within the final route.  In the case\nof a one-hop payment, this value will be zero as we don't need to pay a fee\nit ourself."
+          "description": "*\nThe sum of the fees paid at each hop within the final route.  In the case\nof a one-hop payment, this value will be zero as we don't need to pay a fee\nto ourselves."
         },
         "total_amt": {
           "type": "string",
@@ -3224,13 +3260,6 @@
           "type": "string",
           "description": "/ An optional hex-encoded payment hash to be used for the HTLC."
         },
-        "routes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/lnrpcRoute"
-          },
-          "description": "*\nDeprecated. The set of routes that should be used to attempt to complete the\npayment. The possibility to pass in multiple routes is deprecated and \ninstead the single route field below should be used in combination with the \nstreaming variant of SendToRoute."
-        },
         "route": {
           "$ref": "#/definitions/lnrpcRoute",
           "description": "/ Route that should be used to attempt to complete the payment."
@@ -3301,6 +3330,10 @@
             "type": "string"
           },
           "title": "/ Addresses that received funds for this transaction"
+        },
+        "raw_tx_hex": {
+          "type": "string",
+          "description": "/ The raw transaction hex."
         }
       }
     },
@@ -3327,7 +3360,7 @@
         "recovery_window": {
           "type": "integer",
           "format": "int32",
-          "description": "*\nrecovery_window is an optional argument specifying the address lookahead\nwhen restoring a wallet seed. The recovery window applies to each\ninvdividual branch of the BIP44 derivation paths. Supplying a recovery\nwindow of zero indicates that no addresses should be recovered, such after\nthe first initialization of the wallet."
+          "description": "*\nrecovery_window is an optional argument specifying the address lookahead\nwhen restoring a wallet seed. The recovery window applies to each\nindividual branch of the BIP44 derivation paths. Supplying a recovery\nwindow of zero indicates that no addresses should be recovered, such after\nthe first initialization of the wallet."
         },
         "channel_backups": {
           "$ref": "#/definitions/lnrpcChanBackupSnapshot",

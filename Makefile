@@ -115,7 +115,7 @@ scratch: build
 check: unit itest
 
 itest-only:
-	@$(call print, "Running integration tests.")
+	@$(call print, "Running integration tests with ${backend} backend.")
 	$(ITEST)
 
 itest: btcd build-itest itest-only
@@ -126,7 +126,8 @@ unit: btcd
 
 unit-cover: $(GOACC_BIN)
 	@$(call print, "Running unit coverage tests.")
-	$(GOACC_BIN) $$(go list ./... | grep -v lnrpc) -- -test.tags="$(DEV_TAGS) $(LOG_TAGS)"
+	$(GOACC_BIN) $(COVER_PKG) -- -test.tags="$(DEV_TAGS) $(LOG_TAGS)"
+
 
 unit-race:
 	@$(call print, "Running unit race tests.")
@@ -148,7 +149,7 @@ travis-itest: lint itest
 # =============
 
 flakehunter: build-itest
-	@$(call print, "Flake hunting integration tests.")
+	@$(call print, "Flake hunting ${backend} integration tests.")
 	while [ $$? -eq 0 ]; do $(ITEST); done
 
 flake-unit:

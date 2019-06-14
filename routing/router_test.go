@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,17 +16,15 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/davecgh/go-spew/spew"
 
-	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/htlcswitch"
+	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing/route"
 	"github.com/monasuite/lnd/zpay32"
 )
 
-// defaultNumRoutes is the default value for the maximum number of routes to
-// be returned by FindRoutes
-const defaultNumRoutes = 10
+var uniquePaymentID uint64 = 1 // to be used atomically
 
 type testCtx struct {
 	router *ChannelRouter
@@ -47,13 +46,11 @@ func (c *testCtx) RestartRouter() error {
 	// With the chainView reset, we'll now re-create the router itself, and
 	// start it.
 	router, err := New(Config{
-		Graph:     c.graph,
-		Chain:     c.chain,
-		ChainView: c.chainView,
-		SendToSwitch: func(_ lnwire.ShortChannelID,
-			_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
-			return [32]byte{}, nil
-		},
+		Graph:              c.graph,
+		Chain:              c.chain,
+		ChainView:          c.chainView,
+		Payer:              &mockPaymentAttemptDispatcher{},
+		Control:            makeMockControlTower(),
 		ChannelPruneExpiry: time.Hour * 24,
 		GraphPruneInterval: time.Hour * 2,
 	})
@@ -87,19 +84,39 @@ func createTestCtxFromGraphInstance(startingHeight uint32, graphInstance *testGr
 	// be populated.
 	chain := newMockChain(startingHeight)
 	chainView := newMockChainView(chain)
-	router, err := New(Config{
-		Graph:     graphInstance.graph,
-		Chain:     chain,
-		ChainView: chainView,
-		SendToSwitch: func(_ lnwire.ShortChannelID,
-			_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
 
-			return [32]byte{}, nil
+	selfNode, err := graphInstance.graph.SourceNode()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	mc := NewMissionControl(
+		graphInstance.graph, selfNode,
+		func(e *channeldb.ChannelEdgeInfo) lnwire.MilliSatoshi {
+			return lnwire.NewMSatFromSatoshis(e.Capacity)
 		},
+		&MissionControlConfig{
+			MinRouteProbability:   0.01,
+			PaymentAttemptPenalty: 100,
+			PenaltyHalfLife:       time.Hour,
+			AprioriHopProbability: 0.9,
+		},
+	)
+	router, err := New(Config{
+		Graph:              graphInstance.graph,
+		Chain:              chain,
+		ChainView:          chainView,
+		Payer:              &mockPaymentAttemptDispatcher{},
+		Control:            makeMockControlTower(),
+		MissionControl:     mc,
 		ChannelPruneExpiry: time.Hour * 24,
 		GraphPruneInterval: time.Hour * 2,
 		QueryBandwidth: func(e *channeldb.ChannelEdgeInfo) lnwire.MilliSatoshi {
 			return lnwire.NewMSatFromSatoshis(e.Capacity)
+		},
+		NextPaymentID: func() (uint64, error) {
+			next := atomic.AddUint64(&uniquePaymentID, 1)
+			return next, nil
 		},
 	})
 	if err != nil {
@@ -165,60 +182,6 @@ func createTestCtxFromFile(startingHeight uint32, testGraph string) (*testCtx, f
 	return createTestCtxFromGraphInstance(startingHeight, graphInstance)
 }
 
-// TestFindRoutesFeeSorting asserts that routes found by the FindRoutes method
-// within the channel router are properly returned in a sorted order, with the
-// lowest fee route coming first.
-func TestFindRoutesFeeSorting(t *testing.T) {
-	t.Parallel()
-
-	const startingBlockHeight = 101
-	ctx, cleanUp, err := createTestCtxFromFile(startingBlockHeight, basicGraphFilePath)
-	if err != nil {
-		t.Fatalf("unable to create router: %v", err)
-	}
-	defer cleanUp()
-
-	// In this test we'd like to ensure proper integration of the various
-	// functions that are involved in path finding, and also route
-	// selection.
-
-	// Execute a query for all possible routes between roasbeef and luo ji.
-	paymentAmt := lnwire.NewMSatFromSatoshis(100)
-	target := ctx.aliases["luoji"]
-	routes, err := ctx.router.FindRoutes(
-		ctx.router.selfNode.PubKeyBytes,
-		target, paymentAmt, noRestrictions, defaultNumRoutes,
-		zpay32.DefaultFinalCLTVDelta,
-	)
-	if err != nil {
-		t.Fatalf("unable to find any routes: %v", err)
-	}
-
-	// Exactly, two such paths should be found.
-	if len(routes) != 2 {
-		t.Fatalf("2 routes should've been selected, instead %v were: %v",
-			len(routes), spew.Sdump(routes))
-	}
-
-	// We shouldn't pay a fee for the fist route, but the second route
-	// should have a fee intact.
-	if routes[0].TotalFees != 0 {
-		t.Fatalf("incorrect fees for first route, expected 0 got: %v",
-			routes[0].TotalFees)
-	}
-	if routes[1].TotalFees == 0 {
-		t.Fatalf("total fees not set in second route: %v",
-			spew.Sdump(routes[0]))
-	}
-
-	// The paths should properly be ranked according to their total fee
-	// rate.
-	if routes[0].TotalFees > routes[1].TotalFees {
-		t.Fatalf("routes not ranked by total fee: %v",
-			spew.Sdump(routes))
-	}
-}
-
 // TestFindRoutesWithFeeLimit asserts that routes found by the FindRoutes method
 // within the channel router contain a total fee less than or equal to the fee
 // limit.
@@ -244,27 +207,24 @@ func TestFindRoutesWithFeeLimit(t *testing.T) {
 	target := ctx.aliases["sophon"]
 	paymentAmt := lnwire.NewMSatFromSatoshis(100)
 	restrictions := &RestrictParams{
-		FeeLimit: lnwire.NewMSatFromSatoshis(10),
+		FeeLimit:          lnwire.NewMSatFromSatoshis(10),
+		ProbabilitySource: noProbabilitySource,
 	}
 
-	routes, err := ctx.router.FindRoutes(
+	route, err := ctx.router.FindRoute(
 		ctx.router.selfNode.PubKeyBytes,
-		target, paymentAmt, restrictions, defaultNumRoutes,
+		target, paymentAmt, restrictions,
 		zpay32.DefaultFinalCLTVDelta,
 	)
 	if err != nil {
 		t.Fatalf("unable to find any routes: %v", err)
 	}
 
-	if len(routes) != 1 {
-		t.Fatalf("expected 1 route, got %d", len(routes))
+	if route.TotalFees() > restrictions.FeeLimit {
+		t.Fatalf("route exceeded fee limit: %v", spew.Sdump(route))
 	}
 
-	if routes[0].TotalFees > restrictions.FeeLimit {
-		t.Fatalf("route exceeded fee limit: %v", spew.Sdump(routes[0]))
-	}
-
-	hops := routes[0].Hops
+	hops := route.Hops
 	if len(hops) != 2 {
 		t.Fatalf("expected 2 hops, got %d", len(hops))
 	}
@@ -311,24 +271,24 @@ func TestSendPaymentRouteFailureFallback(t *testing.T) {
 	// router's configuration to ignore the path that has luo ji as the
 	// first hop. This should force the router to instead take the
 	// available two hop path (through satoshi).
-	ctx.router.cfg.SendToSwitch = func(firstHop lnwire.ShortChannelID,
-		_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
+	ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcher).setPaymentResult(
+		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 
-		roasbeefLuoji := lnwire.NewShortChanIDFromInt(689530843)
-		if firstHop == roasbeefLuoji {
-			pub, err := sourceNode.PubKey()
-			if err != nil {
-				return preImage, err
+			roasbeefLuoji := lnwire.NewShortChanIDFromInt(689530843)
+			if firstHop == roasbeefLuoji {
+				pub, err := sourceNode.PubKey()
+				if err != nil {
+					return preImage, err
+				}
+				return [32]byte{}, &htlcswitch.ForwardingError{
+					ErrorSource: pub,
+					// TODO(roasbeef): temp node failure should be?
+					FailureMessage: &lnwire.FailTemporaryChannelFailure{},
+				}
 			}
-			return [32]byte{}, &htlcswitch.ForwardingError{
-				ErrorSource: pub,
-				// TODO(roasbeef): temp node failure should be?
-				FailureMessage: &lnwire.FailTemporaryChannelFailure{},
-			}
-		}
 
-		return preImage, nil
-	}
+			return preImage, nil
+		})
 
 	// Send off the payment request to the router, route through satoshi
 	// should've been selected as a fall back and succeeded correctly.
@@ -448,33 +408,33 @@ func TestChannelUpdateValidation(t *testing.T) {
 	// We'll modify the SendToSwitch method so that it simulates a failed
 	// payment with an error originating from the first hop of the route.
 	// The unsigned channel update is attached to the failure message.
-	ctx.router.cfg.SendToSwitch = func(firstHop lnwire.ShortChannelID,
-		_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
+	ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcher).setPaymentResult(
+		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 
-		v := ctx.aliases["b"]
-		source, err := btcec.ParsePubKey(
-			v[:], btcec.S256(),
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
+			v := ctx.aliases["b"]
+			source, err := btcec.ParsePubKey(
+				v[:], btcec.S256(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-		return [32]byte{}, &htlcswitch.ForwardingError{
-			ErrorSource: source,
-			FailureMessage: &lnwire.FailFeeInsufficient{
-				Update: errChanUpdate,
-			},
-		}
-	}
+			return [32]byte{}, &htlcswitch.ForwardingError{
+				ErrorSource: source,
+				FailureMessage: &lnwire.FailFeeInsufficient{
+					Update: errChanUpdate,
+				},
+			}
+		})
 
 	// The payment parameter is mostly redundant in SendToRoute. Can be left
 	// empty for this test.
-	payment := &LightningPayment{}
+	var payment lntypes.Hash
 
 	// Send off the payment request to the router. The specified route
 	// should be attempted and the channel update should be received by
 	// router and ignored because it is missing a valid signature.
-	_, _, err = ctx.router.SendToRoute([]*route.Route{rt}, payment)
+	_, err = ctx.router.SendToRoute(payment, rt)
 	if err == nil {
 		t.Fatalf("expected route to fail with channel update")
 	}
@@ -507,7 +467,7 @@ func TestChannelUpdateValidation(t *testing.T) {
 	}
 
 	// Retry the payment using the same route as before.
-	_, _, err = ctx.router.SendToRoute([]*route.Route{rt}, payment)
+	_, err = ctx.router.SendToRoute(payment, rt)
 	if err == nil {
 		t.Fatalf("expected route to fail with channel update")
 	}
@@ -579,32 +539,32 @@ func TestSendPaymentErrorRepeatedFeeInsufficient(t *testing.T) {
 	// We'll now modify the SendToSwitch method to return an error for the
 	// outgoing channel to Son goku. This will be a fee related error, so
 	// it should only cause the edge to be pruned after the second attempt.
-	ctx.router.cfg.SendToSwitch = func(firstHop lnwire.ShortChannelID,
-		_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
+	ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcher).setPaymentResult(
+		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 
-		roasbeefSongoku := lnwire.NewShortChanIDFromInt(chanID)
-		if firstHop == roasbeefSongoku {
-			sourceKey, err := btcec.ParsePubKey(
-				sourceNode[:], btcec.S256(),
-			)
-			if err != nil {
-				t.Fatal(err)
+			roasbeefSongoku := lnwire.NewShortChanIDFromInt(chanID)
+			if firstHop == roasbeefSongoku {
+				sourceKey, err := btcec.ParsePubKey(
+					sourceNode[:], btcec.S256(),
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				return [32]byte{}, &htlcswitch.ForwardingError{
+					ErrorSource: sourceKey,
+
+					// Within our error, we'll add a channel update
+					// which is meant to reflect he new fee
+					// schedule for the node/channel.
+					FailureMessage: &lnwire.FailFeeInsufficient{
+						Update: errChanUpdate,
+					},
+				}
 			}
 
-			return [32]byte{}, &htlcswitch.ForwardingError{
-				ErrorSource: sourceKey,
-
-				// Within our error, we'll add a channel update
-				// which is meant to reflect he new fee
-				// schedule for the node/channel.
-				FailureMessage: &lnwire.FailFeeInsufficient{
-					Update: errChanUpdate,
-				},
-			}
-		}
-
-		return preImage, nil
-	}
+			return preImage, nil
+		})
 
 	// Send off the payment request to the router, route through satoshi
 	// should've been selected as a fall back and succeeded correctly.
@@ -694,27 +654,27 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 	// outgoing channel to son goku. Since this is a time lock related
 	// error, we should fail the payment flow all together, as Goku is the
 	// only channel to Sophon.
-	ctx.router.cfg.SendToSwitch = func(firstHop lnwire.ShortChannelID,
-		_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
+	ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcher).setPaymentResult(
+		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 
-		if firstHop == roasbeefSongoku {
-			sourceKey, err := btcec.ParsePubKey(
-				sourceNode[:], btcec.S256(),
-			)
-			if err != nil {
-				t.Fatal(err)
+			if firstHop == roasbeefSongoku {
+				sourceKey, err := btcec.ParsePubKey(
+					sourceNode[:], btcec.S256(),
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				return [32]byte{}, &htlcswitch.ForwardingError{
+					ErrorSource: sourceKey,
+					FailureMessage: &lnwire.FailExpiryTooSoon{
+						Update: errChanUpdate,
+					},
+				}
 			}
 
-			return [32]byte{}, &htlcswitch.ForwardingError{
-				ErrorSource: sourceKey,
-				FailureMessage: &lnwire.FailExpiryTooSoon{
-					Update: errChanUpdate,
-				},
-			}
-		}
-
-		return preImage, nil
-	}
+			return preImage, nil
+		})
 
 	// assertExpectedPath is a helper function that asserts the returned
 	// route properly routes around the failure we've introduced in the
@@ -755,30 +715,32 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 	// We'll now modify the error return an IncorrectCltvExpiry error
 	// instead, this should result in the same behavior of roasbeef routing
 	// around the faulty Son Goku node.
-	ctx.router.cfg.SendToSwitch = func(firstHop lnwire.ShortChannelID,
-		_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
+	ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcher).setPaymentResult(
+		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 
-		if firstHop == roasbeefSongoku {
-			sourceKey, err := btcec.ParsePubKey(
-				sourceNode[:], btcec.S256(),
-			)
-			if err != nil {
-				t.Fatal(err)
+			if firstHop == roasbeefSongoku {
+				sourceKey, err := btcec.ParsePubKey(
+					sourceNode[:], btcec.S256(),
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				return [32]byte{}, &htlcswitch.ForwardingError{
+					ErrorSource: sourceKey,
+					FailureMessage: &lnwire.FailIncorrectCltvExpiry{
+						Update: errChanUpdate,
+					},
+				}
 			}
 
-			return [32]byte{}, &htlcswitch.ForwardingError{
-				ErrorSource: sourceKey,
-				FailureMessage: &lnwire.FailIncorrectCltvExpiry{
-					Update: errChanUpdate,
-				},
-			}
-		}
-
-		return preImage, nil
-	}
+			return preImage, nil
+		})
 
 	// Once again, Roasbeef should route around Goku since they disagree
-	// w.r.t to the block height, and instead go through Pham Nuwen.
+	// w.r.t to the block height, and instead go through Pham Nuwen. We
+	// flip a bit in the payment hash to allow resending this payment.
+	payment.PaymentHash[1] ^= 1
 	paymentPreImage, rt, err = ctx.router.SendPayment(&payment)
 	if err != nil {
 		t.Fatalf("unable to send payment: %v", err)
@@ -832,42 +794,42 @@ func TestSendPaymentErrorPathPruning(t *testing.T) {
 	//
 	// TODO(roasbeef): filtering should be intelligent enough so just not
 	// go through satoshi at all at this point.
-	ctx.router.cfg.SendToSwitch = func(firstHop lnwire.ShortChannelID,
-		_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
+	ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcher).setPaymentResult(
+		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 
-		if firstHop == roasbeefLuoji {
-			// We'll first simulate an error from the first
-			// outgoing link to simulate the channel from luo ji to
-			// roasbeef not having enough capacity.
-			return [32]byte{}, &htlcswitch.ForwardingError{
-				ErrorSource:    sourcePub,
-				FailureMessage: &lnwire.FailTemporaryChannelFailure{},
-			}
-		}
-
-		// Next, we'll create an error from satoshi to indicate
-		// that the luoji node is not longer online, which should
-		// prune out the rest of the routes.
-		roasbeefSatoshi := lnwire.NewShortChanIDFromInt(2340213491)
-		if firstHop == roasbeefSatoshi {
-			vertex := ctx.aliases["satoshi"]
-			key, err := btcec.ParsePubKey(
-				vertex[:], btcec.S256(),
-			)
-			if err != nil {
-				t.Fatal(err)
+			if firstHop == roasbeefLuoji {
+				// We'll first simulate an error from the first
+				// outgoing link to simulate the channel from luo ji to
+				// roasbeef not having enough capacity.
+				return [32]byte{}, &htlcswitch.ForwardingError{
+					ErrorSource:    sourcePub,
+					FailureMessage: &lnwire.FailTemporaryChannelFailure{},
+				}
 			}
 
-			return [32]byte{}, &htlcswitch.ForwardingError{
-				ErrorSource:    key,
-				FailureMessage: &lnwire.FailUnknownNextPeer{},
+			// Next, we'll create an error from satoshi to indicate
+			// that the luoji node is not longer online, which should
+			// prune out the rest of the routes.
+			roasbeefSatoshi := lnwire.NewShortChanIDFromInt(2340213491)
+			if firstHop == roasbeefSatoshi {
+				vertex := ctx.aliases["satoshi"]
+				key, err := btcec.ParsePubKey(
+					vertex[:], btcec.S256(),
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				return [32]byte{}, &htlcswitch.ForwardingError{
+					ErrorSource:    key,
+					FailureMessage: &lnwire.FailUnknownNextPeer{},
+				}
 			}
-		}
 
-		return preImage, nil
-	}
+			return preImage, nil
+		})
 
-	ctx.router.missionControl.ResetHistory()
+	ctx.router.cfg.MissionControl.(*MissionControl).ResetHistory()
 
 	// When we try to dispatch that payment, we should receive an error as
 	// both attempts should fail and cause both routes to be pruned.
@@ -882,23 +844,23 @@ func TestSendPaymentErrorPathPruning(t *testing.T) {
 		t.Fatalf("expected UnknownNextPeer instead got: %v", err)
 	}
 
-	ctx.router.missionControl.ResetHistory()
+	ctx.router.cfg.MissionControl.(*MissionControl).ResetHistory()
 
 	// Next, we'll modify the SendToSwitch method to indicate that luo ji
 	// wasn't originally online. This should also halt the send all
 	// together as all paths contain luoji and he can't be reached.
-	ctx.router.cfg.SendToSwitch = func(firstHop lnwire.ShortChannelID,
-		_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
+	ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcher).setPaymentResult(
+		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 
-		if firstHop == roasbeefLuoji {
-			return [32]byte{}, &htlcswitch.ForwardingError{
-				ErrorSource:    sourcePub,
-				FailureMessage: &lnwire.FailUnknownNextPeer{},
+			if firstHop == roasbeefLuoji {
+				return [32]byte{}, &htlcswitch.ForwardingError{
+					ErrorSource:    sourcePub,
+					FailureMessage: &lnwire.FailUnknownNextPeer{},
+				}
 			}
-		}
 
-		return preImage, nil
-	}
+			return preImage, nil
+		})
 
 	// This shouldn't return an error, as we'll make a payment attempt via
 	// the satoshi channel based on the assumption that there might be an
@@ -925,26 +887,28 @@ func TestSendPaymentErrorPathPruning(t *testing.T) {
 				ctx.aliases))
 	}
 
-	ctx.router.missionControl.ResetHistory()
+	ctx.router.cfg.MissionControl.(*MissionControl).ResetHistory()
 
 	// Finally, we'll modify the SendToSwitch function to indicate that the
 	// roasbeef -> luoji channel has insufficient capacity. This should
 	// again cause us to instead go via the satoshi route.
-	ctx.router.cfg.SendToSwitch = func(firstHop lnwire.ShortChannelID,
-		_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
+	ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcher).setPaymentResult(
+		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 
-		if firstHop == roasbeefLuoji {
-			// We'll first simulate an error from the first
-			// outgoing link to simulate the channel from luo ji to
-			// roasbeef not having enough capacity.
-			return [32]byte{}, &htlcswitch.ForwardingError{
-				ErrorSource:    sourcePub,
-				FailureMessage: &lnwire.FailTemporaryChannelFailure{},
+			if firstHop == roasbeefLuoji {
+				// We'll first simulate an error from the first
+				// outgoing link to simulate the channel from luo ji to
+				// roasbeef not having enough capacity.
+				return [32]byte{}, &htlcswitch.ForwardingError{
+					ErrorSource:    sourcePub,
+					FailureMessage: &lnwire.FailTemporaryChannelFailure{},
+				}
 			}
-		}
-		return preImage, nil
-	}
+			return preImage, nil
+		})
 
+	// We flip a bit in the payment hash to allow resending this payment.
+	payment.PaymentHash[1] ^= 1
 	paymentPreImage, rt, err = ctx.router.SendPayment(&payment)
 	if err != nil {
 		t.Fatalf("unable to send payment: %v", err)
@@ -1339,21 +1303,18 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
-	// We should now be able to find two routes to node 2.
+	// We should now be able to find a route to node 2.
 	paymentAmt := lnwire.NewMSatFromSatoshis(100)
 	targetNode := priv2.PubKey()
 	var targetPubKeyBytes route.Vertex
 	copy(targetPubKeyBytes[:], targetNode.SerializeCompressed())
-	routes, err := ctx.router.FindRoutes(
+	_, err = ctx.router.FindRoute(
 		ctx.router.selfNode.PubKeyBytes,
-		targetPubKeyBytes, paymentAmt, noRestrictions, defaultNumRoutes,
+		targetPubKeyBytes, paymentAmt, noRestrictions,
 		zpay32.DefaultFinalCLTVDelta,
 	)
 	if err != nil {
 		t.Fatalf("unable to find any routes: %v", err)
-	}
-	if len(routes) != 2 {
-		t.Fatalf("expected to find 2 route, found: %v", len(routes))
 	}
 
 	// Now check that we can update the node info for the partial node
@@ -1388,18 +1349,15 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		t.Fatalf("could not add node: %v", err)
 	}
 
-	// Should still be able to find the routes, and the info should be
+	// Should still be able to find the route, and the info should be
 	// updated.
-	routes, err = ctx.router.FindRoutes(
+	_, err = ctx.router.FindRoute(
 		ctx.router.selfNode.PubKeyBytes,
-		targetPubKeyBytes, paymentAmt, noRestrictions, defaultNumRoutes,
+		targetPubKeyBytes, paymentAmt, noRestrictions,
 		zpay32.DefaultFinalCLTVDelta,
 	)
 	if err != nil {
 		t.Fatalf("unable to find any routes: %v", err)
-	}
-	if len(routes) != 2 {
-		t.Fatalf("expected to find 2 route, found: %v", len(routes))
 	}
 
 	copy1, err := ctx.graph.FetchLightningNode(priv1.PubKey())
@@ -1592,13 +1550,11 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 
 	// Create new router with same graph database.
 	router, err := New(Config{
-		Graph:     ctx.graph,
-		Chain:     ctx.chain,
-		ChainView: ctx.chainView,
-		SendToSwitch: func(_ lnwire.ShortChannelID,
-			_ *lnwire.UpdateAddHTLC, _ *sphinx.Circuit) ([32]byte, error) {
-			return [32]byte{}, nil
-		},
+		Graph:              ctx.graph,
+		Chain:              ctx.chain,
+		ChainView:          ctx.chainView,
+		Payer:              &mockPaymentAttemptDispatcher{},
+		Control:            makeMockControlTower(),
 		ChannelPruneExpiry: time.Hour * 24,
 		GraphPruneInterval: time.Hour * 2,
 	})
@@ -2249,9 +2205,7 @@ func TestFindPathFeeWeighting(t *testing.T) {
 		&graphParams{
 			graph: ctx.graph,
 		},
-		&RestrictParams{
-			FeeLimit: noFeeLimit,
-		},
+		noRestrictions,
 		sourceNode.PubKeyBytes, target, amt,
 	)
 	if err != nil {
@@ -2513,8 +2467,9 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 func TestEmptyRoutesGenerateSphinxPacket(t *testing.T) {
 	t.Parallel()
 
+	sessionKey, _ := btcec.NewPrivateKey(btcec.S256())
 	emptyRoute := &route.Route{}
-	_, _, err := generateSphinxPacket(emptyRoute, testHash[:])
+	_, _, err := generateSphinxPacket(emptyRoute, testHash[:], sessionKey)
 	if err != route.ErrNoRouteHopsProvided {
 		t.Fatalf("expected empty hops error: instead got: %v", err)
 	}
@@ -2558,5 +2513,749 @@ func assertChannelsPruned(t *testing.T, graph *channeldb.ChannelGraph,
 			t.Fatalf("expected channel=%v to be marked as "+
 				"zombie", channel.ChannelID)
 		}
+	}
+}
+
+// TestRouterPaymentStateMachine tests that the router interacts as expected
+// with the ControlTower during a payment lifecycle, such that it payment
+// attempts are not sent twice to the switch, and results are handled after a
+// restart.
+func TestRouterPaymentStateMachine(t *testing.T) {
+	t.Parallel()
+
+	const startingBlockHeight = 101
+
+	// Setup two simple channels such that we can mock sending along this
+	// route.
+	chanCapSat := btcutil.Amount(100000)
+	testChannels := []*testChannel{
+		symmetricTestChannel("a", "b", chanCapSat, &testChannelPolicy{
+			Expiry:  144,
+			FeeRate: 400,
+			MinHTLC: 1,
+			MaxHTLC: lnwire.NewMSatFromSatoshis(chanCapSat),
+		}, 1),
+		symmetricTestChannel("b", "c", chanCapSat, &testChannelPolicy{
+			Expiry:  144,
+			FeeRate: 400,
+			MinHTLC: 1,
+			MaxHTLC: lnwire.NewMSatFromSatoshis(chanCapSat),
+		}, 2),
+	}
+
+	testGraph, err := createTestGraphFromChannels(testChannels)
+	if err != nil {
+		t.Fatalf("unable to create graph: %v", err)
+	}
+	defer testGraph.cleanUp()
+
+	hop1 := testGraph.aliasMap["b"]
+	hop2 := testGraph.aliasMap["c"]
+	hops := []*route.Hop{
+		{
+			ChannelID:   1,
+			PubKeyBytes: hop1,
+		},
+		{
+			ChannelID:   2,
+			PubKeyBytes: hop2,
+		},
+	}
+
+	// We create a simple route that we will supply every time the router
+	// requests one.
+	rt, err := route.NewRouteFromHops(
+		lnwire.MilliSatoshi(10000), 100, testGraph.aliasMap["a"], hops,
+	)
+	if err != nil {
+		t.Fatalf("unable to create route: %v", err)
+	}
+
+	// A payment state machine test case consists of several ordered steps,
+	// that we use for driving the scenario.
+	type testCase struct {
+		// steps is a list of steps to perform during the testcase.
+		steps []string
+
+		// routes is the sequence of routes we will provide to the
+		// router when it requests a new route.
+		routes []*route.Route
+	}
+
+	const (
+		// routerInitPayment is a test step where we expect the router
+		// to call the InitPayment method on the control tower.
+		routerInitPayment = "Router:init-payment"
+
+		// routerRegisterAttempt is a test step where we expect the
+		// router to call the RegisterAttempt method on the control
+		// tower.
+		routerRegisterAttempt = "Router:register-attempt"
+
+		// routerSuccess is a test step where we expect the router to
+		// call the Success method on the control tower.
+		routerSuccess = "Router:success"
+
+		// routerFail is a test step where we expect the router to call
+		// the Fail method on the control tower.
+		routerFail = "Router:fail"
+
+		// sendToSwitchSuccess is a step where we expect the router to
+		// call send the payment attempt to the switch, and we will
+		// respond with a non-error, indicating that the payment
+		// attempt was successfully forwarded.
+		sendToSwitchSuccess = "SendToSwitch:success"
+
+		// sendToSwitchResultFailure is a step where we expect the
+		// router to send the payment attempt to the switch, and we
+		// will respond with a forwarding error. This can happen when
+		// forwarding fail on our local links.
+		sendToSwitchResultFailure = "SendToSwitch:failure"
+
+		// getPaymentResultSuccess is a test step where we expect the
+		// router to call the GetPaymentResult method, and we will
+		// respond with a successful payment result.
+		getPaymentResultSuccess = "GetPaymentResult:success"
+
+		// getPaymentResultFailure is a test step where we expect the
+		// router to call the GetPaymentResult method, and we will
+		// respond with a forwarding error.
+		getPaymentResultFailure = "GetPaymentResult:failure"
+
+		// resendPayment is a test step where we manually try to resend
+		// the same payment, making sure the router responds with an
+		// error indicating that it is alreayd in flight.
+		resendPayment = "ResendPayment"
+
+		// startRouter is a step where we manually start the router,
+		// used to test that it automatically will resume payments at
+		// startup.
+		startRouter = "StartRouter"
+
+		// stopRouter is a test step where we manually make the router
+		// shut down.
+		stopRouter = "StopRouter"
+
+		// paymentSuccess is a step where assert that we receive a
+		// successful result for the original payment made.
+		paymentSuccess = "PaymentSuccess"
+
+		// paymentError is a step where assert that we receive an error
+		// for the original payment made.
+		paymentError = "PaymentError"
+
+		// resentPaymentSuccess is a step where assert that we receive
+		// a successful result for a payment that was resent.
+		resentPaymentSuccess = "ResentPaymentSuccess"
+
+		// resentPaymentError is a step where assert that we receive an
+		// error for a payment that was resent.
+		resentPaymentError = "ResentPaymentError"
+	)
+
+	tests := []testCase{
+		{
+			// Tests a normal payment flow that succeeds.
+			steps: []string{
+				routerInitPayment,
+				routerRegisterAttempt,
+				sendToSwitchSuccess,
+				getPaymentResultSuccess,
+				routerSuccess,
+				paymentSuccess,
+			},
+			routes: []*route.Route{rt},
+		},
+		{
+			// A payment flow with a failure on the first attempt,
+			// but that succeeds on the second attempt.
+			steps: []string{
+				routerInitPayment,
+				routerRegisterAttempt,
+				sendToSwitchSuccess,
+
+				// Make the first sent attempt fail.
+				getPaymentResultFailure,
+
+				// The router should retry.
+				routerRegisterAttempt,
+				sendToSwitchSuccess,
+
+				// Make the second sent attempt succeed.
+				getPaymentResultSuccess,
+				routerSuccess,
+				paymentSuccess,
+			},
+			routes: []*route.Route{rt, rt},
+		},
+		{
+			// A payment flow with a forwarding failure first time
+			// sending to the switch, but that succeeds on the
+			// second attempt.
+			steps: []string{
+				routerInitPayment,
+				routerRegisterAttempt,
+
+				// Make the first sent attempt fail.
+				sendToSwitchResultFailure,
+
+				// The router should retry.
+				routerRegisterAttempt,
+				sendToSwitchSuccess,
+
+				// Make the second sent attempt succeed.
+				getPaymentResultSuccess,
+				routerSuccess,
+				paymentSuccess,
+			},
+			routes: []*route.Route{rt, rt},
+		},
+		{
+			// A payment that fails on the first attempt, and has
+			// only one route available to try. It will therefore
+			// fail permanently.
+			steps: []string{
+				routerInitPayment,
+				routerRegisterAttempt,
+				sendToSwitchSuccess,
+
+				// Make the first sent attempt fail.
+				getPaymentResultFailure,
+
+				// Since there are no more routes to try, the
+				// payment should fail.
+				routerFail,
+				paymentError,
+			},
+			routes: []*route.Route{rt},
+		},
+		{
+			// We expect the payment to fail immediately if we have
+			// no routes to try.
+			steps: []string{
+				routerInitPayment,
+				routerFail,
+				paymentError,
+			},
+			routes: []*route.Route{},
+		},
+		{
+			// A normal payment flow, where we attempt to resend
+			// the same payment after each step. This ensures that
+			// the router don't attempt to resend a payment already
+			// in flight.
+			steps: []string{
+				routerInitPayment,
+				routerRegisterAttempt,
+
+				// Manually resend the payment, the router
+				// should attempt to init with the control
+				// tower, but fail since it is already in
+				// flight.
+				resendPayment,
+				routerInitPayment,
+				resentPaymentError,
+
+				// The original payment should proceed as
+				// normal.
+				sendToSwitchSuccess,
+
+				// Again resend the payment and assert it's not
+				// allowed.
+				resendPayment,
+				routerInitPayment,
+				resentPaymentError,
+
+				// Notify about a success for the original
+				// payment.
+				getPaymentResultSuccess,
+				routerSuccess,
+
+				// Now that the original payment finished,
+				// resend it again to ensure this is not
+				// allowed.
+				resendPayment,
+				routerInitPayment,
+				resentPaymentError,
+				paymentSuccess,
+			},
+			routes: []*route.Route{rt},
+		},
+		{
+			// Tests that the router is able to handle the
+			// receieved payment result after a restart.
+			steps: []string{
+				routerInitPayment,
+				routerRegisterAttempt,
+				sendToSwitchSuccess,
+
+				// Shut down the router. The original caller
+				// should get notified about this.
+				stopRouter,
+				paymentError,
+
+				// Start the router again, and ensure the
+				// router registers the success with the
+				// control tower.
+				startRouter,
+				getPaymentResultSuccess,
+				routerSuccess,
+			},
+			routes: []*route.Route{rt},
+		},
+		{
+			// Tests that we are allowed to resend a payment after
+			// it has permanently failed.
+			steps: []string{
+				routerInitPayment,
+				routerRegisterAttempt,
+				sendToSwitchSuccess,
+
+				// Resending the payment at this stage should
+				// not be allowed.
+				resendPayment,
+				routerInitPayment,
+				resentPaymentError,
+
+				// Make the first attempt fail.
+				getPaymentResultFailure,
+				routerFail,
+
+				// Since we have no more routes to try, the
+				// original payment should fail.
+				paymentError,
+
+				// Now resend the payment again. This should be
+				// allowed, since the payment has failed.
+				resendPayment,
+				routerInitPayment,
+				routerRegisterAttempt,
+				sendToSwitchSuccess,
+				getPaymentResultSuccess,
+				routerSuccess,
+				resentPaymentSuccess,
+			},
+			routes: []*route.Route{rt},
+		},
+	}
+
+	// Create a mock control tower with channels set up, that we use to
+	// synchronize and listen for events.
+	control := makeMockControlTower()
+	control.init = make(chan initArgs)
+	control.register = make(chan registerArgs)
+	control.success = make(chan successArgs)
+	control.fail = make(chan failArgs)
+	control.fetchInFlight = make(chan struct{})
+
+	quit := make(chan struct{})
+	defer close(quit)
+
+	// setupRouter is a helper method that creates and starts the router in
+	// the desired configuration for this test.
+	setupRouter := func() (*ChannelRouter, chan error,
+		chan *htlcswitch.PaymentResult, chan error) {
+
+		chain := newMockChain(startingBlockHeight)
+		chainView := newMockChainView(chain)
+
+		// We set uo the use the following channels and a mock Payer to
+		// synchonize with the interaction to the Switch.
+		sendResult := make(chan error)
+		paymentResultErr := make(chan error)
+		paymentResult := make(chan *htlcswitch.PaymentResult)
+
+		payer := &mockPayer{
+			sendResult:       sendResult,
+			paymentResult:    paymentResult,
+			paymentResultErr: paymentResultErr,
+		}
+
+		router, err := New(Config{
+			Graph:              testGraph.graph,
+			Chain:              chain,
+			ChainView:          chainView,
+			Control:            control,
+			MissionControl:     &mockPaymentSessionSource{},
+			Payer:              payer,
+			ChannelPruneExpiry: time.Hour * 24,
+			GraphPruneInterval: time.Hour * 2,
+			QueryBandwidth: func(e *channeldb.ChannelEdgeInfo) lnwire.MilliSatoshi {
+				return lnwire.NewMSatFromSatoshis(e.Capacity)
+			},
+			NextPaymentID: func() (uint64, error) {
+				next := atomic.AddUint64(&uniquePaymentID, 1)
+				return next, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("unable to create router %v", err)
+		}
+
+		// On startup, the router should fetch all pending payments
+		// from the ControlTower, so assert that here.
+		didFetch := make(chan struct{})
+		go func() {
+			select {
+			case <-control.fetchInFlight:
+				close(didFetch)
+			case <-time.After(1 * time.Second):
+				t.Fatalf("router did not fetch in flight " +
+					"payments")
+			}
+		}()
+
+		if err := router.Start(); err != nil {
+			t.Fatalf("unable to start router: %v", err)
+		}
+
+		select {
+		case <-didFetch:
+		case <-time.After(1 * time.Second):
+			t.Fatalf("did not fetch in flight payments at startup")
+		}
+
+		return router, sendResult, paymentResult, paymentResultErr
+	}
+
+	router, sendResult, getPaymentResult, getPaymentResultErr := setupRouter()
+	defer router.Stop()
+
+	for _, test := range tests {
+		// Craft a LightningPayment struct.
+		var preImage lntypes.Preimage
+		if _, err := rand.Read(preImage[:]); err != nil {
+			t.Fatalf("unable to generate preimage")
+		}
+
+		payHash := preImage.Hash()
+
+		paymentAmt := lnwire.NewMSatFromSatoshis(1000)
+		payment := LightningPayment{
+			Target:      testGraph.aliasMap["c"],
+			Amount:      paymentAmt,
+			FeeLimit:    noFeeLimit,
+			PaymentHash: payHash,
+		}
+
+		errSource, err := btcec.ParsePubKey(hop1[:], btcec.S256())
+		if err != nil {
+			t.Fatalf("unable to fetch source node pub: %v", err)
+		}
+
+		copy(preImage[:], bytes.Repeat([]byte{9}, 32))
+
+		router.cfg.MissionControl = &mockPaymentSessionSource{
+			routes: test.routes,
+		}
+
+		// Send the payment. Since this is new payment hash, the
+		// information should be registered with the ControlTower.
+		paymentResult := make(chan error)
+		go func() {
+			_, _, err := router.SendPayment(&payment)
+			paymentResult <- err
+		}()
+
+		var resendResult chan error
+		for _, step := range test.steps {
+			switch step {
+
+			case routerInitPayment:
+				var args initArgs
+				select {
+				case args = <-control.init:
+				case <-time.After(1 * time.Second):
+					t.Fatalf("no init payment with control")
+				}
+
+				if args.c == nil {
+					t.Fatalf("expected non-nil CreationInfo")
+				}
+
+			// In this step we expect the router to make a call to
+			// register a new attempt with the ControlTower.
+			case routerRegisterAttempt:
+				var args registerArgs
+				select {
+				case args = <-control.register:
+				case <-time.After(1 * time.Second):
+					t.Fatalf("not registered with control")
+				}
+
+				if args.a == nil {
+					t.Fatalf("expected non-nil AttemptInfo")
+				}
+
+			// In this step we expect the router to call the
+			// ControlTower's Succcess method with the preimage.
+			case routerSuccess:
+				select {
+				case _ = <-control.success:
+				case <-time.After(1 * time.Second):
+					t.Fatalf("not registered with control")
+				}
+
+			// In this step we expect the router to call the
+			// ControlTower's Fail method, to indicate that the
+			// payment failed.
+			case routerFail:
+				select {
+				case _ = <-control.fail:
+				case <-time.After(1 * time.Second):
+					t.Fatalf("not registered with control")
+				}
+
+			// In this step we expect the SendToSwitch method to be
+			// called, and we respond with a nil-error.
+			case sendToSwitchSuccess:
+				select {
+				case sendResult <- nil:
+				case <-time.After(1 * time.Second):
+					t.Fatalf("unable to send result")
+				}
+
+			// In this step we expect the SendToSwitch method to be
+			// called, and we respond with a forwarding error
+			case sendToSwitchResultFailure:
+				select {
+				case sendResult <- &htlcswitch.ForwardingError{
+					ErrorSource:    errSource,
+					FailureMessage: &lnwire.FailTemporaryChannelFailure{},
+				}:
+				case <-time.After(1 * time.Second):
+					t.Fatalf("unable to send result")
+				}
+
+			// In this step we expect the GetPaymentResult method
+			// to be called, and we respond with the preimage to
+			// complete the payment.
+			case getPaymentResultSuccess:
+				select {
+				case getPaymentResult <- &htlcswitch.PaymentResult{
+					Preimage: preImage,
+				}:
+				case <-time.After(1 * time.Second):
+					t.Fatalf("unable to send result")
+				}
+
+			// In this state we expect the GetPaymentResult method
+			// to be called, and we respond with a forwarding
+			// error, indicating that the router should retry.
+			case getPaymentResultFailure:
+				select {
+				case getPaymentResult <- &htlcswitch.PaymentResult{
+					Error: &htlcswitch.ForwardingError{
+						ErrorSource:    errSource,
+						FailureMessage: &lnwire.FailTemporaryChannelFailure{},
+					},
+				}:
+				case <-time.After(1 * time.Second):
+					t.Fatalf("unable to get result")
+				}
+
+			// In this step we manually try to resend the same
+			// payment, making sure the router responds with an
+			// error indicating that it is alreayd in flight.
+			case resendPayment:
+				resendResult = make(chan error)
+				go func() {
+					_, _, err := router.SendPayment(&payment)
+					resendResult <- err
+				}()
+
+			// In this step we manually stop the router.
+			case stopRouter:
+				select {
+				case getPaymentResultErr <- fmt.Errorf(
+					"shutting down"):
+				case <-time.After(1 * time.Second):
+					t.Fatalf("unable to send payment " +
+						"result error")
+				}
+
+				if err := router.Stop(); err != nil {
+					t.Fatalf("unable to restart: %v", err)
+				}
+
+			// In this step we manually start the router.
+			case startRouter:
+				router, sendResult, getPaymentResult,
+					getPaymentResultErr = setupRouter()
+
+			// In this state we expect to receive an error for the
+			// original payment made.
+			case paymentError:
+				select {
+				case err := <-paymentResult:
+					if err == nil {
+						t.Fatalf("expected error")
+					}
+
+				case <-time.After(1 * time.Second):
+					t.Fatalf("got no payment result")
+				}
+
+			// In this state we expect the original payment to
+			// succeed.
+			case paymentSuccess:
+				select {
+				case err := <-paymentResult:
+					if err != nil {
+						t.Fatalf("did not expecte error %v", err)
+					}
+
+				case <-time.After(1 * time.Second):
+					t.Fatalf("got no payment result")
+				}
+
+			// In this state we expect to receive an error for the
+			// resent payment made.
+			case resentPaymentError:
+				select {
+				case err := <-resendResult:
+					if err == nil {
+						t.Fatalf("expected error")
+					}
+
+				case <-time.After(1 * time.Second):
+					t.Fatalf("got no payment result")
+				}
+
+			// In this state we expect the resent payment to
+			// succeed.
+			case resentPaymentSuccess:
+				select {
+				case err := <-resendResult:
+					if err != nil {
+						t.Fatalf("did not expect error %v", err)
+					}
+
+				case <-time.After(1 * time.Second):
+					t.Fatalf("got no payment result")
+				}
+
+			default:
+				t.Fatalf("unknown step %v", step)
+			}
+		}
+	}
+}
+
+// TestSendToRouteStructuredError asserts that SendToRoute returns a structured
+// error.
+func TestSendToRouteStructuredError(t *testing.T) {
+	t.Parallel()
+
+	// Setup a three node network.
+	chanCapSat := btcutil.Amount(100000)
+	testChannels := []*testChannel{
+		symmetricTestChannel("a", "b", chanCapSat, &testChannelPolicy{
+			Expiry:  144,
+			FeeRate: 400,
+			MinHTLC: 1,
+			MaxHTLC: lnwire.NewMSatFromSatoshis(chanCapSat),
+		}, 1),
+		symmetricTestChannel("b", "c", chanCapSat, &testChannelPolicy{
+			Expiry:  144,
+			FeeRate: 400,
+			MinHTLC: 1,
+			MaxHTLC: lnwire.NewMSatFromSatoshis(chanCapSat),
+		}, 2),
+	}
+
+	testGraph, err := createTestGraphFromChannels(testChannels)
+	if err != nil {
+		t.Fatalf("unable to create graph: %v", err)
+	}
+	defer testGraph.cleanUp()
+
+	const startingBlockHeight = 101
+
+	ctx, cleanUp, err := createTestCtxFromGraphInstance(
+		startingBlockHeight, testGraph,
+	)
+	if err != nil {
+		t.Fatalf("unable to create router: %v", err)
+	}
+	defer cleanUp()
+
+	// Set up an init channel for the control tower, such that we can make
+	// sure the payment is initiated correctly.
+	init := make(chan initArgs, 1)
+	ctx.router.cfg.Control.(*mockControlTower).init = init
+
+	// Setup a route from source a to destination c. The route will be used
+	// in a call to SendToRoute. SendToRoute also applies channel updates,
+	// but it saves us from including RequestRoute in the test scope too.
+	const payAmt = lnwire.MilliSatoshi(10000)
+	hop1 := ctx.aliases["b"]
+	hop2 := ctx.aliases["c"]
+	hops := []*route.Hop{
+		{
+			ChannelID:    1,
+			PubKeyBytes:  hop1,
+			AmtToForward: payAmt,
+		},
+		{
+			ChannelID:    2,
+			PubKeyBytes:  hop2,
+			AmtToForward: payAmt,
+		},
+	}
+
+	rt, err := route.NewRouteFromHops(payAmt, 100, ctx.aliases["a"], hops)
+	if err != nil {
+		t.Fatalf("unable to create route: %v", err)
+	}
+
+	// We'll modify the SendToSwitch method so that it simulates a failed
+	// payment with an error originating from the first hop of the route.
+	// The unsigned channel update is attached to the failure message.
+	ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcher).setPaymentResult(
+		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
+
+			v := ctx.aliases["b"]
+			source, err := btcec.ParsePubKey(
+				v[:], btcec.S256(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			return [32]byte{}, &htlcswitch.ForwardingError{
+				ErrorSource: source,
+				FailureMessage: &lnwire.FailFeeInsufficient{
+					Update: lnwire.ChannelUpdate{},
+				},
+			}
+		})
+
+	// The payment parameter is mostly redundant in SendToRoute. Can be left
+	// empty for this test.
+	var payment lntypes.Hash
+
+	// Send off the payment request to the router. The specified route
+	// should be attempted and the channel update should be received by
+	// router and ignored because it is missing a valid signature.
+	_, err = ctx.router.SendToRoute(payment, rt)
+
+	fErr, ok := err.(*htlcswitch.ForwardingError)
+	if !ok {
+		t.Fatalf("expected forwarding error")
+	}
+
+	if _, ok := fErr.FailureMessage.(*lnwire.FailFeeInsufficient); !ok {
+		t.Fatalf("expected fee insufficient error")
+	}
+
+	// Check that the correct values were used when initiating the payment.
+	select {
+	case initVal := <-init:
+		if initVal.c.Value != payAmt {
+			t.Fatalf("expected %v, got %v", payAmt, initVal.c.Value)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("initPayment not called")
 	}
 }

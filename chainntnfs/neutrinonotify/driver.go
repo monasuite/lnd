@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/neutrino"
 )
 
 // createNewNotifier creates a new instance of the ChainNotifier interface
