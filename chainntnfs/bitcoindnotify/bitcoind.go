@@ -14,8 +14,8 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/monaarchives/btcwallet/chain"
 	"github.com/lightningnetwork/lnd/queue"
+	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monasuite/lnd/chainntnfs"
 )
 

@@ -24,12 +24,12 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/monaarchives/btcwallet/waddrmgr"
-	"github.com/monaarchives/btcwallet/wallet/txauthor"
 	"github.com/coreos/bbolt"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/grpc-ecosystem/go-grpc-middleware"
 	proxy "github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/monaarchives/btcwallet/waddrmgr"
+	"github.com/monaarchives/btcwallet/wallet/txauthor"
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/build"
 	"github.com/monasuite/lnd/chanbackup"
@@ -2172,6 +2172,9 @@ func (r *rpcServer) ChannelBalance(ctx context.Context,
 	for _, channel := range pendingChannels {
 		pendingOpenBalance += channel.LocalCommitment.LocalBalance.ToSatoshis()
 	}
+
+	rpcsLog.Debugf("[channelbalance] balance=%v pending-open=%v",
+		balance, pendingOpenBalance)
 
 	return &lnrpc.ChannelBalanceResponse{
 		Balance:            int64(balance),

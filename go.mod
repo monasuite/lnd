@@ -29,6 +29,7 @@ require (
 	github.com/juju/version v0.0.0-20180108022336-b64dbd566305 // indirect
 	github.com/kkdai/bstream v1.0.0
 	github.com/lightningnetwork/lightning-onion v0.0.0-20190430041606-751fb4dd8b72
+	github.com/lightningnetwork/lnd v0.0.2
 	github.com/lightningnetwork/lnd/queue v1.0.1
 	github.com/lightningnetwork/lnd/ticker v1.0.0
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
@@ -36,6 +37,8 @@ require (
 	github.com/monasuite/monad v0.0.0-20190614102927-b024b3975103
 	github.com/monasuite/neutrino v0.0.0-20190614161342-a9fd954e69b8
 	github.com/prometheus/client_golang v0.9.3
+	github.com/roasbeef/btcd v0.0.0-20180418012700-a03db407e40d // indirect
+	github.com/roasbeef/btcutil v0.0.0-20180406014609-dfb640c57141 // indirect
 	github.com/rogpeppe/fastuuid v0.0.0-20150106093220-6724a57986af // indirect
 	github.com/tv42/zbase32 v0.0.0-20160707012821-501572607d02
 	github.com/urfave/cli v1.18.0

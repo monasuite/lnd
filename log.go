@@ -33,6 +33,7 @@ import (
 	"github.com/monasuite/lnd/signal"
 	"github.com/monasuite/lnd/sweep"
 	"github.com/monasuite/lnd/watchtower"
+	"github.com/monasuite/lnd/watchtower/wtclient"
 	"github.com/monasuite/neutrino"
 )
 
@@ -87,6 +88,7 @@ var (
 	chnfLog = build.NewSubLogger("CHNF", backendLog.Logger)
 	chbuLog = build.NewSubLogger("CHBU", backendLog.Logger)
 	promLog = build.NewSubLogger("PROM", backendLog.Logger)
+	wtclLog = build.NewSubLogger("WTCL", backendLog.Logger)
 )
 
 // Initialize package-global logger variables.
@@ -115,6 +117,7 @@ func init() {
 	channelnotifier.UseLogger(chnfLog)
 	chanbackup.UseLogger(chbuLog)
 	monitoring.UseLogger(promLog)
+	wtclient.UseLogger(wtclLog)
 
 	addSubLogger(routerrpc.Subsystem, routerrpc.UseLogger)
 }
@@ -159,6 +162,7 @@ var subsystemLoggers = map[string]btclog.Logger{
 	"CHNF": chnfLog,
 	"CHBU": chbuLog,
 	"PROM": promLog,
+	"WTCL": wtclLog,
 }
 
 // initLogRotator initializes the logging rotator to write logs to logFile and
