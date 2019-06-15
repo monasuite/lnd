@@ -34,7 +34,7 @@ require (
 	github.com/lightningnetwork/lnd/ticker v1.0.0
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
 	github.com/monaarchives/btcwallet v0.0.0-20190614161550-3182e603887d
-	github.com/monasuite/monad v0.0.0-20190614102927-b024b3975103
+	github.com/monasuite/monad v0.0.0-20190615165339-aca81b37b405
 	github.com/monasuite/neutrino v0.0.0-20190614161342-a9fd954e69b8
 	github.com/prometheus/client_golang v0.9.3
 	github.com/roasbeef/btcd v0.0.0-20180418012700-a03db407e40d // indirect

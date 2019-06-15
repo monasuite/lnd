@@ -150,6 +150,8 @@ github.com/monasuite/monad v0.0.0-20190606163121-f0d2a15b1f44 h1:nt10k6BDn/XVz4p
 github.com/monasuite/monad v0.0.0-20190606163121-f0d2a15b1f44/go.mod h1:ioPgaQSqFuc4H3OHqpXcYKKnPxC8wmg2sGHgrWssO+s=
 github.com/monasuite/monad v0.0.0-20190614102927-b024b3975103 h1:pMdNXrhEwQSnXkfqeus7Odt/+vEKlR8TA5Acs/xyINs=
 github.com/monasuite/monad v0.0.0-20190614102927-b024b3975103/go.mod h1:ioPgaQSqFuc4H3OHqpXcYKKnPxC8wmg2sGHgrWssO+s=
+github.com/monasuite/monad v0.0.0-20190615165339-aca81b37b405 h1:we710npTECesf1usCZJPVwVYS6lECQqLfLUPySAd4ao=
+github.com/monasuite/monad v0.0.0-20190615165339-aca81b37b405/go.mod h1:ioPgaQSqFuc4H3OHqpXcYKKnPxC8wmg2sGHgrWssO+s=
 github.com/monasuite/monautil v0.0.0-20190606162653-90b266792864 h1:pMKZU4hTeLssZCspx+e7yTjoluCNxcL+OPF6ipqZeHI=
 github.com/monasuite/monautil v0.0.0-20190606162653-90b266792864/go.mod h1:kIVSL9QpyEYOh60Z7DIAAIhzOd9pHpRbMA3rOqVXOwc=
 github.com/monasuite/neutrino v0.0.0-20190614104037-69d45d3c47e4 h1:et7dgV0GOaQio5HWQDqJCVXIKHtgnhQaQPf9bnX7MmY=
