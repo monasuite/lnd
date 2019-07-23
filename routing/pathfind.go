@@ -37,8 +37,8 @@ const (
 
 // pathFinder defines the interface of a path finding algorithm.
 type pathFinder = func(g *graphParams, r *RestrictParams,
-	source, target route.Vertex, amt lnwire.MilliSatoshi) (
-	[]*channeldb.ChannelEdgePolicy, error)
+	cfg *PathFindingConfig, source, target route.Vertex,
+	amt lnwire.MilliSatoshi) ([]*channeldb.ChannelEdgePolicy, error)
 
 var (
 	// DefaultPaymentAttemptPenalty is the virtual cost in path finding weight
@@ -60,7 +60,7 @@ var (
 // of a channel edge. ChannelEdgePolicy only contains to destination node
 // of the edge.
 type edgePolicyWithSource struct {
-	sourceNode *channeldb.LightningNode
+	sourceNode route.Vertex
 	edge       *channeldb.ChannelEdgePolicy
 }
 
@@ -261,7 +261,11 @@ type RestrictParams struct {
 	// ctlv. After path finding is complete, the caller needs to increase
 	// all cltv expiry heights with the required final cltv delta.
 	CltvLimit *uint32
+}
 
+// PathFindingConfig defines global parameters that control the trade-off in
+// path finding between fees and probabiity.
+type PathFindingConfig struct {
 	// PaymentAttemptPenalty is the virtual cost in path finding weight
 	// units of executing a payment attempt that fails. It is used to trade
 	// off potentially better routes against their probability of
@@ -284,8 +288,9 @@ type RestrictParams struct {
 // destination node back to source. This is to properly accumulate fees
 // that need to be paid along the path and accurately check the amount
 // to forward at every node against the available bandwidth.
-func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
-	amt lnwire.MilliSatoshi) ([]*channeldb.ChannelEdgePolicy, error) {
+func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
+	source, target route.Vertex, amt lnwire.MilliSatoshi) (
+	[]*channeldb.ChannelEdgePolicy, error) {
 
 	var err error
 	tx := g.tx
@@ -300,7 +305,7 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 	// First we'll initialize an empty heap which'll help us to quickly
 	// locate the next edge we should visit next during our graph
 	// traversal.
-	var nodeHeap distanceHeap
+	nodeHeap := newDistanceHeap()
 
 	// For each node in the graph, we create an entry in the distance map
 	// for the node set with a distance of "infinity". graph.ForEachNode
@@ -313,7 +318,7 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 		// with a visited map
 		distance[route.Vertex(node.PubKeyBytes)] = nodeWithDist{
 			dist: infinity,
-			node: node,
+			node: route.Vertex(node.PubKeyBytes),
 		}
 		return nil
 	}); err != nil {
@@ -324,10 +329,9 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 	for vertex, outgoingEdgePolicies := range g.additionalEdges {
 		// We'll also include all the nodes found within the additional
 		// edges that are not known to us yet in the distance map.
-		node := &channeldb.LightningNode{PubKeyBytes: vertex}
 		distance[vertex] = nodeWithDist{
 			dist: infinity,
-			node: node,
+			node: vertex,
 		}
 
 		// Build reverse lookup to find incoming edges. Needed because
@@ -335,7 +339,7 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 		for _, outgoingEdgePolicy := range outgoingEdgePolicies {
 			toVertex := outgoingEdgePolicy.Node.PubKeyBytes
 			incomingEdgePolicy := &edgePolicyWithSource{
-				sourceNode: node,
+				sourceNode: vertex,
 				edge:       outgoingEdgePolicy,
 			}
 
@@ -351,11 +355,10 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 	// charges no fee. Distance is set to 0, because this is the starting
 	// point of the graph traversal. We are searching backwards to get the
 	// fees first time right and correctly match channel bandwidth.
-	targetNode := &channeldb.LightningNode{PubKeyBytes: target}
 	distance[target] = nodeWithDist{
 		dist:            0,
 		weight:          0,
-		node:            targetNode,
+		node:            target,
 		amountToReceive: amt,
 		incomingCltv:    0,
 		probability:     1,
@@ -368,11 +371,8 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 
 	// processEdge is a helper closure that will be used to make sure edges
 	// satisfy our specific requirements.
-	processEdge := func(fromNode *channeldb.LightningNode,
-		edge *channeldb.ChannelEdgePolicy,
-		bandwidth lnwire.MilliSatoshi, toNode route.Vertex) {
-
-		fromVertex := route.Vertex(fromNode.PubKeyBytes)
+	processEdge := func(fromVertex route.Vertex, bandwidth lnwire.MilliSatoshi,
+		edge *channeldb.ChannelEdgePolicy, toNode route.Vertex) {
 
 		// If this is not a local channel and it is disabled, we will
 		// skip it.
@@ -434,7 +434,7 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 			return
 		}
 
-		// Compute fee that fromNode is charging. It is based on the
+		// Compute fee that fromVertex is charging. It is based on the
 		// amount that needs to be sent to the next node in the route.
 		//
 		// Source node has no predecessor to pay a fee. Therefore set
@@ -442,7 +442,7 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 		// limit check and edge weight.
 		//
 		// Also determine the time lock delta that will be added to the
-		// route if fromNode is selected. If fromNode is the source
+		// route if fromVertex is selected. If fromVertex is the source
 		// node, no additional timelock is required.
 		var fee lnwire.MilliSatoshi
 		var timeLockDelta uint16
@@ -481,14 +481,14 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 		// If the probability is below the specified lower bound, we can
 		// abandon this direction. Adding further nodes can only lower
 		// the probability more.
-		if probability < r.MinProbability {
+		if probability < cfg.MinProbability {
 			return
 		}
 
-		// By adding fromNode in the route, there will be an extra
+		// By adding fromVertex in the route, there will be an extra
 		// weight composed of the fee that this node will charge and
 		// the amount that will be locked for timeLockDelta blocks in
-		// the HTLC that is handed out to fromNode.
+		// the HTLC that is handed out to fromVertex.
 		weight := edgeWeight(amountToReceive, fee, timeLockDelta)
 
 		// Compute the tentative weight to this new channel/edge
@@ -499,7 +499,8 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 		// Add an extra factor to the weight to take into account the
 		// probability.
 		tempDist := getProbabilityBasedDist(
-			tempWeight, probability, int64(r.PaymentAttemptPenalty),
+			tempWeight, probability,
+			int64(cfg.PaymentAttemptPenalty),
 		)
 
 		// If the current best route is better than this candidate
@@ -524,7 +525,7 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 		distance[fromVertex] = nodeWithDist{
 			dist:            tempDist,
 			weight:          tempWeight,
-			node:            fromNode,
+			node:            fromVertex,
 			amountToReceive: amountToReceive,
 			incomingCltv:    incomingCltv,
 			probability:     probability,
@@ -532,9 +533,10 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 
 		next[fromVertex] = edge
 
-		// Add this new node to our heap as we'd like to further
-		// explore backwards through this edge.
-		heap.Push(&nodeHeap, distance[fromVertex])
+		// Either push distance[fromVertex] onto the heap if the node
+		// represented by fromVertex is not already on the heap OR adjust
+		// its position within the heap via heap.Fix.
+		nodeHeap.PushOrFix(distance[fromVertex])
 	}
 
 	// TODO(roasbeef): also add path caching
@@ -548,22 +550,17 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 		// Fetch the node within the smallest distance from our source
 		// from the heap.
 		partialPath := heap.Pop(&nodeHeap).(nodeWithDist)
-		bestNode := partialPath.node
+		pivot := partialPath.node
 
 		// If we've reached our source (or we don't have any incoming
 		// edges), then we're done here and can exit the graph
 		// traversal early.
-		if bestNode.PubKeyBytes == source {
+		if pivot == source {
 			break
 		}
 
-		// Now that we've found the next potential step to take we'll
-		// examine all the incoming edges (channels) from this node to
-		// further our graph traversal.
-		pivot := route.Vertex(bestNode.PubKeyBytes)
-		err := bestNode.ForEachChannel(tx, func(tx *bbolt.Tx,
-			edgeInfo *channeldb.ChannelEdgeInfo,
-			_, inEdge *channeldb.ChannelEdgePolicy) error {
+		cb := func(_ *bbolt.Tx, edgeInfo *channeldb.ChannelEdgeInfo, _,
+			inEdge *channeldb.ChannelEdgePolicy) error {
 
 			// If there is no edge policy for this candidate
 			// node, skip. Note that we are searching backwards
@@ -595,18 +592,21 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 			// the node on the _other_ end of this channel as we
 			// may later need to iterate over the incoming edges of
 			// this node if we explore it further.
-			channelSource, err := edgeInfo.FetchOtherNode(
-				tx, pivot[:],
-			)
+			chanSource, err := edgeInfo.OtherNodeKeyBytes(pivot[:])
 			if err != nil {
 				return err
 			}
 
 			// Check if this candidate node is better than what we
 			// already have.
-			processEdge(channelSource, inEdge, edgeBandwidth, pivot)
+			processEdge(route.Vertex(chanSource), edgeBandwidth, inEdge, pivot)
 			return nil
-		})
+		}
+
+		// Now that we've found the next potential step to take we'll
+		// examine all the incoming edges (channels) from this node to
+		// further our graph traversal.
+		err := g.graph.ForEachNodeChannel(tx, pivot[:], cb)
 		if err != nil {
 			return nil, err
 		}
@@ -617,9 +617,9 @@ func findPath(g *graphParams, r *RestrictParams, source, target route.Vertex,
 		// routing hint due to having enough capacity for the payment
 		// and use the payment amount as its capacity.
 		bandWidth := partialPath.amountToReceive
-		for _, reverseEdge := range additionalEdgesWithSrc[bestNode.PubKeyBytes] {
-			processEdge(reverseEdge.sourceNode, reverseEdge.edge,
-				bandWidth, pivot)
+		for _, reverseEdge := range additionalEdgesWithSrc[pivot] {
+			processEdge(reverseEdge.sourceNode, bandWidth,
+				reverseEdge.edge, pivot)
 		}
 	}
 

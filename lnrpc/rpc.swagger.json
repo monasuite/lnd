@@ -293,7 +293,7 @@
     },
     "/v1/channels/closed": {
       "get": {
-        "summary": "* lncli: `closedchannels`\nClosedChannels returns a description of all the closed channels that \nthis node was a participant in.",
+        "summary": "* lncli: `closedchannels`\nClosedChannels returns a description of all the closed channels that\nthis node was a participant in.",
         "operationId": "ClosedChannels",
         "responses": {
           "200": {
@@ -640,6 +640,14 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "include_channels",
+            "description": "/ If true, will include all known channels associated with the node.",
+            "in": "query",
+            "required": false,
+            "type": "boolean",
+            "format": "boolean"
           }
         ],
         "tags": [
@@ -714,6 +722,14 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "use_mission_control",
+            "description": "*\nIf set to true, edge probabilities from mission control will be used to get\nthe optimal route.",
+            "in": "query",
+            "required": false,
+            "type": "boolean",
+            "format": "boolean"
           }
         ],
         "tags": [
@@ -1399,6 +1415,16 @@
         "remote_balance": {
           "type": "string",
           "format": "int64"
+        },
+        "local_chan_reserve_sat": {
+          "type": "string",
+          "format": "int64",
+          "description": "/ The minimum satoshis this node is required to reserve in its balance."
+        },
+        "remote_chan_reserve_sat": {
+          "type": "string",
+          "format": "int64",
+          "description": "*\nThe minimum satoshis the other node is required to reserve in its\nbalance."
         }
       }
     },
@@ -1618,6 +1644,16 @@
         "chan_status_flags": {
           "type": "string",
           "description": "/ A set of flags showing the current state of the channel."
+        },
+        "local_chan_reserve_sat": {
+          "type": "string",
+          "format": "int64",
+          "description": "/ The minimum satoshis this node is required to reserve in its balance."
+        },
+        "remote_chan_reserve_sat": {
+          "type": "string",
+          "format": "int64",
+          "description": "*\nThe minimum satoshis the other node is required to reserve in its balance."
         }
       }
     },
@@ -2605,6 +2641,11 @@
         "median_channel_size_sat": {
           "type": "string",
           "format": "int64"
+        },
+        "num_zombie_chans": {
+          "type": "string",
+          "format": "uint64",
+          "description": "The number of edges marked as zombies."
         }
       }
     },
@@ -2836,7 +2877,7 @@
         "fee": {
           "type": "string",
           "format": "int64",
-          "title": "/ The fee paid for this payment in satoshis"
+          "description": "/ Deprecated, use fee_sat or fee_msat."
         },
         "payment_preimage": {
           "type": "string",
@@ -2859,6 +2900,16 @@
         "status": {
           "$ref": "#/definitions/PaymentPaymentStatus",
           "description": "The status of the payment."
+        },
+        "fee_sat": {
+          "type": "string",
+          "format": "int64",
+          "title": "/  The fee paid for this payment in satoshis"
+        },
+        "fee_msat": {
+          "type": "string",
+          "format": "int64",
+          "title": "/  The fee paid for this payment in milli-satoshis"
         }
       }
     },
@@ -3128,6 +3179,10 @@
         "max_htlc_msat": {
           "type": "string",
           "format": "uint64"
+        },
+        "last_update": {
+          "type": "integer",
+          "format": "int64"
         }
       }
     },

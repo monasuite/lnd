@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec"
+
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd/lnrpc"
@@ -40,7 +42,7 @@ type RouterBackend struct {
 		amt lnwire.MilliSatoshi, restrictions *routing.RestrictParams,
 		finalExpiry ...uint16) (*route.Route, error)
 
-	MissionControl *routing.MissionControl
+	MissionControl MissionControl
 
 	// ActiveNetParams are the network parameters of the primary network
 	// that the route is operating on. This is necessary so we can ensure
@@ -51,6 +53,22 @@ type RouterBackend struct {
 	// Tower is the ControlTower instance that is used to track pending
 	// payments.
 	Tower routing.ControlTower
+}
+
+// MissionControl defines the mission control dependencies of routerrpc.
+type MissionControl interface {
+	// GetEdgeProbability is expected to return the success probability of a payment
+	// from fromNode along edge.
+	GetEdgeProbability(fromNode route.Vertex,
+		edge routing.EdgeLocator, amt lnwire.MilliSatoshi) float64
+
+	// ResetHistory resets the history of MissionControl returning it to a state as
+	// if no payment attempts have been made.
+	ResetHistory()
+
+	// GetHistorySnapshot takes a snapshot from the current mission control state
+	// and actual probability estimates.
+	GetHistorySnapshot() *routing.MissionControlSnapshot
 }
 
 // QueryRoutes attempts to query the daemons' Channel Router for a possible
@@ -149,9 +167,14 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 				return 0
 			}
 
-			return 1
+			if !in.UseMissionControl {
+				return 1
+			}
+
+			return r.MissionControl.GetEdgeProbability(
+				node, edge, amt,
+			)
 		},
-		PaymentAttemptPenalty: routing.DefaultPaymentAttemptPenalty,
 	}
 
 	// Query the channel router for a possible path to the destination that
@@ -382,6 +405,15 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 	payIntent.PayAttemptTimeout = time.Second *
 		time.Duration(rpcPayReq.TimeoutSeconds)
 
+	// Route hints.
+	routeHints, err := unmarshallRouteHints(
+		rpcPayReq.RouteHints,
+	)
+	if err != nil {
+		return nil, err
+	}
+	payIntent.RouteHints = routeHints
+
 	// If the payment request field isn't blank, then the details of the
 	// invoice are encoded entirely within the encoded payReq.  So we'll
 	// attempt to decode it, populating the payment accordingly.
@@ -443,7 +475,9 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		copy(payIntent.Target[:], destKey)
 
 		payIntent.FinalCLTVDelta = uint16(payReq.MinFinalCLTVExpiry())
-		payIntent.RouteHints = payReq.RouteHints
+		payIntent.RouteHints = append(
+			payIntent.RouteHints, payReq.RouteHints...,
+		)
 	} else {
 		// Otherwise, If the payment request field was not specified
 		// (and a custom route wasn't specified), construct the payment
@@ -491,6 +525,50 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 	}
 
 	return payIntent, nil
+}
+
+// unmarshallRouteHints unmarshalls a list of route hints.
+func unmarshallRouteHints(rpcRouteHints []*lnrpc.RouteHint) (
+	[][]zpay32.HopHint, error) {
+
+	routeHints := make([][]zpay32.HopHint, 0, len(rpcRouteHints))
+	for _, rpcRouteHint := range rpcRouteHints {
+		routeHint := make(
+			[]zpay32.HopHint, 0, len(rpcRouteHint.HopHints),
+		)
+		for _, rpcHint := range rpcRouteHint.HopHints {
+			hint, err := unmarshallHopHint(rpcHint)
+			if err != nil {
+				return nil, err
+			}
+
+			routeHint = append(routeHint, hint)
+		}
+		routeHints = append(routeHints, routeHint)
+	}
+
+	return routeHints, nil
+}
+
+// unmarshallHopHint unmarshalls a single hop hint.
+func unmarshallHopHint(rpcHint *lnrpc.HopHint) (zpay32.HopHint, error) {
+	pubBytes, err := hex.DecodeString(rpcHint.NodeId)
+	if err != nil {
+		return zpay32.HopHint{}, err
+	}
+
+	pubkey, err := btcec.ParsePubKey(pubBytes, btcec.S256())
+	if err != nil {
+		return zpay32.HopHint{}, err
+	}
+
+	return zpay32.HopHint{
+		NodeID:                    pubkey,
+		ChannelID:                 rpcHint.ChanId,
+		FeeBaseMSat:               rpcHint.FeeBaseMsat,
+		FeeProportionalMillionths: rpcHint.FeeProportionalMillionths,
+		CLTVExpiryDelta:           uint16(rpcHint.CltvExpiryDelta),
+	}, nil
 }
 
 // ValidatePayReqExpiry checks if the passed payment request has expired. In

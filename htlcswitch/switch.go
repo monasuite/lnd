@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/coreos/bbolt"
@@ -31,6 +30,10 @@ const (
 	// DefaultLogInterval is the duration between attempts to log statistics
 	// about forwarding events.
 	DefaultLogInterval = 10 * time.Second
+
+	// DefaultAckInterval is the duration between attempts to ack any settle
+	// fails in a forwarding package.
+	DefaultAckInterval = 15 * time.Second
 )
 
 var (
@@ -58,6 +61,10 @@ var (
 	// ErrNoLinksFound is an error returned when we attempt to retrieve the
 	// active links in the switch for a specific destination.
 	ErrNoLinksFound = errors.New("no channel links found")
+
+	// ErrUnreadableFailureMessage is returned when the failure message
+	// cannot be decrypted.
+	ErrUnreadableFailureMessage = errors.New("unreadable failure message")
 
 	// zeroPreimage is the empty preimage which is returned when we have
 	// some errors.
@@ -112,11 +119,6 @@ type ChanClose struct {
 // Config defines the configuration for the service. ALL elements within the
 // configuration MUST be non-nil for the service to carry out its duties.
 type Config struct {
-	// SelfKey is the key of the backing Lightning node. This key is used
-	// to properly craft failure messages, such that the Layer 3 router can
-	// properly route around link./vertex failures.
-	SelfKey *btcec.PublicKey
-
 	// FwdingLog is an interface that will be used by the switch to log
 	// forwarding events. A forwarding event happens each time a payment
 	// circuit is successfully completed. So when we forward an HTLC, and a
@@ -160,6 +162,10 @@ type Config struct {
 	// LogEventTicker is a signal instructing the htlcswitch to log
 	// aggregate stats about it's forwarding during the last interval.
 	LogEventTicker ticker.Ticker
+
+	// AckEventTicker is a signal instructing the htlcswitch to ack any settle
+	// fails in forwarding packages.
+	AckEventTicker ticker.Ticker
 
 	// NotifyActiveChannel and NotifyInactiveChannel allow the link to tell
 	// the ChannelNotifier when channels become active and inactive.
@@ -261,6 +267,11 @@ type Switch struct {
 	// active ChainNotifier instance. This will be used to retrieve the
 	// lastest height of the chain.
 	blockEpochStream *chainntnfs.BlockEpochEvent
+
+	// pendingSettleFails is the set of settle/fail entries that we need to
+	// ack in the forwarding package of the outgoing link. This was added to
+	// make pipelining settles more efficient.
+	pendingSettleFails []channeldb.SettleFailRef
 }
 
 // New creates the new instance of htlc switch.
@@ -776,8 +787,8 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 		if err != nil {
 			log.Errorf("Link %v not found", pkt.outgoingChanID)
 			return &ForwardingError{
-				ErrorSource:    s.cfg.SelfKey,
-				FailureMessage: &lnwire.FailUnknownNextPeer{},
+				FailureSourceIdx: 0,
+				FailureMessage:   &lnwire.FailUnknownNextPeer{},
 			}
 		}
 
@@ -790,9 +801,9 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 			// will be returned back to the router.
 			htlcErr := lnwire.NewTemporaryChannelFailure(nil)
 			return &ForwardingError{
-				ErrorSource:    s.cfg.SelfKey,
-				ExtraMsg:       err.Error(),
-				FailureMessage: htlcErr,
+				FailureSourceIdx: 0,
+				ExtraMsg:         err.Error(),
+				FailureMessage:   htlcErr,
 			}
 		}
 
@@ -808,8 +819,8 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 				"satisfied", pkt.outgoingChanID)
 
 			return &ForwardingError{
-				ErrorSource:    s.cfg.SelfKey,
-				FailureMessage: htlcErr,
+				FailureSourceIdx: 0,
+				FailureMessage:   htlcErr,
 			}
 		}
 
@@ -823,9 +834,9 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 			// will be returned back to the router.
 			htlcErr := lnwire.NewTemporaryChannelFailure(nil)
 			return &ForwardingError{
-				ErrorSource:    s.cfg.SelfKey,
-				ExtraMsg:       err.Error(),
-				FailureMessage: htlcErr,
+				FailureSourceIdx: 0,
+				ExtraMsg:         err.Error(),
+				FailureMessage:   htlcErr,
 			}
 		}
 
@@ -942,9 +953,7 @@ func (s *Switch) extractResult(deobfuscator ErrorDecrypter, n *networkResult,
 //    the payment deobfuscator.
 func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
 	paymentID uint64, paymentHash lntypes.Hash, unencrypted,
-	isResolution bool, htlc *lnwire.UpdateFailHTLC) *ForwardingError {
-
-	var failure *ForwardingError
+	isResolution bool, htlc *lnwire.UpdateFailHTLC) error {
 
 	switch {
 
@@ -966,10 +975,11 @@ func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
 			// router.
 			failureMsg = lnwire.NewTemporaryChannelFailure(nil)
 		}
-		failure = &ForwardingError{
-			ErrorSource:    s.cfg.SelfKey,
-			ExtraMsg:       userErr,
-			FailureMessage: failureMsg,
+
+		return &ForwardingError{
+			FailureSourceIdx: 0,
+			ExtraMsg:         userErr,
+			FailureMessage:   failureMsg,
 		}
 
 	// A payment had to be timed out on chain before it got past
@@ -980,33 +990,29 @@ func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
 		userErr := fmt.Sprintf("payment was resolved "+
 			"on-chain, then cancelled back (hash=%v, pid=%d)",
 			paymentHash, paymentID)
-		failure = &ForwardingError{
-			ErrorSource:    s.cfg.SelfKey,
-			ExtraMsg:       userErr,
-			FailureMessage: lnwire.FailPermanentChannelFailure{},
+
+		return &ForwardingError{
+			FailureSourceIdx: 0,
+			ExtraMsg:         userErr,
+			FailureMessage:   &lnwire.FailPermanentChannelFailure{},
 		}
 
 	// A regular multi-hop payment error that we'll need to
 	// decrypt.
 	default:
-		var err error
 		// We'll attempt to fully decrypt the onion encrypted
 		// error. If we're unable to then we'll bail early.
-		failure, err = deobfuscator.DecryptError(htlc.Reason)
+		failure, err := deobfuscator.DecryptError(htlc.Reason)
 		if err != nil {
-			userErr := fmt.Sprintf("unable to de-obfuscate "+
-				"onion failure (hash=%v, pid=%d): %v",
+			log.Errorf("unable to de-obfuscate onion failure "+
+				"(hash=%v, pid=%d): %v",
 				paymentHash, paymentID, err)
-			log.Error(userErr)
-			failure = &ForwardingError{
-				ErrorSource:    s.cfg.SelfKey,
-				ExtraMsg:       userErr,
-				FailureMessage: lnwire.NewTemporaryChannelFailure(nil),
-			}
-		}
-	}
 
-	return failure
+			return ErrUnreadableFailureMessage
+		}
+
+		return failure
+	}
 }
 
 // handlePacketForward is used in cases when we need forward the htlc update
@@ -1354,11 +1360,10 @@ func (s *Switch) closeCircuit(pkt *htlcPacket) (*PaymentCircuit, error) {
 			pkt.outgoingHTLCID)
 		log.Error(err)
 
-		// TODO(conner): ack settle/fail
 		if pkt.destRef != nil {
-			if err := s.ackSettleFail(*pkt.destRef); err != nil {
-				return nil, err
-			}
+			// Add this SettleFailRef to the set of pending settle/fail entries
+			// awaiting acknowledgement.
+			s.pendingSettleFails = append(s.pendingSettleFails, *pkt.destRef)
 		}
 
 		return nil, err
@@ -1373,9 +1378,9 @@ func (s *Switch) closeCircuit(pkt *htlcPacket) (*PaymentCircuit, error) {
 // forwarding package of the outgoing link for a payment circuit. We do this if
 // we're the originator of the payment, so the link stops attempting to
 // re-broadcast.
-func (s *Switch) ackSettleFail(settleFailRef channeldb.SettleFailRef) error {
+func (s *Switch) ackSettleFail(settleFailRefs ...channeldb.SettleFailRef) error {
 	return s.cfg.DB.Batch(func(tx *bbolt.Tx) error {
-		return s.cfg.SwitchPackager.AckSettleFails(tx, settleFailRef)
+		return s.cfg.SwitchPackager.AckSettleFails(tx, settleFailRefs...)
 	})
 }
 
@@ -1540,8 +1545,17 @@ func (s *Switch) htlcForwarder() {
 	s.cfg.FwdEventTicker.Resume()
 	defer s.cfg.FwdEventTicker.Stop()
 
+	defer s.cfg.AckEventTicker.Stop()
+
 out:
 	for {
+
+		// If the set of pending settle/fail entries is non-zero,
+		// reinstate the ack ticker so we can batch ack them.
+		if len(s.pendingSettleFails) > 0 {
+			s.cfg.AckEventTicker.Resume()
+		}
+
 		select {
 		case blockEpoch, ok := <-s.blockEpochStream.Epochs:
 			if !ok {
@@ -1703,6 +1717,31 @@ out:
 			totalNumUpdates += diffNumUpdates
 			totalSatSent += diffSatSent
 			totalSatRecv += diffSatRecv
+
+		// The ack ticker has fired so if we have any settle/fail entries
+		// for a forwarding package to ack, we will do so here in a batch
+		// db call.
+		case <-s.cfg.AckEventTicker.Ticks():
+			// If the current set is empty, pause the ticker.
+			if len(s.pendingSettleFails) == 0 {
+				s.cfg.AckEventTicker.Pause()
+				continue
+			}
+
+			// Batch ack the settle/fail entries.
+			if err := s.ackSettleFail(s.pendingSettleFails...); err != nil {
+				log.Errorf("Unable to ack batch of settle/fails: %v", err)
+				continue
+			}
+
+			log.Tracef("Acked %d settle fails: %v", len(s.pendingSettleFails),
+				newLogClosure(func() string {
+					return spew.Sdump(s.pendingSettleFails)
+				}))
+
+			// Reset the pendingSettleFails buffer while keeping acquired
+			// memory.
+			s.pendingSettleFails = s.pendingSettleFails[:0]
 
 		case <-s.quit:
 			return

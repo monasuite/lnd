@@ -2680,6 +2680,102 @@ func TestNodeIsPublic(t *testing.T) {
 	)
 }
 
+// TestDisabledChannelIDs ensures that the disabled channels within the
+// disabledEdgePolicyBucket are managed properly and the list returned from
+// DisabledChannelIDs is correct.
+func TestDisabledChannelIDs(t *testing.T) {
+	t.Parallel()
+
+	db, cleanUp, err := makeTestDB()
+	if err != nil {
+		t.Fatalf("unable to make test database: %v", err)
+	}
+	defer cleanUp()
+
+	graph := db.ChannelGraph()
+
+	// Create first node and add it to the graph.
+	node1, err := createTestVertex(db)
+	if err != nil {
+		t.Fatalf("unable to create test node: %v", err)
+	}
+	if err := graph.AddLightningNode(node1); err != nil {
+		t.Fatalf("unable to add node: %v", err)
+	}
+
+	// Create second node and add it to the graph.
+	node2, err := createTestVertex(db)
+	if err != nil {
+		t.Fatalf("unable to create test node: %v", err)
+	}
+	if err := graph.AddLightningNode(node2); err != nil {
+		t.Fatalf("unable to add node: %v", err)
+	}
+
+	// Adding a new channel edge to the graph.
+	edgeInfo, edge1, edge2 := createChannelEdge(db, node1, node2)
+	if err := graph.AddLightningNode(node2); err != nil {
+		t.Fatalf("unable to add node: %v", err)
+	}
+
+	if err := graph.AddChannelEdge(edgeInfo); err != nil {
+		t.Fatalf("unable to create channel edge: %v", err)
+	}
+
+	// Ensure no disabled channels exist in the bucket on start.
+	disabledChanIds, err := graph.DisabledChannelIDs()
+	if err != nil {
+		t.Fatalf("unable to get disabled channel ids: %v", err)
+	}
+	if len(disabledChanIds) > 0 {
+		t.Fatalf("expected empty disabled channels, got %v disabled channels",
+			len(disabledChanIds))
+	}
+
+	// Add one disabled policy and ensure the channel is still not in the
+	// disabled list.
+	edge1.ChannelFlags |= lnwire.ChanUpdateDisabled
+	if err := graph.UpdateEdgePolicy(edge1); err != nil {
+		t.Fatalf("unable to update edge: %v", err)
+	}
+	disabledChanIds, err = graph.DisabledChannelIDs()
+	if err != nil {
+		t.Fatalf("unable to get disabled channel ids: %v", err)
+	}
+	if len(disabledChanIds) > 0 {
+		t.Fatalf("expected empty disabled channels, got %v disabled channels",
+			len(disabledChanIds))
+	}
+
+	// Add second disabled policy and ensure the channel is now in the
+	// disabled list.
+	edge2.ChannelFlags |= lnwire.ChanUpdateDisabled
+	if err := graph.UpdateEdgePolicy(edge2); err != nil {
+		t.Fatalf("unable to update edge: %v", err)
+	}
+	disabledChanIds, err = graph.DisabledChannelIDs()
+	if err != nil {
+		t.Fatalf("unable to get disabled channel ids: %v", err)
+	}
+	if len(disabledChanIds) != 1 || disabledChanIds[0] != edgeInfo.ChannelID {
+		t.Fatalf("expected disabled channel with id %v, "+
+			"got %v", edgeInfo.ChannelID, disabledChanIds)
+	}
+
+	// Delete the channel edge and ensure it is removed from the disabled list.
+	if err = graph.DeleteChannelEdges(edgeInfo.ChannelID); err != nil {
+		t.Fatalf("unable to delete channel edge: %v", err)
+	}
+	disabledChanIds, err = graph.DisabledChannelIDs()
+	if err != nil {
+		t.Fatalf("unable to get disabled channel ids: %v", err)
+	}
+	if len(disabledChanIds) > 0 {
+		t.Fatalf("expected empty disabled channels, got %v disabled channels",
+			len(disabledChanIds))
+	}
+}
+
 // TestEdgePolicyMissingMaxHtcl tests that if we find a ChannelEdgePolicy in
 // the DB that indicates that it should support the htlc_maximum_value_msat
 // field, but it is not part of the opaque data, then we'll handle it as it is
@@ -2847,6 +2943,22 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 	assertEdgeInfoEqual(t, dbEdgeInfo, edgeInfo)
 }
 
+// assertNumZombies queries the provided ChannelGraph for NumZombies, and
+// asserts that the returned number is equal to expZombies.
+func assertNumZombies(t *testing.T, graph *ChannelGraph, expZombies uint64) {
+	t.Helper()
+
+	numZombies, err := graph.NumZombies()
+	if err != nil {
+		t.Fatalf("unable to query number of zombies: %v", err)
+	}
+
+	if numZombies != expZombies {
+		t.Fatalf("expected %d zombies, found %d",
+			expZombies, numZombies)
+	}
+}
+
 // TestGraphZombieIndex ensures that we can mark edges correctly as zombie/live.
 func TestGraphZombieIndex(t *testing.T) {
 	t.Parallel()
@@ -2885,6 +2997,7 @@ func TestGraphZombieIndex(t *testing.T) {
 	if isZombie {
 		t.Fatal("expected edge to not be marked as zombie")
 	}
+	assertNumZombies(t, graph, 0)
 
 	// If we delete the edge and mark it as a zombie, then we should expect
 	// to see it within the index.
@@ -2904,6 +3017,7 @@ func TestGraphZombieIndex(t *testing.T) {
 		t.Fatalf("expected pubKey2 %x, got %x", node2.PubKeyBytes,
 			pubKey2)
 	}
+	assertNumZombies(t, graph, 1)
 
 	// Similarly, if we mark the same edge as live, we should no longer see
 	// it within the index.
@@ -2914,6 +3028,7 @@ func TestGraphZombieIndex(t *testing.T) {
 	if isZombie {
 		t.Fatal("expected edge to not be marked as zombie")
 	}
+	assertNumZombies(t, graph, 0)
 }
 
 // compareNodes is used to compare two LightningNodes while excluding the

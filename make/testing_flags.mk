@@ -56,7 +56,7 @@ endif
 
 
 # Construct the integration test command with the added build flags.
-ITEST_TAGS := $(DEV_TAGS) rpctest chainrpc walletrpc signrpc invoicesrpc autopilotrpc routerrpc
+ITEST_TAGS := $(DEV_TAGS) rpctest chainrpc walletrpc signrpc invoicesrpc autopilotrpc routerrpc watchtowerrpc
 
 # Default to btcd backend if not set.
 ifneq ($(backend),)
@@ -65,4 +65,4 @@ else
 ITEST_TAGS += btcd
 endif
 
-ITEST := rm lntest/itest/output*.log; date; $(GOTEST) ./lntest/itest -tags="$(ITEST_TAGS)" $(TEST_FLAGS) -logoutput
+ITEST := rm lntest/itest/*.log; date; $(GOTEST) ./lntest/itest -tags="$(ITEST_TAGS)" $(TEST_FLAGS) -logoutput -goroutinedump

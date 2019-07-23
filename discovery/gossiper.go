@@ -223,9 +223,9 @@ type Config struct {
 // will be rejected by this struct.
 type AuthenticatedGossiper struct {
 	// Parameters which are needed to properly handle the start and stop of
-	// the service. To be used atomically.
-	started uint32
-	stopped uint32
+	// the service.
+	started sync.Once
+	stopped sync.Once
 
 	// bestHeight is the height of the block at the tip of the main chain
 	// as we know it. To be used atomically.
@@ -331,114 +331,6 @@ func New(cfg Config, selfKey *btcec.PublicKey) *AuthenticatedGossiper {
 	return gossiper
 }
 
-// SynchronizeNode sends a message to the service indicating it should
-// synchronize lightning topology state with the target node. This method is to
-// be utilized when a node connections for the first time to provide it with
-// the latest topology update state.  In order to accomplish this, (currently)
-// the entire network graph is read from disk, then serialized to the format
-// defined within the current wire protocol. This cache of graph data is then
-// sent directly to the target node.
-func (d *AuthenticatedGossiper) SynchronizeNode(syncPeer lnpeer.Peer) error {
-	// TODO(roasbeef): need to also store sig data in db
-	//  * will be nice when we switch to pairing sigs would only need one ^_^
-
-	// We'll collate all the gathered routing messages into a single slice
-	// containing all the messages to be sent to the target peer.
-	var announceMessages []lnwire.Message
-
-	// We'll use this map to ensure we don't send the same node
-	// announcement more than one time as one node may have many channel
-	// anns we'll need to send.
-	nodePubsSent := make(map[route.Vertex]struct{})
-
-	// As peers are expecting channel announcements before node
-	// announcements, we first retrieve the initial announcement, as well as
-	// the latest channel update announcement for both of the directed edges
-	// that make up each channel, and queue these to be sent to the peer.
-	var (
-		numEdges uint32
-		numNodes uint32
-	)
-	if err := d.cfg.Router.ForEachChannel(func(chanInfo *channeldb.ChannelEdgeInfo,
-		e1, e2 *channeldb.ChannelEdgePolicy) error {
-
-		// First, using the parameters of the channel, along with the
-		// channel authentication proof, we'll create re-create the
-		// original authenticated channel announcement. If the channel
-		// also has known validated nodes, then we'll send that as
-		// well.
-		if chanInfo.AuthProof != nil {
-			chanAnn, e1Ann, e2Ann, err := CreateChanAnnouncement(
-				chanInfo.AuthProof, chanInfo, e1, e2,
-			)
-			if err != nil {
-				return err
-			}
-
-			announceMessages = append(announceMessages, chanAnn)
-			if e1Ann != nil {
-				announceMessages = append(announceMessages, e1Ann)
-
-				// If this edge has a validated node
-				// announcement, that we haven't yet sent, then
-				// we'll send that as well.
-				nodePub := e1.Node.PubKeyBytes
-				hasNodeAnn := e1.Node.HaveNodeAnnouncement
-				if _, ok := nodePubsSent[nodePub]; !ok && hasNodeAnn {
-					nodeAnn, err := e1.Node.NodeAnnouncement(true)
-					if err != nil {
-						return err
-					}
-
-					announceMessages = append(
-						announceMessages, nodeAnn,
-					)
-					nodePubsSent[nodePub] = struct{}{}
-
-					numNodes++
-				}
-			}
-			if e2Ann != nil {
-				announceMessages = append(announceMessages, e2Ann)
-
-				// If this edge has a validated node
-				// announcement, that we haven't yet sent, then
-				// we'll send that as well.
-				nodePub := e2.Node.PubKeyBytes
-				hasNodeAnn := e2.Node.HaveNodeAnnouncement
-				if _, ok := nodePubsSent[nodePub]; !ok && hasNodeAnn {
-					nodeAnn, err := e2.Node.NodeAnnouncement(true)
-					if err != nil {
-						return err
-					}
-
-					announceMessages = append(
-						announceMessages, nodeAnn,
-					)
-					nodePubsSent[nodePub] = struct{}{}
-
-					numNodes++
-				}
-			}
-
-			numEdges++
-		}
-
-		return nil
-	}); err != nil && err != channeldb.ErrGraphNoEdgesFound {
-		log.Errorf("unable to sync infos with peer: %v", err)
-		return err
-	}
-
-	log.Infof("Syncing channel graph state with %x, sending %v "+
-		"vertexes and %v edges", syncPeer.PubKey(),
-		numNodes, numEdges)
-
-	// With all the announcement messages gathered, send them all in a
-	// single batch to the target peer.
-	return syncPeer.SendMessageLazy(false, announceMessages...)
-}
-
 // PropagateChanPolicyUpdate signals the AuthenticatedGossiper to update the
 // channel forwarding policies for the specified channels. If no channels are
 // specified, then the update will be applied to all outgoing channels from the
@@ -466,10 +358,14 @@ func (d *AuthenticatedGossiper) PropagateChanPolicyUpdate(
 // Start spawns network messages handler goroutine and registers on new block
 // notifications in order to properly handle the premature announcements.
 func (d *AuthenticatedGossiper) Start() error {
-	if !atomic.CompareAndSwapUint32(&d.started, 0, 1) {
-		return nil
-	}
+	var err error
+	d.started.Do(func() {
+		err = d.start()
+	})
+	return err
+}
 
+func (d *AuthenticatedGossiper) start() error {
 	log.Info("Authenticated Gossiper is starting")
 
 	// First we register for new notifications of newly discovered blocks.
@@ -504,10 +400,10 @@ func (d *AuthenticatedGossiper) Start() error {
 
 // Stop signals any active goroutines for a graceful closure.
 func (d *AuthenticatedGossiper) Stop() {
-	if !atomic.CompareAndSwapUint32(&d.stopped, 0, 1) {
-		return
-	}
+	d.stopped.Do(d.stop)
+}
 
+func (d *AuthenticatedGossiper) stop() {
 	log.Info("Authenticated Gossiper is stopping")
 
 	d.blockEpochs.Cancel()
@@ -2382,28 +2278,38 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 		}
 
 		// We'll also send along the node announcements for each channel
-		// participant if we know of them.
+		// participant if we know of them. To ensure our node
+		// announcement propagates to our channel counterparty, we'll
+		// set the source for each announcement to the node it belongs
+		// to, otherwise we won't send it since the source gets skipped.
+		// This isn't necessary for channel updates and announcement
+		// signatures since we send those directly to our channel
+		// counterparty through the gossiper's reliable sender.
 		node1Ann, err := d.fetchNodeAnn(chanInfo.NodeKey1Bytes)
 		if err != nil {
 			log.Debugf("Unable to fetch node announcement for "+
 				"%x: %v", chanInfo.NodeKey1Bytes, err)
 		} else {
-			announcements = append(announcements, networkMsg{
-				peer:   nMsg.peer,
-				source: nMsg.source,
-				msg:    node1Ann,
-			})
+			if nodeKey1, err := chanInfo.NodeKey1(); err == nil {
+				announcements = append(announcements, networkMsg{
+					peer:   nMsg.peer,
+					source: nodeKey1,
+					msg:    node1Ann,
+				})
+			}
 		}
 		node2Ann, err := d.fetchNodeAnn(chanInfo.NodeKey2Bytes)
 		if err != nil {
 			log.Debugf("Unable to fetch node announcement for "+
 				"%x: %v", chanInfo.NodeKey2Bytes, err)
 		} else {
-			announcements = append(announcements, networkMsg{
-				peer:   nMsg.peer,
-				source: nMsg.source,
-				msg:    node2Ann,
-			})
+			if nodeKey2, err := chanInfo.NodeKey2(); err == nil {
+				announcements = append(announcements, networkMsg{
+					peer:   nMsg.peer,
+					source: nodeKey2,
+					msg:    node2Ann,
+				})
+			}
 		}
 
 		nMsg.err <- nil

@@ -150,7 +150,9 @@ func Main() error {
 	if cfg.CPUProfile != "" {
 		f, err := os.Create(cfg.CPUProfile)
 		if err != nil {
-			ltndLog.Errorf("Unable to create cpu profile: %v", err)
+			err := fmt.Errorf("Unable to create CPU profile: %v",
+				err)
+			ltndLog.Error(err)
 			return err
 		}
 		pprof.StartCPUProfile(f)
@@ -171,7 +173,8 @@ func Main() error {
 		channeldb.OptionSetChannelCacheSize(cfg.Caches.ChannelCacheSize),
 	)
 	if err != nil {
-		ltndLog.Errorf("unable to open channeldb: %v", err)
+		err := fmt.Errorf("Unable to open channeldb: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 	defer chanDB.Close()
@@ -181,8 +184,14 @@ func Main() error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	tlsCfg, restCreds, restProxyDest, err := getTLSConfig(cfg)
+	tlsCfg, restCreds, restProxyDest, err := getTLSConfig(
+		cfg.TLSCertPath,
+		cfg.TLSKeyPath,
+		cfg.RPCListeners,
+	)
 	if err != nil {
+		err := fmt.Errorf("Unable to load TLS credentials: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 
@@ -203,10 +212,13 @@ func Main() error {
 		neutrinoBackend, neutrinoCleanUp, err := initNeutrinoBackend(
 			mainChain.ChainDir,
 		)
-		defer neutrinoCleanUp()
 		if err != nil {
+			err := fmt.Errorf("Unable to initialize neutrino "+
+				"backend: %v", err)
+			ltndLog.Error(err)
 			return err
 		}
+		defer neutrinoCleanUp()
 		neutrinoCS = neutrinoBackend
 	}
 
@@ -230,6 +242,9 @@ func Main() error {
 			restDialOpts, restProxyDest, tlsCfg,
 		)
 		if err != nil {
+			err := fmt.Errorf("Unable to set up wallet password "+
+				"listeners: %v", err)
+			ltndLog.Error(err)
 			return err
 		}
 
@@ -251,7 +266,9 @@ func Main() error {
 			networkDir, macaroons.IPLockChecker,
 		)
 		if err != nil {
-			srvrLog.Errorf("unable to create macaroon service: %v", err)
+			err := fmt.Errorf("Unable to set up macaroon "+
+				"authentication: %v", err)
+			ltndLog.Error(err)
 			return err
 		}
 		defer macaroonService.Close()
@@ -259,7 +276,8 @@ func Main() error {
 		// Try to unlock the macaroon store with the private password.
 		err = macaroonService.CreateUnlock(&privateWalletPw)
 		if err != nil {
-			srvrLog.Errorf("unable to unlock macaroons: %v", err)
+			err := fmt.Errorf("Unable to unlock macaroons: %v", err)
+			ltndLog.Error(err)
 			return err
 		}
 
@@ -272,8 +290,9 @@ func Main() error {
 				cfg.ReadMacPath, cfg.InvoiceMacPath,
 			)
 			if err != nil {
-				ltndLog.Errorf("unable to create macaroon "+
-					"files: %v", err)
+				err := fmt.Errorf("Unable to create macaroons "+
+					"%v", err)
+				ltndLog.Error(err)
 				return err
 			}
 		}
@@ -288,7 +307,8 @@ func Main() error {
 		walletInitParams.Wallet, neutrinoCS,
 	)
 	if err != nil {
-		fmt.Printf("unable to create chain control: %v\n", err)
+		err := fmt.Errorf("Unable to create chain control: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 
@@ -306,6 +326,8 @@ func Main() error {
 		},
 	})
 	if err != nil {
+		err := fmt.Errorf("Unable to derive node private key: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 	idPrivKey.Curve = btcec.S256()
@@ -323,7 +345,10 @@ func Main() error {
 		var err error
 		towerClientDB, err = wtdb.OpenClientDB(graphDir)
 		if err != nil {
-			ltndLog.Errorf("Unable to open watchtower client db: %v", err)
+			err := fmt.Errorf("Unable to open watchtower client "+
+				"database: %v", err)
+			ltndLog.Error(err)
+			return err
 		}
 		defer towerClientDB.Close()
 	}
@@ -339,10 +364,27 @@ func Main() error {
 
 		towerDB, err := wtdb.OpenTowerDB(towerDBDir)
 		if err != nil {
-			ltndLog.Errorf("Unable to open watchtower db: %v", err)
+			err := fmt.Errorf("Unable to open watchtower "+
+				"database: %v", err)
+			ltndLog.Error(err)
 			return err
 		}
 		defer towerDB.Close()
+
+		towerPrivKey, err := activeChainControl.wallet.DerivePrivKey(
+			keychain.KeyDescriptor{
+				KeyLocator: keychain.KeyLocator{
+					Family: keychain.KeyFamilyTowerID,
+					Index:  0,
+				},
+			},
+		)
+		if err != nil {
+			err := fmt.Errorf("Unable to derive watchtower "+
+				"private key: %v", err)
+			ltndLog.Error(err)
+			return err
+		}
 
 		wtConfig, err := cfg.Watchtower.Apply(&watchtower.Config{
 			BlockFetcher:   activeChainControl.chainIO,
@@ -354,18 +396,21 @@ func Main() error {
 					lnwallet.WitnessPubKey, false,
 				)
 			},
-			NodePrivKey: idPrivKey,
+			NodePrivKey: towerPrivKey,
 			PublishTx:   activeChainControl.wallet.PublishTransaction,
 			ChainHash:   *activeNetParams.GenesisHash,
 		}, lncfg.NormalizeAddresses)
 		if err != nil {
-			ltndLog.Errorf("Unable to configure watchtower: %v", err)
+			err := fmt.Errorf("Unable to configure watchtower: %v",
+				err)
+			ltndLog.Error(err)
 			return err
 		}
 
 		tower, err = watchtower.New(wtConfig)
 		if err != nil {
-			ltndLog.Errorf("Unable to create watchtower: %v", err)
+			err := fmt.Errorf("Unable to create watchtower: %v", err)
+			ltndLog.Error(err)
 			return err
 		}
 	}
@@ -377,7 +422,8 @@ func Main() error {
 		idPrivKey, walletInitParams.ChansToRestore,
 	)
 	if err != nil {
-		srvrLog.Errorf("unable to create server: %v\n", err)
+		err := fmt.Errorf("Unable to create server: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 
@@ -386,17 +432,20 @@ func Main() error {
 	// it at will.
 	atplCfg, err := initAutoPilot(server, cfg.Autopilot)
 	if err != nil {
-		ltndLog.Errorf("unable to init autopilot: %v", err)
+		err := fmt.Errorf("Unable to initialize autopilot: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 
 	atplManager, err := autopilot.NewManager(atplCfg)
 	if err != nil {
-		ltndLog.Errorf("unable to create autopilot manager: %v", err)
+		err := fmt.Errorf("Unable to create autopilot manager: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 	if err := atplManager.Start(); err != nil {
-		ltndLog.Errorf("unable to start autopilot manager: %v", err)
+		err := fmt.Errorf("Unable to start autopilot manager: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 	defer atplManager.Stop()
@@ -406,13 +455,16 @@ func Main() error {
 	rpcServer, err := newRPCServer(
 		server, macaroonService, cfg.SubRPCServers, serverOpts,
 		restDialOpts, restProxyDest, atplManager, server.invoices,
-		tlsCfg,
+		tower, tlsCfg,
 	)
 	if err != nil {
-		srvrLog.Errorf("unable to start RPC server: %v", err)
+		err := fmt.Errorf("Unable to create RPC server: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 	if err := rpcServer.Start(); err != nil {
+		err := fmt.Errorf("Unable to start RPC server: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 	defer rpcServer.Stop()
@@ -424,6 +476,9 @@ func Main() error {
 	if !(cfg.Bitcoin.SimNet || cfg.Monacoin.SimNet) {
 		_, bestHeight, err := activeChainControl.chainIO.GetBestBlock()
 		if err != nil {
+			err := fmt.Errorf("Unable to determine chain tip: %v",
+				err)
+			ltndLog.Error(err)
 			return err
 		}
 
@@ -437,6 +492,9 @@ func Main() error {
 
 			synced, _, err := activeChainControl.wallet.IsSynced()
 			if err != nil {
+				err := fmt.Errorf("Unable to determine if "+
+					"wallet is synced: %v", err)
+				ltndLog.Error(err)
 				return err
 			}
 
@@ -449,6 +507,9 @@ func Main() error {
 
 		_, bestHeight, err = activeChainControl.chainIO.GetBestBlock()
 		if err != nil {
+			err := fmt.Errorf("Unable to determine chain tip: %v",
+				err)
+			ltndLog.Error(err)
 			return err
 		}
 
@@ -459,7 +520,8 @@ func Main() error {
 	// With all the relevant chains initialized, we can finally start the
 	// server itself.
 	if err := server.Start(); err != nil {
-		srvrLog.Errorf("unable to start server: %v\n", err)
+		err := fmt.Errorf("Unable to start server: %v", err)
+		ltndLog.Error(err)
 		return err
 	}
 	defer server.Stop()
@@ -469,15 +531,17 @@ func Main() error {
 	// stopped together with the autopilot service.
 	if cfg.Autopilot.Active {
 		if err := atplManager.StartAgent(); err != nil {
-			ltndLog.Errorf("unable to start autopilot agent: %v",
+			err := fmt.Errorf("Unable to start autopilot agent: %v",
 				err)
+			ltndLog.Error(err)
 			return err
 		}
 	}
 
 	if cfg.Watchtower.Active {
 		if err := tower.Start(); err != nil {
-			ltndLog.Errorf("Unable to start watchtower: %v", err)
+			err := fmt.Errorf("Unable to start watchtower: %v", err)
+			ltndLog.Error(err)
 			return err
 		}
 		defer tower.Stop()
@@ -491,18 +555,19 @@ func Main() error {
 
 // getTLSConfig returns a TLS configuration for the gRPC server and credentials
 // and a proxy destination for the REST reverse proxy.
-func getTLSConfig(cfg *config) (*tls.Config, *credentials.TransportCredentials,
-	string, error) {
+func getTLSConfig(tlsCertPath string, tlsKeyPath string,
+	rpcListeners []net.Addr) (*tls.Config,
+	*credentials.TransportCredentials, string, error) {
 
 	// Ensure we create TLS key and certificate if they don't exist
-	if !fileExists(cfg.TLSCertPath) && !fileExists(cfg.TLSKeyPath) {
-		err := genCertPair(cfg.TLSCertPath, cfg.TLSKeyPath)
+	if !fileExists(tlsCertPath) && !fileExists(tlsKeyPath) {
+		err := genCertPair(tlsCertPath, tlsKeyPath)
 		if err != nil {
 			return nil, nil, "", err
 		}
 	}
 
-	certData, err := tls.LoadX509KeyPair(cfg.TLSCertPath, cfg.TLSKeyPath)
+	certData, err := tls.LoadX509KeyPair(tlsCertPath, tlsKeyPath)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -516,17 +581,17 @@ func getTLSConfig(cfg *config) (*tls.Config, *credentials.TransportCredentials,
 	if time.Now().After(cert.NotAfter) {
 		ltndLog.Info("TLS certificate is expired, generating a new one")
 
-		err := os.Remove(cfg.TLSCertPath)
+		err := os.Remove(tlsCertPath)
 		if err != nil {
 			return nil, nil, "", err
 		}
 
-		err = os.Remove(cfg.TLSKeyPath)
+		err = os.Remove(tlsKeyPath)
 		if err != nil {
 			return nil, nil, "", err
 		}
 
-		err = genCertPair(cfg.TLSCertPath, cfg.TLSKeyPath)
+		err = genCertPair(tlsCertPath, tlsKeyPath)
 		if err != nil {
 			return nil, nil, "", err
 		}
@@ -539,12 +604,12 @@ func getTLSConfig(cfg *config) (*tls.Config, *credentials.TransportCredentials,
 		MinVersion:   tls.VersionTLS12,
 	}
 
-	restCreds, err := credentials.NewClientTLSFromFile(cfg.TLSCertPath, "")
+	restCreds, err := credentials.NewClientTLSFromFile(tlsCertPath, "")
 	if err != nil {
 		return nil, nil, "", err
 	}
 
-	restProxyDest := cfg.RPCListeners[0].String()
+	restProxyDest := rpcListeners[0].String()
 	switch {
 	case strings.Contains(restProxyDest, "0.0.0.0"):
 		restProxyDest = strings.Replace(
@@ -622,24 +687,31 @@ func genCertPair(certFile, keyFile string) error {
 		}
 	}
 
-	// Add extra IPs to the slice.
-	for _, ip := range cfg.TLSExtraIPs {
-		ipAddr := net.ParseIP(ip)
-		if ipAddr != nil {
-			addIP(ipAddr)
+	if cfg != nil {
+		// Add extra IPs to the slice.
+		for _, ip := range cfg.TLSExtraIPs {
+			ipAddr := net.ParseIP(ip)
+			if ipAddr != nil {
+				addIP(ipAddr)
+			}
 		}
 	}
 
 	// Collect the host's names into a slice.
 	host, err := os.Hostname()
 	if err != nil {
-		return err
+		rpcsLog.Errorf("Failed getting hostname, falling back to "+
+			"localhost: %v", err)
+		host = "localhost"
 	}
+
 	dnsNames := []string{host}
 	if host != "localhost" {
 		dnsNames = append(dnsNames, "localhost")
 	}
-	dnsNames = append(dnsNames, cfg.TLSExtraDomains...)
+	if cfg != nil {
+		dnsNames = append(dnsNames, cfg.TLSExtraDomains...)
+	}
 
 	// Also add fake hostnames for unix sockets, otherwise hostname
 	// verification will fail in the client.

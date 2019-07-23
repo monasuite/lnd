@@ -310,6 +310,11 @@ func (s *Server) SendToRoute(ctx context.Context,
 func marshallError(sendError error) (*Failure, error) {
 	response := &Failure{}
 
+	if sendError == htlcswitch.ErrUnreadableFailureMessage {
+		response.Code = Failure_UNREADABLE_FAILURE
+		return response, nil
+	}
+
 	fErr, ok := sendError.(*htlcswitch.ForwardingError)
 	if !ok {
 		return nil, sendError
@@ -394,12 +399,11 @@ func marshallError(sendError error) (*Failure, error) {
 
 	case *lnwire.FailPermanentChannelFailure:
 		response.Code = Failure_PERMANENT_CHANNEL_FAILURE
-
 	default:
-		return nil, errors.New("unknown wire error")
+		response.Code = Failure_UNKNOWN_FAILURE
 	}
 
-	response.FailureSourcePubkey = fErr.ErrorSource.SerializeCompressed()
+	response.FailureSourceIndex = uint32(fErr.FailureSourceIdx)
 
 	return response, nil
 }
@@ -445,7 +449,10 @@ func (s *Server) QueryMissionControl(ctx context.Context,
 	snapshot := s.cfg.RouterBackend.MissionControl.GetHistorySnapshot()
 
 	rpcNodes := make([]*NodeHistory, len(snapshot.Nodes))
-	for i, node := range snapshot.Nodes {
+	for i, n := range snapshot.Nodes {
+		// Copy node struct to prevent loop variable binding bugs.
+		node := n
+
 		channels := make([]*ChannelHistory, len(node.Channels))
 		for j, channel := range node.Channels {
 			channels[j] = &ChannelHistory{
@@ -499,8 +506,10 @@ func (s *Server) TrackPayment(request *TrackPaymentRequest,
 func (s *Server) trackPayment(paymentHash lntypes.Hash,
 	stream Router_TrackPaymentServer) error {
 
+	router := s.cfg.RouterBackend
+
 	// Subscribe to the outcome of this payment.
-	inFlight, resultChan, err := s.cfg.RouterBackend.Tower.SubscribePayment(
+	inFlight, resultChan, err := router.Tower.SubscribePayment(
 		paymentHash,
 	)
 	switch {
@@ -535,20 +544,21 @@ func (s *Server) trackPayment(paymentHash lntypes.Hash,
 
 			status.State = PaymentState_SUCCEEDED
 			status.Preimage = result.Preimage[:]
-			status.Route = s.cfg.RouterBackend.MarshallRoute(
+			status.Route = router.MarshallRoute(
 				result.Route,
 			)
 		} else {
-			switch result.FailureReason {
-
-			case channeldb.FailureReasonTimeout:
-				status.State = PaymentState_FAILED_TIMEOUT
-
-			case channeldb.FailureReasonNoRoute:
-				status.State = PaymentState_FAILED_NO_ROUTE
-
-			default:
-				return errors.New("unknown failure reason")
+			state, err := marshallFailureReason(
+				result.FailureReason,
+			)
+			if err != nil {
+				return err
+			}
+			status.State = state
+			if result.Route != nil {
+				status.Route = router.MarshallRoute(
+					result.Route,
+				)
 			}
 		}
 
@@ -564,4 +574,27 @@ func (s *Server) trackPayment(paymentHash lntypes.Hash,
 	}
 
 	return nil
+}
+
+// marshallFailureReason marshalls the failure reason to the corresponding rpc
+// type.
+func marshallFailureReason(reason channeldb.FailureReason) (
+	PaymentState, error) {
+
+	switch reason {
+
+	case channeldb.FailureReasonTimeout:
+		return PaymentState_FAILED_TIMEOUT, nil
+
+	case channeldb.FailureReasonNoRoute:
+		return PaymentState_FAILED_NO_ROUTE, nil
+
+	case channeldb.FailureReasonError:
+		return PaymentState_FAILED_ERROR, nil
+
+	case channeldb.FailureReasonIncorrectPaymentDetails:
+		return PaymentState_FAILED_INCORRECT_PAYMENT_DETAILS, nil
+	}
+
+	return 0, errors.New("unknown failure reason")
 }

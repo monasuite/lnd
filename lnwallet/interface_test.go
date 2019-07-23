@@ -415,15 +415,15 @@ func testDualFundingReservationWorkflow(miner *rpctest.Harness,
 		t.Fatalf("unable to query fee estimator: %v", err)
 	}
 	aliceReq := &lnwallet.InitFundingReserveMsg{
-		ChainHash:       chainHash,
-		NodeID:          bobPub,
-		NodeAddr:        bobAddr,
-		FundingAmount:   fundingAmount,
-		Capacity:        fundingAmount * 2,
-		CommitFeePerKw:  feePerKw,
-		FundingFeePerKw: feePerKw,
-		PushMSat:        0,
-		Flags:           lnwire.FFAnnounceChannel,
+		ChainHash:        chainHash,
+		NodeID:           bobPub,
+		NodeAddr:         bobAddr,
+		LocalFundingAmt:  fundingAmount,
+		RemoteFundingAmt: fundingAmount,
+		CommitFeePerKw:   feePerKw,
+		FundingFeePerKw:  feePerKw,
+		PushMSat:         0,
+		Flags:            lnwire.FFAnnounceChannel,
 	}
 	aliceChanReservation, err := alice.InitChannelReservation(aliceReq)
 	if err != nil {
@@ -458,15 +458,15 @@ func testDualFundingReservationWorkflow(miner *rpctest.Harness,
 	// receives' Alice's contribution, and consumes that so we can continue
 	// the funding process.
 	bobReq := &lnwallet.InitFundingReserveMsg{
-		ChainHash:       chainHash,
-		NodeID:          alicePub,
-		NodeAddr:        aliceAddr,
-		FundingAmount:   fundingAmount,
-		Capacity:        fundingAmount * 2,
-		CommitFeePerKw:  feePerKw,
-		FundingFeePerKw: feePerKw,
-		PushMSat:        0,
-		Flags:           lnwire.FFAnnounceChannel,
+		ChainHash:        chainHash,
+		NodeID:           alicePub,
+		NodeAddr:         aliceAddr,
+		LocalFundingAmt:  fundingAmount,
+		RemoteFundingAmt: fundingAmount,
+		CommitFeePerKw:   feePerKw,
+		FundingFeePerKw:  feePerKw,
+		PushMSat:         0,
+		Flags:            lnwire.FFAnnounceChannel,
 	}
 	bobChanReservation, err := bob.InitChannelReservation(bobReq)
 	if err != nil {
@@ -618,15 +618,15 @@ func testFundingTransactionLockedOutputs(miner *rpctest.Harness,
 		t.Fatalf("unable to query fee estimator: %v", err)
 	}
 	req := &lnwallet.InitFundingReserveMsg{
-		ChainHash:       chainHash,
-		NodeID:          bobPub,
-		NodeAddr:        bobAddr,
-		FundingAmount:   fundingAmount,
-		Capacity:        fundingAmount,
-		CommitFeePerKw:  feePerKw,
-		FundingFeePerKw: feePerKw,
-		PushMSat:        0,
-		Flags:           lnwire.FFAnnounceChannel,
+		ChainHash:        chainHash,
+		NodeID:           bobPub,
+		NodeAddr:         bobAddr,
+		LocalFundingAmt:  fundingAmount,
+		RemoteFundingAmt: 0,
+		CommitFeePerKw:   feePerKw,
+		FundingFeePerKw:  feePerKw,
+		PushMSat:         0,
+		Flags:            lnwire.FFAnnounceChannel,
 	}
 	if _, err := alice.InitChannelReservation(req); err != nil {
 		t.Fatalf("unable to initialize funding reservation 1: %v", err)
@@ -640,15 +640,15 @@ func testFundingTransactionLockedOutputs(miner *rpctest.Harness,
 		t.Fatalf("unable to create amt: %v", err)
 	}
 	failedReq := &lnwallet.InitFundingReserveMsg{
-		ChainHash:       chainHash,
-		NodeID:          bobPub,
-		NodeAddr:        bobAddr,
-		FundingAmount:   amt,
-		Capacity:        amt,
-		CommitFeePerKw:  feePerKw,
-		FundingFeePerKw: feePerKw,
-		PushMSat:        0,
-		Flags:           lnwire.FFAnnounceChannel,
+		ChainHash:        chainHash,
+		NodeID:           bobPub,
+		NodeAddr:         bobAddr,
+		LocalFundingAmt:  amt,
+		RemoteFundingAmt: 0,
+		CommitFeePerKw:   feePerKw,
+		FundingFeePerKw:  feePerKw,
+		PushMSat:         0,
+		Flags:            lnwire.FFAnnounceChannel,
 	}
 	failedReservation, err := alice.InitChannelReservation(failedReq)
 	if err == nil {
@@ -676,15 +676,15 @@ func testFundingCancellationNotEnoughFunds(miner *rpctest.Harness,
 		t.Fatalf("unable to create amt: %v", err)
 	}
 	req := &lnwallet.InitFundingReserveMsg{
-		ChainHash:       chainHash,
-		NodeID:          bobPub,
-		NodeAddr:        bobAddr,
-		FundingAmount:   fundingAmount,
-		Capacity:        fundingAmount,
-		CommitFeePerKw:  feePerKw,
-		FundingFeePerKw: feePerKw,
-		PushMSat:        0,
-		Flags:           lnwire.FFAnnounceChannel,
+		ChainHash:        chainHash,
+		NodeID:           bobPub,
+		NodeAddr:         bobAddr,
+		LocalFundingAmt:  fundingAmount,
+		RemoteFundingAmt: 0,
+		CommitFeePerKw:   feePerKw,
+		FundingFeePerKw:  feePerKw,
+		PushMSat:         0,
+		Flags:            lnwire.FFAnnounceChannel,
 	}
 	chanReservation, err := alice.InitChannelReservation(req)
 	if err != nil {
@@ -753,9 +753,9 @@ func testCancelNonExistentReservation(miner *rpctest.Harness,
 func testReservationInitiatorBalanceBelowDustCancel(miner *rpctest.Harness,
 	alice, _ *lnwallet.LightningWallet, t *testing.T) {
 
-	// We'll attempt to create a new reservation with an extremely high fee
-	// rate. This should push our balance into the negative and result in a
-	// failure to create the reservation.
+	// We'll attempt to create a new reservation with an extremely high
+	// commitment fee rate. This should push our balance into the negative
+	// and result in a failure to create the reservation.
 	const numBTC = 4
 	fundingAmount, err := btcutil.NewAmount(numBTC)
 	if err != nil {
@@ -766,15 +766,15 @@ func testReservationInitiatorBalanceBelowDustCancel(miner *rpctest.Harness,
 		numBTC * numBTC * btcutil.SatoshiPerBitcoin,
 	)
 	req := &lnwallet.InitFundingReserveMsg{
-		ChainHash:       chainHash,
-		NodeID:          bobPub,
-		NodeAddr:        bobAddr,
-		FundingAmount:   fundingAmount,
-		Capacity:        fundingAmount,
-		CommitFeePerKw:  feePerKw,
-		FundingFeePerKw: feePerKw,
-		PushMSat:        0,
-		Flags:           lnwire.FFAnnounceChannel,
+		ChainHash:        chainHash,
+		NodeID:           bobPub,
+		NodeAddr:         bobAddr,
+		LocalFundingAmt:  fundingAmount,
+		RemoteFundingAmt: 0,
+		CommitFeePerKw:   feePerKw,
+		FundingFeePerKw:  1000,
+		PushMSat:         0,
+		Flags:            lnwire.FFAnnounceChannel,
 	}
 	_, err = alice.InitChannelReservation(req)
 	switch {
@@ -847,15 +847,15 @@ func testSingleFunderReservationWorkflow(miner *rpctest.Harness,
 		t.Fatalf("unable to query fee estimator: %v", err)
 	}
 	aliceReq := &lnwallet.InitFundingReserveMsg{
-		ChainHash:       chainHash,
-		NodeID:          bobPub,
-		NodeAddr:        bobAddr,
-		FundingAmount:   fundingAmt,
-		Capacity:        fundingAmt,
-		CommitFeePerKw:  feePerKw,
-		FundingFeePerKw: feePerKw,
-		PushMSat:        pushAmt,
-		Flags:           lnwire.FFAnnounceChannel,
+		ChainHash:        chainHash,
+		NodeID:           bobPub,
+		NodeAddr:         bobAddr,
+		LocalFundingAmt:  fundingAmt,
+		RemoteFundingAmt: 0,
+		CommitFeePerKw:   feePerKw,
+		FundingFeePerKw:  feePerKw,
+		PushMSat:         pushAmt,
+		Flags:            lnwire.FFAnnounceChannel,
 	}
 	aliceChanReservation, err := alice.InitChannelReservation(aliceReq)
 	if err != nil {
@@ -890,15 +890,15 @@ func testSingleFunderReservationWorkflow(miner *rpctest.Harness,
 	// Next, Bob receives the initial request, generates a corresponding
 	// reservation initiation, then consume Alice's contribution.
 	bobReq := &lnwallet.InitFundingReserveMsg{
-		ChainHash:       chainHash,
-		NodeID:          alicePub,
-		NodeAddr:        aliceAddr,
-		FundingAmount:   0,
-		Capacity:        fundingAmt,
-		CommitFeePerKw:  feePerKw,
-		FundingFeePerKw: feePerKw,
-		PushMSat:        pushAmt,
-		Flags:           lnwire.FFAnnounceChannel,
+		ChainHash:        chainHash,
+		NodeID:           alicePub,
+		NodeAddr:         aliceAddr,
+		LocalFundingAmt:  0,
+		RemoteFundingAmt: fundingAmt,
+		CommitFeePerKw:   feePerKw,
+		FundingFeePerKw:  feePerKw,
+		PushMSat:         pushAmt,
+		Flags:            lnwire.FFAnnounceChannel,
 	}
 	bobChanReservation, err := bob.InitChannelReservation(bobReq)
 	if err != nil {
@@ -1181,9 +1181,11 @@ func testListTransactionDetails(miner *rpctest.Harness,
 
 	// Next create a transaction paying to an output which isn't under the
 	// wallet's control.
-	b := txscript.NewScriptBuilder()
-	b.AddOp(txscript.OP_0)
-	outputScript, err := b.Script()
+	minerAddr, err := miner.NewAddress()
+	if err != nil {
+		t.Fatalf("unable to generate address: %v", err)
+	}
+	outputScript, err := txscript.PayToAddrScript(minerAddr)
 	if err != nil {
 		t.Fatalf("unable to make output script: %v", err)
 	}
@@ -1226,6 +1228,20 @@ func testListTransactionDetails(miner *rpctest.Harness,
 		if txDetail.NumConfirmations != 0 {
 			t.Fatalf("num confs incorrect, got %v expected %v",
 				txDetail.NumConfirmations, 0)
+		}
+
+		// We test that each txDetail has destination addresses. This ensures
+		// that even when we have 0 confirmation transactions, the destination
+		// addresses are returned.
+		var match bool
+		for _, addr := range txDetail.DestAddresses {
+			if addr.String() == minerAddr.String() {
+				match = true
+				break
+			}
+		}
+		if !match {
+			t.Fatalf("minerAddr: %v should have been a dest addr", minerAddr)
 		}
 	}
 	if !mempoolTxFound {
@@ -2246,7 +2262,7 @@ func testCreateSimpleTx(r *rpctest.Harness, w *lnwallet.LightningWallet,
 		},
 
 		{
-			outVals: []int64{1e3},
+			outVals: []int64{200},
 			feeRate: 2500,
 			valid:   false, // Dust output.
 		},
@@ -2279,7 +2295,7 @@ func testCreateSimpleTx(r *rpctest.Harness, w *lnwallet.LightningWallet,
 		},
 	}
 
-	for _, test := range testCases {
+	for i, test := range testCases {
 		feeRate := test.feeRate
 
 		// Grab some fresh addresses from the miner that we will send
@@ -2308,10 +2324,15 @@ func testCreateSimpleTx(r *rpctest.Harness, w *lnwallet.LightningWallet,
 		createTx, createErr := w.CreateSimpleTx(
 			outputs, feeRate, true,
 		)
-		if test.valid == (createErr != nil) {
+		switch {
+		case test.valid && createErr != nil:
 			fmt.Println(spew.Sdump(createTx.Tx))
 			t.Fatalf("got unexpected error when creating tx: %v",
 				createErr)
+
+		case !test.valid && createErr == nil:
+			t.Fatalf("test #%v should have failed on tx "+
+				"creation", i)
 		}
 
 		// Also send to these outputs. This should result in a tx
@@ -2319,9 +2340,13 @@ func testCreateSimpleTx(r *rpctest.Harness, w *lnwallet.LightningWallet,
 		// only difference is that the dry run tx is not signed, and
 		// that the change output position might be different.
 		tx, sendErr := w.SendOutputs(outputs, feeRate)
-		if test.valid == (sendErr != nil) {
+		switch {
+		case test.valid && sendErr != nil:
 			t.Fatalf("got unexpected error when sending tx: %v",
 				sendErr)
+
+		case !test.valid && sendErr == nil:
+			t.Fatalf("test #%v should fail for tx sending", i)
 		}
 
 		// We expected either both to not fail, or both to fail with

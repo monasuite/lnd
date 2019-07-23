@@ -199,7 +199,7 @@ func (q *sessionQueue) AcceptTask(task *backupTask) (reserveStatus, bool) {
 
 	numPending := uint32(q.pendingQueue.Len())
 	maxUpdates := q.cfg.ClientSession.Policy.MaxUpdates
-	log.Debugf("SessionQueue(%x) deciding to accept %v seqnum=%d "+
+	log.Debugf("SessionQueue(%s) deciding to accept %v seqnum=%d "+
 		"pending=%d max-updates=%d",
 		q.ID(), task.id, q.seqNum, numPending, maxUpdates)
 
@@ -316,8 +316,8 @@ func (q *sessionQueue) drainBackups() {
 		// before attempting to dequeue any pending updates.
 		stateUpdate, isPending, backupID, err := q.nextStateUpdate()
 		if err != nil {
-			log.Errorf("SessionQueue(%s) unable to get next state "+
-				"update: %v", err)
+			log.Errorf("SessionQueue(%v) unable to get next state "+
+				"update: %v", q.ID(), err)
 			return
 		}
 
@@ -557,7 +557,7 @@ func (q *sessionQueue) sendStateUpdate(conn wtserver.Peer,
 		// TODO(conner): borked watchtower
 		err = fmt.Errorf("unable to ack seqnum=%d: %v",
 			stateUpdate.SeqNum, err)
-		log.Errorf("SessionQueue(%s) failed to ack update: %v", err)
+		log.Errorf("SessionQueue(%v) failed to ack update: %v", q.ID(), err)
 		return err
 
 	case err == wtdb.ErrLastAppliedReversion:

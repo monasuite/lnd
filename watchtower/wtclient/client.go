@@ -28,7 +28,7 @@ const (
 
 	// DefaultStatInterval specifies the default interval between logging
 	// metrics about the client's operation.
-	DefaultStatInterval = 30 * time.Second
+	DefaultStatInterval = time.Minute
 
 	// DefaultForceQuitDelay specifies the default duration after which the
 	// client should abandon any pending updates or session negotiations
@@ -151,6 +151,7 @@ type TowerClient struct {
 	negotiator        SessionNegotiator
 	candidateSessions map[wtdb.SessionID]*wtdb.ClientSession
 	activeSessions    sessionQueueSet
+	targetTowerIDs    map[wtdb.TowerID]struct{}
 
 	sessionQueue *sessionQueue
 	prevTask     *backupTask
@@ -198,10 +199,14 @@ func New(config *Config) (*TowerClient, error) {
 	log.Infof("Using private watchtower %s, offering policy %s",
 		cfg.PrivateTower, cfg.Policy)
 
+	candidates := newTowerListIterator(tower)
+	targetTowerIDs := candidates.TowerIDs()
+
 	c := &TowerClient{
 		cfg:            cfg,
 		pipeline:       newTaskPipeline(),
 		activeSessions: make(sessionQueueSet),
+		targetTowerIDs: targetTowerIDs,
 		statTicker:     time.NewTicker(DefaultStatInterval),
 		forceQuit:      make(chan struct{}),
 	}
@@ -213,7 +218,7 @@ func New(config *Config) (*TowerClient, error) {
 		SendMessage:   c.sendMessage,
 		ReadMessage:   c.readMessage,
 		Dial:          c.dial,
-		Candidates:    newTowerListIterator(tower),
+		Candidates:    candidates,
 		MinBackoff:    cfg.MinBackoff,
 		MaxBackoff:    cfg.MaxBackoff,
 	})
@@ -526,6 +531,12 @@ func (c *TowerClient) nextSessionQueue() *sessionQueue {
 			continue
 		}
 
+		// Skip any sessions that are still active, but are not for the
+		// users currently configured tower.
+		if _, ok := c.targetTowerIDs[sessionInfo.TowerID]; !ok {
+			continue
+		}
+
 		candidateSession = sessionInfo
 		break
 	}
@@ -738,7 +749,7 @@ func (c *TowerClient) taskRejected(task *backupTask, curStatus reserveStatus) {
 	case reserveExhausted:
 		c.stats.sessionExhausted()
 
-		log.Debugf("Session %v exhausted, %s queued for next session",
+		log.Debugf("Session %v exhausted, %v queued for next session",
 			c.sessionQueue.ID(), task.id)
 
 		// Cache the task that we pulled off, so that we can process it

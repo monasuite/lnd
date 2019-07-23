@@ -14,8 +14,9 @@ func TestRequestRoute(t *testing.T) {
 	)
 
 	findPath := func(g *graphParams, r *RestrictParams,
-		source, target route.Vertex, amt lnwire.MilliSatoshi) (
-		[]*channeldb.ChannelEdgePolicy, error) {
+		cfg *PathFindingConfig, source, target route.Vertex,
+		amt lnwire.MilliSatoshi) ([]*channeldb.ChannelEdgePolicy,
+		error) {
 
 		// We expect find path to receive a cltv limit excluding the
 		// final cltv delta.
@@ -32,12 +33,16 @@ func TestRequestRoute(t *testing.T) {
 		return path, nil
 	}
 
-	session := &paymentSession{
-		mc: &MissionControl{
-			selfNode: &channeldb.LightningNode{},
-			cfg:      &MissionControlConfig{},
+	sessionSource := &SessionSource{
+		SelfNode: &channeldb.LightningNode{},
+		MissionControl: &MissionControl{
+			cfg: &MissionControlConfig{},
 		},
-		pathFinder: findPath,
+	}
+
+	session := &paymentSession{
+		sessionSource: sessionSource,
+		pathFinder:    findPath,
 	}
 
 	cltvLimit := uint32(30)

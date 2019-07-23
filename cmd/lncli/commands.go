@@ -2363,8 +2363,9 @@ func payInvoice(ctx *cli.Context) error {
 }
 
 var sendToRouteCommand = cli.Command{
-	Name:  "sendtoroute",
-	Usage: "send a payment over a predefined route",
+	Name:     "sendtoroute",
+	Category: "Payments",
+	Usage:    "Send a payment over a predefined route.",
 	Description: `
 	Send a payment over Lightning using a specific route. One must specify
 	a list of routes to attempt and the payment hash. This command can even
@@ -2925,6 +2926,11 @@ var getNodeInfoCommand = cli.Command{
 			Usage: "the 33-byte hex-encoded compressed public of the target " +
 				"node",
 		},
+		cli.BoolFlag{
+			Name: "include_channels",
+			Usage: "if true, will return all known channels " +
+				"associated with the node",
+		},
 	},
 	Action: actionDecorator(getNodeInfo),
 }
@@ -2947,7 +2953,8 @@ func getNodeInfo(ctx *cli.Context) error {
 	}
 
 	req := &lnrpc.NodeInfoRequest{
-		PubKey: pubKey,
+		PubKey:          pubKey,
+		IncludeChannels: ctx.Bool("include_channels"),
 	}
 
 	nodeInfo, err := client.GetNodeInfo(ctxb, req)
@@ -2989,6 +2996,10 @@ var queryRoutesCommand = cli.Command{
 			Name: "final_cltv_delta",
 			Usage: "(optional) number of blocks the last hop has to reveal " +
 				"the preimage",
+		},
+		cli.BoolFlag{
+			Name:  "use_mc",
+			Usage: "use mission control probabilities",
 		},
 	},
 	Action: actionDecorator(queryRoutes),
@@ -3035,10 +3046,11 @@ func queryRoutes(ctx *cli.Context) error {
 	}
 
 	req := &lnrpc.QueryRoutesRequest{
-		PubKey:         dest,
-		Amt:            amt,
-		FeeLimit:       feeLimit,
-		FinalCltvDelta: int32(ctx.Int("final_cltv_delta")),
+		PubKey:            dest,
+		Amt:               amt,
+		FeeLimit:          feeLimit,
+		FinalCltvDelta:    int32(ctx.Int("final_cltv_delta")),
+		UseMissionControl: ctx.Bool("use_mc"),
 	}
 
 	route, err := client.QueryRoutes(ctxb, req)
@@ -3357,7 +3369,8 @@ var updateChannelPolicyCommand = cli.Command{
 			Name: "fee_rate",
 			Usage: "the fee rate that will be charged " +
 				"proportionally based on the value of each " +
-				"forwarded HTLC, the lowest possible rate is 0.000001",
+				"forwarded HTLC, the lowest possible rate is 0 " +
+				"with a granularity of 0.000001 (millionths)",
 		},
 		cli.Int64Flag{
 			Name: "time_lock_delta",
@@ -3507,8 +3520,9 @@ var forwardingHistoryCommand = cli.Command{
 	Query the HTLC switch's internal forwarding log for all completed
 	payment circuits (HTLCs) over a particular time range (--start_time and
 	--end_time). The start and end times are meant to be expressed in
-	seconds since the Unix epoch. If a start and end time aren't provided,
-	then events over the past 24 hours are queried for.
+	seconds since the Unix epoch. If --start_time isn't provided,
+	then 24 hours ago is used.  If --end_time isn't provided,
+	then the current time is used.
 
 	The max number of events returned is 50k. The default number is 100,
 	callers can use the --max_events param to modify this value.
@@ -3865,7 +3879,7 @@ var restoreChanBackupCommand = cli.Command{
 		"backup",
 	ArgsUsage: "[--single_backup] [--multi_backup] [--multi_file=",
 	Description: `
-	Allows a suer to restore a Static Channel Backup (SCB) that was
+	Allows a user to restore a Static Channel Backup (SCB) that was
 	obtained either via the exportchanbackup command, or from lnd's
 	automatically manged channels.backup file. This command should be used
 	if a user is attempting to restore a channel due to data loss on a

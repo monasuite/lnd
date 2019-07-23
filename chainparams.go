@@ -100,7 +100,9 @@ var bitcoinRegTestNetParams = bitcoinNetParams{
 // abstract over _which_ chain (or fork) the parameters are for.
 func applyMonacoinParams(params *bitcoinNetParams, monacoinParams *monacoinNetParams) {
 	params.Name = monacoinParams.Name
-	params.Net = bitcoinWire.BitcoinNet(monacoinParams.Net)
+	// when you use testnet, rewrite below.
+	//params.Net = bitcoinWire.TestNet4
+	params.Net = bitcoinWire.MainNet
 	params.DefaultPort = monacoinParams.DefaultPort
 	params.CoinbaseMaturity = monacoinParams.CoinbaseMaturity
 
