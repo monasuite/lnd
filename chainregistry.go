@@ -751,7 +751,6 @@ func initNeutrinoBackend(chainDir string) (*neutrino.ChainService, func(), error
 
 	neutrino.MaxPeers = 8
 	neutrino.BanDuration = time.Hour * 48
-	ltndLog.Infof("%v",config)
 	neutrinoCS, err := neutrino.NewChainService(config)
 	if err != nil {
 		db.Close()

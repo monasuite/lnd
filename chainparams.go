@@ -102,7 +102,8 @@ func applyMonacoinParams(params *bitcoinNetParams, monacoinParams *monacoinNetPa
 	params.Name = monacoinParams.Name
 	// when you use testnet, rewrite below.
 	//params.Net = bitcoinWire.TestNet4
-	params.Net = bitcoinWire.MainNet
+	//params.Net = bitcoinWire.MainNet
+	params.Net = bitcoinWire.BitcoinNet(monacoinParams.Net)
 	params.DefaultPort = monacoinParams.DefaultPort
 	params.CoinbaseMaturity = monacoinParams.CoinbaseMaturity
 

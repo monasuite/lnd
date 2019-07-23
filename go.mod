@@ -34,7 +34,7 @@ require (
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
 	github.com/monaarchives/btcwallet v0.0.0-20190720152906-8ff4ce7cfa65
 	github.com/monasuite/monad v0.0.0-20190615165339-aca81b37b405
-	github.com/monasuite/neutrino v0.0.0-20190720152254-26f859ac4744
+	github.com/monasuite/neutrino v0.0.0-20190723170227-810925e788bf
 	github.com/onsi/ginkgo v1.8.0 // indirect
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/prometheus/client_golang v0.9.3
