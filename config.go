@@ -33,7 +33,6 @@ import (
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing"
 	"github.com/monasuite/lnd/tor"
-	"github.com/monasuite/lnd/watchtower"
 )
 
 const (
@@ -391,6 +390,7 @@ func loadConfig() (*config, error) {
 			Allocation:     0.6,
 			MinChannelSize: int64(minChanFundingSize),
 			MaxChannelSize: int64(MaxFundingAmount),
+			MinConfs:       1,
 			ConfTarget:     autopilot.DefaultConfTarget,
 			Heuristic: map[string]float64{
 				"preferential": 1.0,
@@ -1086,17 +1086,6 @@ func loadConfig() (*config, error) {
 	)
 	if err != nil {
 		return nil, err
-	}
-
-	// If the user provided private watchtower addresses, parse them to
-	// obtain the LN addresses.
-	if cfg.WtClient.IsActive() {
-		err := cfg.WtClient.ParsePrivateTowers(
-			watchtower.DefaultPeerPort, cfg.net.ResolveTCPAddr,
-		)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	// Finally, ensure that the user's color is correctly formatted,

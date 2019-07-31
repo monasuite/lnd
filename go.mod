@@ -9,7 +9,7 @@ require (
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f
 	github.com/btcsuite/btcutil v0.0.0-20190425235716-9e5f4b9a998d
 	github.com/btcsuite/fastsha256 v0.0.0-20160815193821-637e65642941
-	github.com/coreos/bbolt v1.3.2
+	github.com/coreos/bbolt v1.3.3
 	github.com/davecgh/go-spew v1.1.1
 	github.com/go-errors/errors v1.0.1
 	github.com/golang/protobuf v1.3.1
@@ -34,7 +34,7 @@ require (
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
 	github.com/monaarchives/btcwallet v0.0.0-20190720152906-8ff4ce7cfa65
 	github.com/monasuite/monad v0.0.0-20190615165339-aca81b37b405
-	github.com/monasuite/neutrino v0.0.0-20190723170227-810925e788bf
+	github.com/monasuite/neutrino v0.0.0-20190731183504-259689cc0dbc
 	github.com/onsi/ginkgo v1.8.0 // indirect
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/prometheus/client_golang v0.9.3

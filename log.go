@@ -10,6 +10,7 @@ import (
 	"github.com/btcsuite/btclog"
 	"github.com/jrick/logrotate/rotator"
 	sphinx "github.com/lightningnetwork/lightning-onion"
+	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/build"
 	"github.com/monasuite/lnd/chainntnfs"
@@ -26,6 +27,7 @@ import (
 	"github.com/monasuite/lnd/lnrpc/routerrpc"
 	"github.com/monasuite/lnd/lnrpc/signrpc"
 	"github.com/monasuite/lnd/lnrpc/walletrpc"
+	"github.com/monasuite/lnd/lnrpc/wtclientrpc"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/monitoring"
 	"github.com/monasuite/lnd/netann"
@@ -34,7 +36,6 @@ import (
 	"github.com/monasuite/lnd/sweep"
 	"github.com/monasuite/lnd/watchtower"
 	"github.com/monasuite/lnd/watchtower/wtclient"
-	"github.com/monasuite/neutrino"
 )
 
 // Loggers per subsystem.  A single backend logger is created and all subsystem
@@ -120,6 +121,7 @@ func init() {
 	wtclient.UseLogger(wtclLog)
 
 	addSubLogger(routerrpc.Subsystem, routerrpc.UseLogger)
+	addSubLogger(wtclientrpc.Subsystem, wtclientrpc.UseLogger)
 }
 
 // addSubLogger is a helper method to conveniently register the logger of a sub
