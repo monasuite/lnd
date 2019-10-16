@@ -33,7 +33,6 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	proxy "github.com/grpc-ecosystem/grpc-gateway/runtime"
-	"github.com/monaarchives/btcwallet/waddrmgr"
 	"github.com/monaarchives/btcwallet/wallet/txauthor"
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/build"

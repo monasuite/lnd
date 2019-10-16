@@ -37,6 +37,7 @@ import (
 	"github.com/monasuite/lnd/sweep"
 	"github.com/monasuite/lnd/watchtower"
 	"github.com/monasuite/lnd/watchtower/wtclient"
+	"github.com/monasuite/neutrino"
 	"google.golang.org/grpc"
 )
 
