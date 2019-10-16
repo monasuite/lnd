@@ -59,7 +59,7 @@ resources including talks, articles, and example applications can be found at:
 [dev.lightning.community](https://dev.lightning.community).
 
 Finally, we also have an active
-[Slack](https://join.slack.com/t/lightningcommunity/shared_invite/enQtMzQ0OTQyNjE5NjU1LWRiMGNmOTZiNzU0MTVmYzc1ZGFkZTUyNzUwOGJjMjYwNWRkNWQzZWE3MTkwZjdjZGE5ZGNiNGVkMzI2MDU4ZTE) where protocol developers, application developers, testers and users gather to
+[Slack](https://join.slack.com/t/lightningcommunity/shared_invite/enQtMzQ0OTQyNjE5NjU1LThmOGJkZDIzY2U2ODI5ODhmOWMzM2FkOTY5ZTdkYTc5NDYyN2U1YTJkZTE1MWU2OTZlZTAyOWY4NGY2M2M1NTM) where protocol developers, application developers, testers and users gather to
 discuss various aspects of `lnd` and also Lightning in general.
 
 ## Installation
@@ -83,7 +83,7 @@ any issues regarding security or privacy, please disclose the information
 responsibly by sending an email to security at lightning dot engineering,
 preferably [encrypted using our designated PGP key
 (`91FE464CD75101DA6B6BAB60555C6465E5BCB3AF`) which can be found
-here](https://pgp.mit.edu/pks/lookup?op=vindex&search=0x555C6465E5BCB3AF).
+[here](https://gist.githubusercontent.com/Roasbeef/6fb5b52886183239e4aa558f83d085d3/raw/5ef96c426e3cf20a2443dc9d3c7d6877576da9ca/security@lightning.engineering).
 
 ## Further reading
 * [Step-by-step send payment guide with docker](https://github.com/monasuite/lnd/tree/master/docker)

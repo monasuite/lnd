@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,16 +16,17 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/lnrpc/routerrpc"
 	"github.com/monasuite/lnd/walletunlocker"
 	"github.com/urfave/cli"
 	"golang.org/x/crypto/ssh/terminal"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -1567,12 +1569,12 @@ mnemonicCheck:
 		"RESTORE THE WALLET!!!")
 
 	// We'll also check to see if they provided any static channel backups,
-	// if so, then we'll also tack these onto the final innit wallet
-	// request.
+	// if so, then we'll also tack these onto the final init wallet request.
+	// We can ignore the errMissingChanBackup error as it's an optional
+	// field.
 	backups, err := parseChanBackups(ctx)
-	if err != nil {
-		return fmt.Errorf("unable to parse chan "+
-			"backups: %v", err)
+	if err != nil && err != errMissingChanBackup {
+		return fmt.Errorf("unable to parse chan backups: %v", err)
 	}
 
 	var chanBackups *lnrpc.ChanBackupSnapshot
@@ -1879,6 +1881,7 @@ func getInfo(ctx *cli.Context) error {
 		BlockHash           string   `json:"block_hash"`
 		BestHeaderTimestamp int64    `json:"best_header_timestamp"`
 		SyncedToChain       bool     `json:"synced_to_chain"`
+		SyncedToGraph       bool     `json:"synced_to_graph"`
 		Testnet             bool     `json:"testnet"`
 		Chains              []chain  `json:"chains"`
 		Uris                []string `json:"uris"`
@@ -1895,6 +1898,7 @@ func getInfo(ctx *cli.Context) error {
 		BlockHash:           resp.BlockHash,
 		BestHeaderTimestamp: resp.BestHeaderTimestamp,
 		SyncedToChain:       resp.SyncedToChain,
+		SyncedToGraph:       resp.SyncedToGraph,
 		Testnet:             resp.Testnet,
 		Chains:              chains,
 		Uris:                resp.Uris,
@@ -2022,7 +2026,7 @@ func closedChannels(ctx *cli.Context) error {
 		LocalForce:      ctx.Bool("local_force"),
 		RemoteForce:     ctx.Bool("remote_force"),
 		Breach:          ctx.Bool("breach"),
-		FundingCanceled: ctx.Bool("funding_cancelled"),
+		FundingCanceled: ctx.Bool("funding_canceled"),
 		Abandoned:       ctx.Bool("abandoned"),
 	}
 
@@ -2379,22 +2383,23 @@ var sendToRouteCommand = cli.Command{
 	Usage:    "Send a payment over a predefined route.",
 	Description: `
 	Send a payment over Lightning using a specific route. One must specify
-	a list of routes to attempt and the payment hash. This command can even
-	be chained with the response to queryroutes. This command can be used
-	to implement channel rebalancing by crafting a self-route, or even
-	atomic swaps using a self-route that crosses multiple chains.
+	the route to attempt and the payment hash. This command can even
+	be chained with the response to queryroutes or buildroute. This command
+	can be used to implement channel rebalancing by crafting a self-route, 
+	or even atomic swaps using a self-route that crosses multiple chains.
 
-	There are three ways to specify routes:
+	There are three ways to specify a route:
 	   * using the --routes parameter to manually specify a JSON encoded
-	     set of routes in the format of the return value of queryroutes:
+	     route in the format of the return value of queryroutes or
+	     buildroute:
 	         (lncli sendtoroute --payment_hash=<pay_hash> --routes=<route>)
 
-	   * passing the routes as a positional argument:
+	   * passing the route as a positional argument:
 	         (lncli sendtoroute --payment_hash=pay_hash <route>)
 
-	   * or reading in the routes from stdin, which can allow chaining the
-	     response from queryroutes, or even read in a file with a set of
-	     pre-computed routes:
+	   * or reading in the route from stdin, which can allow chaining the
+	     response from queryroutes or buildroute, or even read in a file
+	     with a pre-computed route:
 	         (lncli queryroutes --args.. | lncli sendtoroute --payment_hash= -
 
 	     notice the '-' at the end, which signals that lncli should read
@@ -2472,25 +2477,37 @@ func sendToRoute(ctx *cli.Context) error {
 		jsonRoutes = string(b)
 	}
 
+	// Try to parse the provided json both in the legacy QueryRoutes format
+	// that contains a list of routes and the single route BuildRoute
+	// format.
+	var route *lnrpc.Route
 	routes := &lnrpc.QueryRoutesResponse{}
 	err = jsonpb.UnmarshalString(jsonRoutes, routes)
-	if err != nil {
-		return fmt.Errorf("unable to unmarshal json string "+
-			"from incoming array of routes: %v", err)
-	}
+	if err == nil {
+		if len(routes.Routes) == 0 {
+			return fmt.Errorf("no routes provided")
+		}
 
-	if len(routes.Routes) == 0 {
-		return fmt.Errorf("no routes provided")
-	}
+		if len(routes.Routes) != 1 {
+			return fmt.Errorf("expected a single route, but got %v",
+				len(routes.Routes))
+		}
 
-	if len(routes.Routes) != 1 {
-		return fmt.Errorf("expected a single route, but got %v",
-			len(routes.Routes))
+		route = routes.Routes[0]
+	} else {
+		routes := &routerrpc.BuildRouteResponse{}
+		err = jsonpb.UnmarshalString(jsonRoutes, routes)
+		if err != nil {
+			return fmt.Errorf("unable to unmarshal json string "+
+				"from incoming array of routes: %v", err)
+		}
+
+		route = routes.Route
 	}
 
 	req := &lnrpc.SendToRouteRequest{
 		PaymentHash: rHash,
-		Route:       routes.Routes[0],
+		Route:       route,
 	}
 
 	return sendToRouteRequest(ctx, req)
@@ -2816,37 +2833,6 @@ func describeGraph(ctx *cli.Context) error {
 	return nil
 }
 
-// normalizeFunc is a factory function which returns a function that normalizes
-// the capacity of edges within the graph. The value of the returned
-// function can be used to either plot the capacities, or to use a weight in a
-// rendering of the graph.
-func normalizeFunc(edges []*lnrpc.ChannelEdge, scaleFactor float64) func(int64) float64 {
-	var (
-		min float64 = math.MaxInt64
-		max float64
-	)
-
-	for _, edge := range edges {
-		// In order to obtain saner values, we reduce the capacity of a
-		// channel to its base 2 logarithm.
-		z := math.Log2(float64(edge.Capacity))
-
-		if z < min {
-			min = z
-		}
-		if z > max {
-			max = z
-		}
-	}
-
-	return func(x int64) float64 {
-		y := math.Log2(float64(x))
-
-		// TODO(roasbeef): results in min being zero
-		return (y - min) / (max - min) * scaleFactor
-	}
-}
-
 var listPaymentsCommand = cli.Command{
 	Name:     "listpayments",
 	Category: "Payments",
@@ -2908,6 +2894,9 @@ func getChanInfo(ctx *cli.Context) error {
 		chanID = ctx.Int64("chan_id")
 	case ctx.Args().Present():
 		chanID, err = strconv.ParseInt(ctx.Args().First(), 10, 64)
+		if err != nil {
+			return fmt.Errorf("error parsing chan_id: %s", err)
+		}
 	default:
 		return fmt.Errorf("chan_id argument missing")
 	}
@@ -3012,6 +3001,7 @@ var queryRoutesCommand = cli.Command{
 			Name:  "use_mc",
 			Usage: "use mission control probabilities",
 		},
+		cltvLimitFlag,
 	},
 	Action: actionDecorator(queryRoutes),
 }
@@ -3062,6 +3052,7 @@ func queryRoutes(ctx *cli.Context) error {
 		FeeLimit:          feeLimit,
 		FinalCltvDelta:    int32(ctx.Int("final_cltv_delta")),
 		UseMissionControl: ctx.Bool("use_mc"),
+		CltvLimit:         uint32(ctx.Uint64(cltvLimitFlag.Name)),
 	}
 
 	route, err := client.QueryRoutes(ctxb, req)
@@ -3363,7 +3354,8 @@ var updateChannelPolicyCommand = cli.Command{
 	Category: "Channels",
 	Usage: "Update the channel policy for all channels, or a single " +
 		"channel.",
-	ArgsUsage: "base_fee_msat fee_rate time_lock_delta [channel_point]",
+	ArgsUsage: "base_fee_msat fee_rate time_lock_delta " +
+		"[--max_htlc_msat=N] [channel_point]",
 	Description: `
 	Updates the channel policy for all channels, or just a particular channel
 	identified by its channel point. The update will be committed, and
@@ -3387,6 +3379,12 @@ var updateChannelPolicyCommand = cli.Command{
 			Name: "time_lock_delta",
 			Usage: "the CLTV delta that will be applied to all " +
 				"forwarded HTLCs",
+		},
+		cli.Uint64Flag{
+			Name: "max_htlc_msat",
+			Usage: "if set, the max HTLC size that will be applied " +
+				"to all forwarded HTLCs. If unset, the max HTLC " +
+				"is left unchanged.",
 		},
 		cli.StringFlag{
 			Name: "chan_point",
@@ -3501,6 +3499,7 @@ func updateChannelPolicy(ctx *cli.Context) error {
 		BaseFeeMsat:   baseFee,
 		FeeRate:       feeRate,
 		TimeLockDelta: uint32(timeLockDelta),
+		MaxHtlcMsat:   ctx.Uint64("max_htlc_msat"),
 	}
 
 	if chanPoint != nil {
@@ -3586,6 +3585,9 @@ func forwardingHistory(ctx *cli.Context) error {
 			return fmt.Errorf("unable to decode start_time %v", err)
 		}
 		args = args.Tail()
+	default:
+		now := time.Now()
+		startTime = uint64(now.Add(-time.Hour * 24).Unix())
 	}
 
 	switch {
@@ -3929,6 +3931,10 @@ var restoreChanBackupCommand = cli.Command{
 	Action: actionDecorator(restoreChanBackup),
 }
 
+// errMissingChanBackup is an error returned when we attempt to parse a channel
+// backup from a CLI command and it is missing.
+var errMissingChanBackup = errors.New("missing channel backup")
+
 func parseChanBackups(ctx *cli.Context) (*lnrpc.RestoreChanBackupRequest, error) {
 	switch {
 	case ctx.IsSet("single_backup"):
@@ -3981,7 +3987,7 @@ func parseChanBackups(ctx *cli.Context) (*lnrpc.RestoreChanBackupRequest, error)
 		}, nil
 
 	default:
-		return nil, nil
+		return nil, errMissingChanBackup
 	}
 }
 

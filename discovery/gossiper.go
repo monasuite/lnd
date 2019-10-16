@@ -86,14 +86,12 @@ type networkMsg struct {
 }
 
 // chanPolicyUpdateRequest is a request that is sent to the server when a caller
-// wishes to update the channel policy (fees e.g.) for a particular set of
-// channels. New ChannelUpdate messages will be crafted to be sent out during
-// the next broadcast epoch and the fee updates committed to the lower layer.
+// wishes to update a particular set of channels. New ChannelUpdate messages
+// will be crafted to be sent out during the next broadcast epoch and the fee
+// updates committed to the lower layer.
 type chanPolicyUpdateRequest struct {
-	targetChans []wire.OutPoint
-	newSchema   routing.ChannelPolicy
-
-	errResp chan error
+	edgesToUpdate []EdgeWithInfo
+	errChan       chan error
 }
 
 // Config defines the configuration for the service. ALL elements within the
@@ -147,6 +145,12 @@ type Config struct {
 	// notification for when it reconnects.
 	NotifyWhenOffline func(peerPubKey [33]byte) <-chan struct{}
 
+	// SelfNodeAnnouncement is a function that fetches our own current node
+	// announcement, for use when determining whether we should update our
+	// peers about our presence on the network. If the refresh is true, a
+	// new and updated announcement will be returned.
+	SelfNodeAnnouncement func(refresh bool) (lnwire.NodeAnnouncement, error)
+
 	// ProofMatureDelta the number of confirmations which is needed before
 	// exchange the channel announcement proofs.
 	ProofMatureDelta uint32
@@ -156,9 +160,17 @@ type Config struct {
 	// the last trickle tick.
 	TrickleDelay time.Duration
 
-	// RetransmitDelay is the period of a timer which indicates that we
-	// should check if we need re-broadcast any of our personal channels.
-	RetransmitDelay time.Duration
+	// RetransmitTicker is a ticker that ticks with a period which
+	// indicates that we should check if we need re-broadcast any of our
+	// personal channels.
+	RetransmitTicker ticker.Ticker
+
+	// RebroadcastInterval is the maximum time we wait between sending out
+	// channel updates for our active channels and our own node
+	// announcement. We do this to ensure our active presence on the
+	// network is known, and we are not being considered a zombie node or
+	// having zombie channels.
+	RebroadcastInterval time.Duration
 
 	// WaitingProofStore is a persistent storage of partial channel proof
 	// announcement messages. We use it to buffer half of the material
@@ -211,6 +223,12 @@ type Config struct {
 	// SubBatchDelay is the delay between sending sub batches of
 	// gossip messages.
 	SubBatchDelay time.Duration
+
+	// IgnoreHistoricalFilters will prevent syncers from replying with
+	// historical data when the remote peer sets a gossip_timestamp_range.
+	// This prevents ranges with old start times from causing us to dump the
+	// graph on connect.
+	IgnoreHistoricalFilters bool
 }
 
 // AuthenticatedGossiper is a subsystem which is responsible for receiving
@@ -313,11 +331,12 @@ func New(cfg Config, selfKey *btcec.PublicKey) *AuthenticatedGossiper {
 		channelMtx:              multimutex.NewMutex(),
 		recentRejects:           make(map[uint64]struct{}),
 		syncMgr: newSyncManager(&SyncManagerCfg{
-			ChainHash:            cfg.ChainHash,
-			ChanSeries:           cfg.ChanSeries,
-			RotateTicker:         cfg.RotateTicker,
-			HistoricalSyncTicker: cfg.HistoricalSyncTicker,
-			NumActiveSyncers:     cfg.NumActiveSyncers,
+			ChainHash:               cfg.ChainHash,
+			ChanSeries:              cfg.ChanSeries,
+			RotateTicker:            cfg.RotateTicker,
+			HistoricalSyncTicker:    cfg.HistoricalSyncTicker,
+			NumActiveSyncers:        cfg.NumActiveSyncers,
+			IgnoreHistoricalFilters: cfg.IgnoreHistoricalFilters,
 		}),
 	}
 
@@ -331,25 +350,43 @@ func New(cfg Config, selfKey *btcec.PublicKey) *AuthenticatedGossiper {
 	return gossiper
 }
 
-// PropagateChanPolicyUpdate signals the AuthenticatedGossiper to update the
-// channel forwarding policies for the specified channels. If no channels are
-// specified, then the update will be applied to all outgoing channels from the
-// source node. Policy updates are done in two stages: first, the
+// updatedChanPolicies is a set of channel policies that have been successfully
+// updated and written to disk, or an error if the policy update failed. This
+// struct's map field is intended to be used for updating channel policies on
+// the link layer.
+type updatedChanPolicies struct {
+	chanPolicies map[wire.OutPoint]*channeldb.ChannelEdgePolicy
+	err          error
+}
+
+// EdgeWithInfo contains the information that is required to update an edge.
+type EdgeWithInfo struct {
+	// Info describes the channel.
+	Info *channeldb.ChannelEdgeInfo
+
+	// Edge describes the policy in one direction of the channel.
+	Edge *channeldb.ChannelEdgePolicy
+}
+
+// PropagateChanPolicyUpdate signals the AuthenticatedGossiper to perform the
+// specified edge updates. Updates are done in two stages: first, the
 // AuthenticatedGossiper ensures the update has been committed by dependent
-// sub-systems, then it signs and broadcasts new updates to the network.
+// sub-systems, then it signs and broadcasts new updates to the network. A
+// mapping between outpoints and updated channel policies is returned, which is
+// used to update the forwarding policies of the underlying links.
 func (d *AuthenticatedGossiper) PropagateChanPolicyUpdate(
-	newSchema routing.ChannelPolicy, chanPoints ...wire.OutPoint) error {
+	edgesToUpdate []EdgeWithInfo) error {
 
 	errChan := make(chan error, 1)
 	policyUpdate := &chanPolicyUpdateRequest{
-		targetChans: chanPoints,
-		newSchema:   newSchema,
-		errResp:     errChan,
+		edgesToUpdate: edgesToUpdate,
+		errChan:       errChan,
 	}
 
 	select {
 	case d.chanPolicyUpdates <- policyUpdate:
-		return <-errChan
+		err := <-errChan
+		return err
 	case <-d.quit:
 		return fmt.Errorf("AuthenticatedGossiper shutting down")
 	}
@@ -861,16 +898,16 @@ func (d *AuthenticatedGossiper) networkHandler() {
 	announcements := deDupedAnnouncements{}
 	announcements.Reset()
 
-	retransmitTimer := time.NewTicker(d.cfg.RetransmitDelay)
-	defer retransmitTimer.Stop()
+	d.cfg.RetransmitTicker.Resume()
+	defer d.cfg.RetransmitTicker.Stop()
 
 	trickleTimer := time.NewTicker(d.cfg.TrickleDelay)
 	defer trickleTimer.Stop()
 
-	// To start, we'll first check to see if there are any stale channels
-	// that we need to re-transmit.
-	if err := d.retransmitStaleChannels(); err != nil {
-		log.Errorf("Unable to rebroadcast stale channels: %v", err)
+	// To start, we'll first check to see if there are any stale channel or
+	// node announcements that we need to re-transmit.
+	if err := d.retransmitStaleAnns(time.Now()); err != nil {
+		log.Errorf("Unable to rebroadcast stale announcements: %v", err)
 	}
 
 	// We'll use this validation to ensure that we process jobs in their
@@ -889,12 +926,12 @@ func (d *AuthenticatedGossiper) networkHandler() {
 			// the affected channels and also update the underlying
 			// graph with the new state.
 			newChanUpdates, err := d.processChanPolicyUpdate(
-				policyUpdate,
+				policyUpdate.edgesToUpdate,
 			)
+			policyUpdate.errChan <- err
 			if err != nil {
 				log.Errorf("Unable to craft policy updates: %v",
 					err)
-				policyUpdate.errResp <- err
 				continue
 			}
 
@@ -903,9 +940,13 @@ func (d *AuthenticatedGossiper) networkHandler() {
 			// start of the next epoch.
 			announcements.AddMsgs(newChanUpdates...)
 
-			policyUpdate.errResp <- nil
-
 		case announcement := <-d.networkMsgs:
+			// We should only broadcast this message forward if it
+			// originated from us or it wasn't received as part of
+			// our initial historical sync.
+			shouldBroadcast := !announcement.isRemote ||
+				d.syncMgr.IsGraphSynced()
+
 			switch announcement.msg.(type) {
 			// Channel announcement signatures are amongst the only
 			// messages that we'll process serially.
@@ -974,12 +1015,16 @@ func (d *AuthenticatedGossiper) networkHandler() {
 				// the emitted announcements to our announce
 				// batch to be broadcast once the trickle timer
 				// ticks gain.
-				if emittedAnnouncements != nil {
+				if emittedAnnouncements != nil && shouldBroadcast {
 					// TODO(roasbeef): exclude peer that
 					// sent.
 					announcements.AddMsgs(
 						emittedAnnouncements...,
 					)
+				} else if emittedAnnouncements != nil {
+					log.Trace("Skipping broadcast of " +
+						"announcements received " +
+						"during initial graph sync")
 				}
 
 			}()
@@ -1069,13 +1114,14 @@ func (d *AuthenticatedGossiper) networkHandler() {
 
 		// The retransmission timer has ticked which indicates that we
 		// should check if we need to prune or re-broadcast any of our
-		// personal channels. This addresses the case of "zombie"
-		// channels and channel advertisements that have been dropped,
-		// or not properly propagated through the network.
-		case <-retransmitTimer.C:
-			if err := d.retransmitStaleChannels(); err != nil {
+		// personal channels or node announcement. This addresses the
+		// case of "zombie" channels and channel advertisements that
+		// have been dropped, or not properly propagated through the
+		// network.
+		case tick := <-d.cfg.RetransmitTicker.Ticks():
+			if err := d.retransmitStaleAnns(tick); err != nil {
 				log.Errorf("unable to rebroadcast stale "+
-					"channels: %v", err)
+					"announcements: %v", err)
 			}
 
 		// The gossiper has been signalled to exit, to we exit our
@@ -1123,18 +1169,23 @@ func (d *AuthenticatedGossiper) isRecentlyRejectedMsg(msg lnwire.Message) bool {
 	}
 }
 
-// retransmitStaleChannels examines all outgoing channels that the source node
-// is known to maintain to check to see if any of them are "stale". A channel
-// is stale iff, the last timestamp of its rebroadcast is older then
-// broadcastInterval.
-func (d *AuthenticatedGossiper) retransmitStaleChannels() error {
+// retransmitStaleAnns examines all outgoing channels that the source node is
+// known to maintain to check to see if any of them are "stale". A channel is
+// stale iff, the last timestamp of its rebroadcast is older than the
+// RebroadcastInterval. We also check if a refreshed node announcement should
+// be resent.
+func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 	// Iterate over all of our channels and check if any of them fall
 	// within the prune interval or re-broadcast interval.
 	type updateTuple struct {
 		info *channeldb.ChannelEdgeInfo
 		edge *channeldb.ChannelEdgePolicy
 	}
-	var edgesToUpdate []updateTuple
+
+	var (
+		havePublicChannels bool
+		edgesToUpdate      []updateTuple
+	)
 	err := d.cfg.Router.ForAllOutgoingChannels(func(
 		info *channeldb.ChannelEdgeInfo,
 		edge *channeldb.ChannelEdgePolicy) error {
@@ -1150,10 +1201,20 @@ func (d *AuthenticatedGossiper) retransmitStaleChannels() error {
 			return nil
 		}
 
+		// We make a note that we have at least one public channel. We
+		// use this to determine whether we should send a node
+		// announcement below.
+		havePublicChannels = true
+
 		// If this edge has a ChannelUpdate that was created before the
 		// introduction of the MaxHTLC field, then we'll update this
 		// edge to propagate this information in the network.
 		if !edge.MessageFlags.HasMaxHtlc() {
+			// We'll make sure we support the new max_htlc field if
+			// not already present.
+			edge.MessageFlags |= lnwire.ChanUpdateOptionMaxHtlc
+			edge.MaxHTLC = lnwire.NewMSatFromSatoshis(info.Capacity)
+
 			edgesToUpdate = append(edgesToUpdate, updateTuple{
 				info: info,
 				edge: edge,
@@ -1161,14 +1222,12 @@ func (d *AuthenticatedGossiper) retransmitStaleChannels() error {
 			return nil
 		}
 
-		const broadcastInterval = time.Hour * 24
+		timeElapsed := now.Sub(edge.LastUpdate)
 
-		timeElapsed := time.Since(edge.LastUpdate)
-
-		// If it's been a full day since we've re-broadcasted the
-		// channel, add the channel to the set of edges we need to
-		// update.
-		if timeElapsed >= broadcastInterval {
+		// If it's been longer than RebroadcastInterval since we've
+		// re-broadcasted the channel, add the channel to the set of
+		// edges we need to update.
+		if timeElapsed >= d.cfg.RebroadcastInterval {
 			edgesToUpdate = append(edgesToUpdate, updateTuple{
 				info: info,
 				edge: edge,
@@ -1202,13 +1261,51 @@ func (d *AuthenticatedGossiper) retransmitStaleChannels() error {
 		signedUpdates = append(signedUpdates, chanUpdate)
 	}
 
-	// If we don't have any channels to re-broadcast, then we'll exit
+	// If we don't have any public channels, we return as we don't want to
+	// broadcast anything that would reveal our existence.
+	if !havePublicChannels {
+		return nil
+	}
+
+	// We'll also check that our NodeAnnouncement is not too old.
+	currentNodeAnn, err := d.cfg.SelfNodeAnnouncement(false)
+	if err != nil {
+		return fmt.Errorf("unable to get current node announment: %v",
+			err)
+	}
+
+	timestamp := time.Unix(int64(currentNodeAnn.Timestamp), 0)
+	timeElapsed := now.Sub(timestamp)
+
+	// If it's been a full day since we've re-broadcasted the
+	// node announcement, refresh it and resend it.
+	nodeAnnStr := ""
+	if timeElapsed >= d.cfg.RebroadcastInterval {
+		newNodeAnn, err := d.cfg.SelfNodeAnnouncement(true)
+		if err != nil {
+			return fmt.Errorf("unable to get refreshed node "+
+				"announcement: %v", err)
+		}
+
+		signedUpdates = append(signedUpdates, &newNodeAnn)
+		nodeAnnStr = " and our refreshed node announcement"
+
+		// Before broadcasting the refreshed node announcement, add it
+		// to our own graph.
+		if err := d.addNode(&newNodeAnn); err != nil {
+			log.Errorf("Unable to add refreshed node announcement "+
+				"to graph: %v", err)
+		}
+	}
+
+	// If we don't have any updates to re-broadcast, then we'll exit
 	// early.
 	if len(signedUpdates) == 0 {
 		return nil
 	}
 
-	log.Infof("Retransmitting %v outgoing channels", len(edgesToUpdate))
+	log.Infof("Retransmitting %v outgoing channels%v",
+		len(edgesToUpdate), nodeAnnStr)
 
 	// With all the wire announcements properly crafted, we'll broadcast
 	// our known outgoing channels to all our immediate peers.
@@ -1219,77 +1316,18 @@ func (d *AuthenticatedGossiper) retransmitStaleChannels() error {
 	return nil
 }
 
-// processChanPolicyUpdate generates a new set of channel updates with the new
-// channel policy applied for each specified channel identified by its channel
-// point. In the case that no channel points are specified, then the update
-// will be applied to all channels. Finally, the backing ChannelGraphSource is
-// updated with the latest information reflecting the applied updates.
-//
-// TODO(roasbeef): generalize into generic for any channel update
+// processChanPolicyUpdate generates a new set of channel updates for the
+// provided list of edges and updates the backing ChannelGraphSource.
 func (d *AuthenticatedGossiper) processChanPolicyUpdate(
-	policyUpdate *chanPolicyUpdateRequest) ([]networkMsg, error) {
-	// First, we'll construct a set of all the channels that need to be
-	// updated.
-	chansToUpdate := make(map[wire.OutPoint]struct{})
-	for _, chanPoint := range policyUpdate.targetChans {
-		chansToUpdate[chanPoint] = struct{}{}
-	}
+	edgesToUpdate []EdgeWithInfo) ([]networkMsg, error) {
 
-	haveChanFilter := len(chansToUpdate) != 0
-	if haveChanFilter {
-		log.Infof("Updating routing policies for chan_points=%v",
-			spew.Sdump(chansToUpdate))
-	} else {
-		log.Infof("Updating routing policies for all chans")
-	}
-
-	type edgeWithInfo struct {
-		info *channeldb.ChannelEdgeInfo
-		edge *channeldb.ChannelEdgePolicy
-	}
-	var edgesToUpdate []edgeWithInfo
-
-	// Next, we'll loop over all the outgoing channels the router knows of.
-	// If we have a filter then we'll only collected those channels,
-	// otherwise we'll collect them all.
-	err := d.cfg.Router.ForAllOutgoingChannels(func(
-		info *channeldb.ChannelEdgeInfo,
-		edge *channeldb.ChannelEdgePolicy) error {
-
-		// If we have a channel filter, and this channel isn't a part
-		// of it, then we'll skip it.
-		if _, ok := chansToUpdate[info.ChannelPoint]; !ok && haveChanFilter {
-			return nil
-		}
-
-		// Now that we know we should update this channel, we'll update
-		// its set of policies.
-		edge.FeeBaseMSat = policyUpdate.newSchema.BaseFee
-		edge.FeeProportionalMillionths = lnwire.MilliSatoshi(
-			policyUpdate.newSchema.FeeRate,
-		)
-		edge.TimeLockDelta = uint16(policyUpdate.newSchema.TimeLockDelta)
-
-		edgesToUpdate = append(edgesToUpdate, edgeWithInfo{
-			info: info,
-			edge: edge,
-		})
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// With the set of edges we need to update retrieved, we'll now re-sign
-	// them, and insert them into the database.
 	var chanUpdates []networkMsg
 	for _, edgeInfo := range edgesToUpdate {
 		// Now that we've collected all the channels we need to update,
-		// we'll Re-sign and update the backing ChannelGraphSource, and
+		// we'll re-sign and update the backing ChannelGraphSource, and
 		// retrieve our ChannelUpdate to broadcast.
 		_, chanUpdate, err := d.updateChannel(
-			edgeInfo.info, edgeInfo.edge,
+			edgeInfo.Info, edgeInfo.Edge,
 		)
 		if err != nil {
 			return nil, err
@@ -1298,9 +1336,9 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(
 		// We'll avoid broadcasting any updates for private channels to
 		// avoid directly giving away their existence. Instead, we'll
 		// send the update directly to the remote party.
-		if edgeInfo.info.AuthProof == nil {
+		if edgeInfo.Info.AuthProof == nil {
 			remotePubKey := remotePubFromChanInfo(
-				edgeInfo.info, chanUpdate.ChannelFlags,
+				edgeInfo.Info, chanUpdate.ChannelFlags,
 			)
 			err := d.reliableSender.sendMessage(
 				chanUpdate, remotePubKey,
@@ -1412,6 +1450,33 @@ func (d *AuthenticatedGossiper) processRejectedEdge(
 	return announcements, nil
 }
 
+// addNode processes the given node announcement, and adds it to our channel
+// graph.
+func (d *AuthenticatedGossiper) addNode(msg *lnwire.NodeAnnouncement) error {
+	if err := routing.ValidateNodeAnn(msg); err != nil {
+		return fmt.Errorf("unable to validate node announcement: %v",
+			err)
+	}
+
+	timestamp := time.Unix(int64(msg.Timestamp), 0)
+	features := lnwire.NewFeatureVector(
+		msg.Features, lnwire.GlobalFeatures,
+	)
+	node := &channeldb.LightningNode{
+		HaveNodeAnnouncement: true,
+		LastUpdate:           timestamp,
+		Addresses:            msg.Addresses,
+		PubKeyBytes:          msg.NodeID,
+		Alias:                msg.Alias.String(),
+		AuthSigBytes:         msg.Signature.ToSignatureBytes(),
+		Features:             features,
+		Color:                msg.RGBColor,
+		ExtraOpaqueData:      msg.ExtraOpaqueData,
+	}
+
+	return d.cfg.Router.AddNode(node)
+}
+
 // processNetworkAnnouncement processes a new network relate authenticated
 // channel or node announcement or announcements proofs. If the announcement
 // didn't affect the internal state due to either being out of date, invalid,
@@ -1445,30 +1510,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 			return nil
 		}
 
-		if err := routing.ValidateNodeAnn(msg); err != nil {
-			err := fmt.Errorf("unable to validate "+
-				"node announcement: %v", err)
-			log.Error(err)
-			nMsg.err <- err
-			return nil
-		}
-
-		features := lnwire.NewFeatureVector(
-			msg.Features, lnwire.GlobalFeatures,
-		)
-		node := &channeldb.LightningNode{
-			HaveNodeAnnouncement: true,
-			LastUpdate:           timestamp,
-			Addresses:            msg.Addresses,
-			PubKeyBytes:          msg.NodeID,
-			Alias:                msg.Alias.String(),
-			AuthSigBytes:         msg.Signature.ToSignatureBytes(),
-			Features:             features,
-			Color:                msg.RGBColor,
-			ExtraOpaqueData:      msg.ExtraOpaqueData,
-		}
-
-		if err := d.cfg.Router.AddNode(node); err != nil {
+		if err := d.addNode(msg); err != nil {
 			if routing.IsError(err, routing.ErrOutdated,
 				routing.ErrIgnored) {
 
@@ -1484,10 +1526,10 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 		// In order to ensure we don't leak unadvertised nodes, we'll
 		// make a quick check to ensure this node intends to publicly
 		// advertise itself to the network.
-		isPublic, err := d.cfg.Router.IsPublicNode(node.PubKeyBytes)
+		isPublic, err := d.cfg.Router.IsPublicNode(msg.NodeID)
 		if err != nil {
 			log.Errorf("Unable to determine if node %x is "+
-				"advertised: %v", node.PubKeyBytes, err)
+				"advertised: %v", msg.NodeID, err)
 			nMsg.err <- err
 			return nil
 		}
@@ -1517,7 +1559,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 		// We'll ignore any channel announcements that target any chain
 		// other than the set of chains we know of.
 		if !bytes.Equal(msg.ChainHash[:], d.cfg.ChainHash[:]) {
-			err := fmt.Errorf("Ignoring ChannelAnnouncement from "+
+			err := fmt.Errorf("ignoring ChannelAnnouncement from "+
 				"chain=%v, gossiper on chain=%v", msg.ChainHash,
 				d.cfg.ChainHash)
 			log.Errorf(err.Error())
@@ -1678,9 +1720,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 		var channelUpdates []*networkMsg
 
 		d.pChanUpdMtx.Lock()
-		for _, cu := range d.prematureChannelUpdates[shortChanID] {
-			channelUpdates = append(channelUpdates, cu)
-		}
+		channelUpdates = append(channelUpdates, d.prematureChannelUpdates[shortChanID]...)
 
 		// Now delete the premature ChannelUpdates, since we added them
 		// all to the queue of network messages.
@@ -1743,7 +1783,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 		// We'll ignore any channel announcements that target any chain
 		// other than the set of chains we know of.
 		if !bytes.Equal(msg.ChainHash[:], d.cfg.ChainHash[:]) {
-			err := fmt.Errorf("Ignoring ChannelUpdate from "+
+			err := fmt.Errorf("ignoring ChannelUpdate from "+
 				"chain=%v, gossiper on chain=%v", msg.ChainHash,
 				d.cfg.ChainHash)
 			log.Errorf(err.Error())
@@ -2003,8 +2043,8 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 			prefix = "remote"
 		}
 
-		log.Infof("Received new %v channel announcement: %v", prefix,
-			spew.Sdump(msg))
+		log.Infof("Received new %v channel announcement for %v", prefix,
+			msg.ShortChannelID)
 
 		// By the specification, channel announcement proofs should be
 		// sent after some number of confirmations after channel was
@@ -2407,13 +2447,6 @@ func (d *AuthenticatedGossiper) updateChannel(info *channeldb.ChannelEdgeInfo,
 	edge *channeldb.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement,
 	*lnwire.ChannelUpdate, error) {
 
-	// We'll make sure we support the new max_htlc field if not already
-	// present.
-	if !edge.MessageFlags.HasMaxHtlc() {
-		edge.MessageFlags |= lnwire.ChanUpdateOptionMaxHtlc
-		edge.MaxHTLC = lnwire.NewMSatFromSatoshis(info.Capacity)
-	}
-
 	// Make sure timestamp is always increased, such that our update gets
 	// propagated.
 	timestamp := time.Now().Unix()
@@ -2436,12 +2469,6 @@ func (d *AuthenticatedGossiper) updateChannel(info *channeldb.ChannelEdgeInfo,
 		ExtraOpaqueData: edge.ExtraOpaqueData,
 	}
 
-	var err error
-	chanUpdate.Signature, err = lnwire.NewSigFromRawSignature(edge.SigBytes)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	// With the update applied, we'll generate a new signature over a
 	// digest of the channel announcement itself.
 	sig, err := SignAnnouncement(d.cfg.AnnSigner, d.selfKey, chanUpdate)
@@ -2451,7 +2478,7 @@ func (d *AuthenticatedGossiper) updateChannel(info *channeldb.ChannelEdgeInfo,
 
 	// Next, we'll set the new signature in place, and update the reference
 	// in the backing slice.
-	edge.SigBytes = sig.Serialize()
+	edge.SetSigBytes(sig.Serialize())
 	chanUpdate.Signature, err = lnwire.NewSigFromSignature(sig)
 	if err != nil {
 		return nil, nil, err

@@ -187,10 +187,6 @@ type gossipSyncerCfg struct {
 	// in compressed format.
 	peerPub [33]byte
 
-	// syncChanUpdates is a bool that indicates if we should request a
-	// continual channel update stream or not.
-	syncChanUpdates bool
-
 	// channelSeries is the primary interface that we'll use to generate
 	// our queries and respond to the queries of the remote peer.
 	channelSeries ChannelGraphTimeSeries
@@ -235,6 +231,12 @@ type gossipSyncerCfg struct {
 	// replyHandler, meaning we will not reply to queries from our remote
 	// peer.
 	noReplyQueries bool
+
+	// ignoreHistoricalFilters will prevent syncers from replying with
+	// historical data when the remote peer sets a gossip_timestamp_range.
+	// This prevents ranges with old start times from causing us to dump the
+	// graph on connect.
+	ignoreHistoricalFilters bool
 }
 
 // GossipSyncer is a struct that handles synchronizing the channel graph state
@@ -950,6 +952,12 @@ func (g *GossipSyncer) ApplyGossipFilter(filter *lnwire.GossipTimestampRange) er
 	)
 
 	g.Unlock()
+
+	// If requested, don't reply with historical gossip data when the remote
+	// peer sets their gossip timestamp range.
+	if g.cfg.ignoreHistoricalFilters {
+		return nil
+	}
 
 	// Now that the remote peer has applied their filter, we'll query the
 	// database for all the messages that are beyond this filter.

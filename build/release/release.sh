@@ -7,6 +7,8 @@
 # Use of this source code is governed by the ISC
 # license.
 
+set -e
+
 # If no tag specified, use date + version otherwise use tag.
 if [[ $1x = x ]]; then
     DATE=`date +%Y%m%d`
@@ -35,7 +37,39 @@ cd $MAINDIR
 
 # If LNDBUILDSYS is set the default list is ignored. Useful to release
 # for a subset of systems/architectures.
-SYS=${LNDBUILDSYS:-"windows-386 windows-amd64 openbsd-386 openbsd-amd64 linux-386 linux-amd64 linux-armv6 linux-armv7 linux-arm64 darwin-386 darwin-amd64 dragonfly-amd64 freebsd-386 freebsd-amd64 freebsd-arm netbsd-386 netbsd-amd64 linux-mips64 linux-mips64le linux-ppc64"}
+SYS=${LNDBUILDSYS:-"
+        darwin-386
+        darwin-amd64
+        dragonfly-amd64
+        freebsd-386
+        freebsd-amd64
+        freebsd-arm
+        illumos-amd64
+        linux-386
+        linux-amd64
+        linux-armv6
+        linux-armv7
+        linux-arm64
+        linux-ppc64
+        linux-ppc64le
+        linux-mips
+        linux-mipsle
+        linux-mips64
+        linux-mips64le
+        linux-s390x
+        netbsd-386
+        netbsd-amd64
+        netbsd-arm
+        netbsd-arm64
+        openbsd-386
+        openbsd-amd64
+        openbsd-arm
+        openbsd-arm64
+        solaris-amd64
+        windows-386
+        windows-amd64
+        windows-arm
+"}
 
 # Use the first element of $GOPATH in the case where GOPATH is a list
 # (something that is totally allowed).
@@ -60,8 +94,8 @@ for i in $SYS; do
     cd $PACKAGE-$i-$TAG
 
     echo "Building:" $OS $ARCH $ARM
-    env GOOS=$OS GOARCH=$ARCH GOARM=$ARM go build -v -ldflags "$COMMITFLAGS" -tags="autopilotrpc signrpc walletrpc chainrpc invoicesrpc routerrpc watchtowerrpc" github.com/monasuite/lnd/cmd/lnd
-    env GOOS=$OS GOARCH=$ARCH GOARM=$ARM go build -v -ldflags "$COMMITFLAGS" -tags="autopilotrpc invoicesrpc walletrpc routerrpc watchtowerrpc" github.com/monasuite/lnd/cmd/lncli
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH GOARM=$ARM go build -v -trimpath -ldflags="-s -w -buildid= $COMMITFLAGS" -tags="autopilotrpc signrpc walletrpc chainrpc invoicesrpc routerrpc watchtowerrpc" github.com/monasuite/lnd/cmd/lnd
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH GOARM=$ARM go build -v -trimpath -ldflags="-s -w -buildid= $COMMITFLAGS" -tags="autopilotrpc invoicesrpc walletrpc routerrpc watchtowerrpc" github.com/monasuite/lnd/cmd/lncli
     cd ..
 
     if [[ $OS = "windows" ]]; then

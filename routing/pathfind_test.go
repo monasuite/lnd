@@ -54,6 +54,7 @@ var (
 	noRestrictions = &RestrictParams{
 		FeeLimit:          noFeeLimit,
 		ProbabilitySource: noProbabilitySource,
+		CltvLimit:         math.MaxUint32,
 	}
 
 	testPathFindingConfig = &PathFindingConfig{}
@@ -77,7 +78,7 @@ var (
 
 // noProbabilitySource is used in testing to return the same probability 1 for
 // all edges.
-func noProbabilitySource(route.Vertex, EdgeLocator, lnwire.MilliSatoshi) float64 {
+func noProbabilitySource(route.Vertex, route.Vertex, lnwire.MilliSatoshi) float64 {
 	return 1
 }
 
@@ -322,21 +323,6 @@ type testChannelPolicy struct {
 type testChannelEnd struct {
 	Alias string
 	*testChannelPolicy
-}
-
-func defaultTestChannelEnd(alias string, capacity btcutil.Amount) *testChannelEnd {
-	return &testChannelEnd{
-		Alias: alias,
-		testChannelPolicy: &testChannelPolicy{
-			Expiry:      144,
-			MinHTLC:     lnwire.MilliSatoshi(1000),
-			MaxHTLC:     lnwire.NewMSatFromSatoshis(capacity),
-			FeeBaseMsat: lnwire.MilliSatoshi(1000),
-			FeeRate:     lnwire.MilliSatoshi(1),
-			LastUpdate:  testTime,
-			Disabled:    false,
-		},
-	}
 }
 
 func symmetricTestChannel(alias1 string, alias2 string, capacity btcutil.Amount,
@@ -670,7 +656,8 @@ func TestFindLowestFeePath(t *testing.T) {
 	}
 	route, err := newRoute(
 		paymentAmt, sourceVertex, path, startingHeight,
-		finalHopCLTV)
+		finalHopCLTV, nil,
+	)
 	if err != nil {
 		t.Fatalf("unable to create path: %v", err)
 	}
@@ -803,6 +790,7 @@ func testBasicGraphPathFindingCase(t *testing.T, graphInstance *testGraphInstanc
 		&RestrictParams{
 			FeeLimit:          test.feeLimit,
 			ProbabilitySource: noProbabilitySource,
+			CltvLimit:         math.MaxUint32,
 		},
 		testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, paymentAmt,
@@ -819,7 +807,7 @@ func testBasicGraphPathFindingCase(t *testing.T, graphInstance *testGraphInstanc
 
 	route, err := newRoute(
 		paymentAmt, sourceVertex, path, startingHeight,
-		finalHopCLTV,
+		finalHopCLTV, nil,
 	)
 	if err != nil {
 		t.Fatalf("unable to create path: %v", err)
@@ -857,9 +845,15 @@ func testBasicGraphPathFindingCase(t *testing.T, graphInstance *testGraphInstanc
 	for i := 0; i < len(expectedHops)-1; i++ {
 		var expectedHop [8]byte
 		binary.BigEndian.PutUint64(expectedHop[:], route.Hops[i+1].ChannelID)
-		if !bytes.Equal(sphinxPath[i].HopData.NextAddress[:], expectedHop[:]) {
+
+		hopData, err := sphinxPath[i].HopPayload.HopData()
+		if err != nil {
+			t.Fatalf("unable to make hop data: %v", err)
+		}
+
+		if !bytes.Equal(hopData.NextAddress[:], expectedHop[:]) {
 			t.Fatalf("first hop has incorrect next hop: expected %x, got %x",
-				expectedHop[:], sphinxPath[i].HopData.NextAddress)
+				expectedHop[:], hopData.NextAddress[:])
 		}
 	}
 
@@ -867,9 +861,15 @@ func testBasicGraphPathFindingCase(t *testing.T, graphInstance *testGraphInstanc
 	// to indicate it's the exit hop.
 	var exitHop [8]byte
 	lastHopIndex := len(expectedHops) - 1
-	if !bytes.Equal(sphinxPath[lastHopIndex].HopData.NextAddress[:], exitHop[:]) {
+
+	hopData, err := sphinxPath[lastHopIndex].HopPayload.HopData()
+	if err != nil {
+		t.Fatalf("unable to create hop data: %v", err)
+	}
+
+	if !bytes.Equal(hopData.NextAddress[:], exitHop[:]) {
 		t.Fatalf("first hop has incorrect next hop: expected %x, got %x",
-			exitHop[:], sphinxPath[lastHopIndex].HopData.NextAddress)
+			exitHop[:], hopData.NextAddress)
 	}
 
 	var expectedTotalFee lnwire.MilliSatoshi
@@ -1001,7 +1001,11 @@ func TestNewRoute(t *testing.T) {
 		timeLockDelta uint16) *channeldb.ChannelEdgePolicy {
 
 		return &channeldb.ChannelEdgePolicy{
-			Node:                      &channeldb.LightningNode{},
+			Node: &channeldb.LightningNode{
+				Features: lnwire.NewFeatureVector(
+					nil, nil,
+				),
+			},
 			FeeProportionalMillionths: feeRate,
 			FeeBaseMSat:               baseFee,
 			TimeLockDelta:             timeLockDelta,
@@ -1176,9 +1180,11 @@ func TestNewRoute(t *testing.T) {
 		}
 
 		t.Run(testCase.name, func(t *testing.T) {
-			route, err := newRoute(testCase.paymentAmount,
-				sourceVertex, testCase.hops, startingHeight,
-				finalHopCLTV)
+			route, err := newRoute(
+				testCase.paymentAmount, sourceVertex,
+				testCase.hops, startingHeight, finalHopCLTV,
+				nil,
+			)
 
 			if testCase.expectError {
 				expectedCode := testCase.expectedErrorCode
@@ -1417,6 +1423,9 @@ func TestRouteFailMaxHTLC(t *testing.T) {
 	// Next, update the middle edge policy to only allow payments up to 100k
 	// msat.
 	_, midEdge, _, err := graph.graph.FetchChannelEdgesByID(firstToSecondID)
+	if err != nil {
+		t.Fatalf("unable to fetch channel edges by ID: %v", err)
+	}
 	midEdge.MessageFlags = 1
 	midEdge.MaxHTLC = payAmt - 1
 	if err := graph.graph.UpdateEdgePolicy(midEdge); err != nil {
@@ -1656,13 +1665,6 @@ func TestPathFindSpecExample(t *testing.T) {
 	}
 	defer cleanUp()
 
-	const (
-		aliceFinalCLTV = 10
-		bobFinalCLTV   = 20
-		carolFinalCLTV = 30
-		daveFinalCLTV  = 40
-	)
-
 	// We'll first exercise the scenario of a direct payment from Bob to
 	// Carol, so we set "B" as the source node so path finding starts from
 	// Bob.
@@ -1683,7 +1685,7 @@ func TestPathFindSpecExample(t *testing.T) {
 	carol := ctx.aliases["C"]
 	const amt lnwire.MilliSatoshi = 4999999
 	route, err := ctx.router.FindRoute(
-		bobNode.PubKeyBytes, carol, amt, noRestrictions,
+		bobNode.PubKeyBytes, carol, amt, noRestrictions, nil,
 	)
 	if err != nil {
 		t.Fatalf("unable to find route: %v", err)
@@ -1742,7 +1744,7 @@ func TestPathFindSpecExample(t *testing.T) {
 
 	// We'll now request a route from A -> B -> C.
 	route, err = ctx.router.FindRoute(
-		source.PubKeyBytes, carol, amt, noRestrictions,
+		source.PubKeyBytes, carol, amt, noRestrictions, nil,
 	)
 	if err != nil {
 		t.Fatalf("unable to find routes: %v", err)
@@ -1916,6 +1918,7 @@ func TestRestrictOutgoingChannel(t *testing.T) {
 			FeeLimit:          noFeeLimit,
 			OutgoingChannelID: &outgoingChannelID,
 			ProbabilitySource: noProbabilitySource,
+			CltvLimit:         math.MaxUint32,
 		},
 		testPathFindingConfig,
 		sourceVertex, target, paymentAmt,
@@ -1925,7 +1928,7 @@ func TestRestrictOutgoingChannel(t *testing.T) {
 	}
 	route, err := newRoute(
 		paymentAmt, sourceVertex, path, startingHeight,
-		finalHopCLTV,
+		finalHopCLTV, nil,
 	)
 	if err != nil {
 		t.Fatalf("unable to create path: %v", err)
@@ -1942,7 +1945,7 @@ func TestRestrictOutgoingChannel(t *testing.T) {
 // TestCltvLimit asserts that a cltv limit is obeyed by the path finding
 // algorithm.
 func TestCltvLimit(t *testing.T) {
-	t.Run("no limit", func(t *testing.T) { testCltvLimit(t, 0, 1) })
+	t.Run("no limit", func(t *testing.T) { testCltvLimit(t, 2016, 1) })
 	t.Run("no path", func(t *testing.T) { testCltvLimit(t, 50, 0) })
 	t.Run("force high cost", func(t *testing.T) { testCltvLimit(t, 80, 3) })
 }
@@ -1998,19 +2001,13 @@ func testCltvLimit(t *testing.T, limit uint32, expectedChannel uint64) {
 	paymentAmt := lnwire.NewMSatFromSatoshis(100)
 	target := testGraphInstance.aliasMap["target"]
 
-	// Find the best path given the cltv limit.
-	var cltvLimit *uint32
-	if limit != 0 {
-		cltvLimit = &limit
-	}
-
 	path, err := findPath(
 		&graphParams{
 			graph: testGraphInstance.graph,
 		},
 		&RestrictParams{
 			FeeLimit:          noFeeLimit,
-			CltvLimit:         cltvLimit,
+			CltvLimit:         limit,
 			ProbabilitySource: noProbabilitySource,
 		},
 		testPathFindingConfig,
@@ -2033,6 +2030,7 @@ func testCltvLimit(t *testing.T, limit uint32, expectedChannel uint64) {
 	)
 	route, err := newRoute(
 		paymentAmt, sourceVertex, path, startingHeight, finalHopCLTV,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("unable to create path: %v", err)
@@ -2156,6 +2154,8 @@ func testProbabilityRouting(t *testing.T, p10, p11, p20, minProbability float64,
 	}
 	defer testGraphInstance.cleanUp()
 
+	alias := testGraphInstance.aliasMap
+
 	sourceNode, err := testGraphInstance.graph.SourceNode()
 	if err != nil {
 		t.Fatalf("unable to fetch source node: %v", err)
@@ -2166,19 +2166,19 @@ func testProbabilityRouting(t *testing.T, p10, p11, p20, minProbability float64,
 	target := testGraphInstance.aliasMap["target"]
 
 	// Configure a probability source with the test parameters.
-	probabilitySource := func(node route.Vertex, edge EdgeLocator,
+	probabilitySource := func(fromNode, toNode route.Vertex,
 		amt lnwire.MilliSatoshi) float64 {
 
 		if amt == 0 {
 			t.Fatal("expected non-zero amount")
 		}
 
-		switch edge.ChannelID {
-		case 10:
+		switch {
+		case fromNode == alias["a1"] && toNode == alias["a2"]:
 			return p10
-		case 11:
+		case fromNode == alias["a2"] && toNode == alias["target"]:
 			return p11
-		case 20:
+		case fromNode == alias["b"] && toNode == alias["target"]:
 			return p20
 		default:
 			return 1
@@ -2192,6 +2192,7 @@ func testProbabilityRouting(t *testing.T, p10, p11, p20, minProbability float64,
 		&RestrictParams{
 			FeeLimit:          noFeeLimit,
 			ProbabilitySource: probabilitySource,
+			CltvLimit:         math.MaxUint32,
 		},
 		&PathFindingConfig{
 			PaymentAttemptPenalty: lnwire.NewMSatFromSatoshis(10),

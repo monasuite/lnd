@@ -155,6 +155,9 @@ const (
 	// would be possible for a node to create a ton of updates and slowly
 	// fill our disk, and also waste bandwidth due to relaying.
 	MaxAllowedExtraOpaqueBytes = 10000
+
+	// feeRateParts is the total number of parts used to express fee rates.
+	feeRateParts = 1e6
 )
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning
@@ -2256,7 +2259,7 @@ func (c *ChannelGraph) HasLightningNode(nodePub [33]byte) (time.Time, bool, erro
 		return nil
 	})
 	if err != nil {
-		return time.Time{}, exists, nil
+		return time.Time{}, exists, err
 	}
 
 	return updateTime, exists, nil
@@ -2735,7 +2738,8 @@ func (c *ChannelAuthProof) IsEmpty() bool {
 type ChannelEdgePolicy struct {
 	// SigBytes is the raw bytes of the signature of the channel edge
 	// policy. We'll only parse these if the caller needs to access the
-	// signature for validation purposes.
+	// signature for validation purposes. Do not set SigBytes directly, but
+	// use SetSigBytes instead to make sure that the cache is invalidated.
 	SigBytes []byte
 
 	// sig is a cached fully parsed signature.
@@ -2814,10 +2818,42 @@ func (c *ChannelEdgePolicy) Signature() (*btcec.Signature, error) {
 	return sig, nil
 }
 
+// SetSigBytes updates the signature and invalidates the cached parsed
+// signature.
+func (c *ChannelEdgePolicy) SetSigBytes(sig []byte) {
+	c.SigBytes = sig
+	c.sig = nil
+}
+
 // IsDisabled determines whether the edge has the disabled bit set.
 func (c *ChannelEdgePolicy) IsDisabled() bool {
 	return c.ChannelFlags&lnwire.ChanUpdateDisabled ==
 		lnwire.ChanUpdateDisabled
+}
+
+// ComputeFee computes the fee to forward an HTLC of `amt` milli-satoshis over
+// the passed active payment channel. This value is currently computed as
+// specified in BOLT07, but will likely change in the near future.
+func (c *ChannelEdgePolicy) ComputeFee(
+	amt lnwire.MilliSatoshi) lnwire.MilliSatoshi {
+
+	return c.FeeBaseMSat + (amt*c.FeeProportionalMillionths)/feeRateParts
+}
+
+// divideCeil divides dividend by factor and rounds the result up.
+func divideCeil(dividend, factor lnwire.MilliSatoshi) lnwire.MilliSatoshi {
+	return (dividend + factor - 1) / factor
+}
+
+// ComputeFeeFromIncoming computes the fee to forward an HTLC given the incoming
+// amount.
+func (c *ChannelEdgePolicy) ComputeFeeFromIncoming(
+	incomingAmt lnwire.MilliSatoshi) lnwire.MilliSatoshi {
+
+	return incomingAmt - divideCeil(
+		feeRateParts*(incomingAmt-c.FeeBaseMSat),
+		feeRateParts+c.FeeProportionalMillionths,
+	)
 }
 
 // FetchChannelEdgesByOutpoint attempts to lookup the two directed edges for

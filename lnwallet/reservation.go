@@ -56,7 +56,7 @@ func (c *ChannelContribution) toChanConfig() channeldb.ChannelConfig {
 // reservation workflow, resources consumed by a contribution are "locked"
 // themselves. This prevents a number of race conditions such as two funding
 // transactions double-spending the same input. A reservation can also be
-// cancelled, which removes the resources from limbo, allowing another
+// canceled, which removes the resources from limbo, allowing another
 // reservation to claim them.
 //
 // The reservation workflow consists of the following three steps:
@@ -130,7 +130,8 @@ type ChannelReservation struct {
 func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 	commitFeePerKw SatPerKWeight, wallet *LightningWallet,
 	id uint64, pushMSat lnwire.MilliSatoshi, chainHash *chainhash.Hash,
-	flags lnwire.FundingFlag) (*ChannelReservation, error) {
+	flags lnwire.FundingFlag,
+	tweaklessCommit bool) (*ChannelReservation, error) {
 
 	var (
 		ourBalance   lnwire.MilliSatoshi
@@ -140,7 +141,7 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 
 	commitFee := commitFeePerKw.FeeForWeight(input.CommitWeight)
 	localFundingMSat := lnwire.NewMSatFromSatoshis(localFundingAmt)
-	// TODO(halseth): make method take remote funding amount direcly
+	// TODO(halseth): make method take remote funding amount directly
 	// instead of inferring it from capacity and local amt.
 	capacityMSat := lnwire.NewMSatFromSatoshis(capacity)
 	feeMSat := lnwire.NewMSatFromSatoshis(commitFee)
@@ -213,7 +214,11 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 	// non-zero push amt (there's no pushing for dual funder), then this is
 	// a single-funder channel.
 	if ourBalance == 0 || theirBalance == 0 || pushMSat != 0 {
-		chanType = channeldb.SingleFunder
+		if tweaklessCommit {
+			chanType = channeldb.SingleFunderTweakless
+		} else {
+			chanType = channeldb.SingleFunder
+		}
 	} else {
 		// Otherwise, this is a dual funder channel, and no side is
 		// technically the "initiator"
@@ -288,8 +293,8 @@ func (r *ChannelReservation) CommitConstraints(c *channeldb.ChannelConstraints) 
 		return ErrCsvDelayTooLarge(c.CsvDelay, maxDelay)
 	}
 
-	// The dust limit should always be greater or equal to the channel
-	// reserve. The reservation request should be denied if otherwise.
+	// The channel reserve should always be greater or equal to the dust
+	// limit. The reservation request should be denied if otherwise.
 	if c.DustLimit > c.ChanReserve {
 		return ErrChanReserveTooSmall(c.ChanReserve, c.DustLimit)
 	}

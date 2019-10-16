@@ -1,9 +1,11 @@
 package routerrpc
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	math "math"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec"
@@ -14,8 +16,8 @@ import (
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing"
 	"github.com/monasuite/lnd/routing/route"
+	"github.com/monasuite/lnd/tlv"
 	"github.com/monasuite/lnd/zpay32"
-	context "golang.org/x/net/context"
 )
 
 // RouterBackend contains the backend implementation of the router rpc sub
@@ -40,6 +42,7 @@ type RouterBackend struct {
 	// routes.
 	FindRoute func(source, target route.Vertex,
 		amt lnwire.MilliSatoshi, restrictions *routing.RestrictParams,
+		destTlvRecords []tlv.Record,
 		finalExpiry ...uint16) (*route.Route, error)
 
 	MissionControl MissionControl
@@ -53,21 +56,25 @@ type RouterBackend struct {
 	// Tower is the ControlTower instance that is used to track pending
 	// payments.
 	Tower routing.ControlTower
+
+	// MaxTotalTimelock is the maximum total time lock a route is allowed to
+	// have.
+	MaxTotalTimelock uint32
 }
 
 // MissionControl defines the mission control dependencies of routerrpc.
 type MissionControl interface {
-	// GetEdgeProbability is expected to return the success probability of a payment
-	// from fromNode along edge.
-	GetEdgeProbability(fromNode route.Vertex,
-		edge routing.EdgeLocator, amt lnwire.MilliSatoshi) float64
+	// GetProbability is expected to return the success probability of a
+	// payment from fromNode to toNode.
+	GetProbability(fromNode, toNode route.Vertex,
+		amt lnwire.MilliSatoshi) float64
 
-	// ResetHistory resets the history of MissionControl returning it to a state as
-	// if no payment attempts have been made.
-	ResetHistory()
+	// ResetHistory resets the history of MissionControl returning it to a
+	// state as if no payment attempts have been made.
+	ResetHistory() error
 
-	// GetHistorySnapshot takes a snapshot from the current mission control state
-	// and actual probability estimates.
+	// GetHistorySnapshot takes a snapshot from the current mission control
+	// state and actual probability estimates.
 	GetHistorySnapshot() *routing.MissionControlSnapshot
 }
 
@@ -89,15 +96,7 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 			return route.Vertex{}, err
 		}
 
-		if len(pubKeyBytes) != 33 {
-			return route.Vertex{},
-				errors.New("invalid key length")
-		}
-
-		var v route.Vertex
-		copy(v[:], pubKeyBytes)
-
-		return v, nil
+		return route.NewVertexFromBytes(pubKeyBytes)
 	}
 
 	// Parse the hex-encoded source and target public keys into full public
@@ -134,36 +133,78 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 
 	ignoredNodes := make(map[route.Vertex]struct{})
 	for _, ignorePubKey := range in.IgnoredNodes {
-		if len(ignorePubKey) != 33 {
-			return nil, fmt.Errorf("invalid ignore node pubkey")
+		ignoreVertex, err := route.NewVertexFromBytes(ignorePubKey)
+		if err != nil {
+			return nil, err
 		}
-		var ignoreVertex route.Vertex
-		copy(ignoreVertex[:], ignorePubKey)
 		ignoredNodes[ignoreVertex] = struct{}{}
 	}
 
-	ignoredEdges := make(map[routing.EdgeLocator]struct{})
+	ignoredPairs := make(map[routing.DirectedNodePair]struct{})
+
+	// Convert deprecated ignoredEdges to pairs.
 	for _, ignoredEdge := range in.IgnoredEdges {
-		locator := routing.EdgeLocator{
-			ChannelID: ignoredEdge.ChannelId,
+		pair, err := r.rpcEdgeToPair(ignoredEdge)
+		if err != nil {
+			log.Warnf("Ignore channel %v skipped: %v",
+				ignoredEdge.ChannelId, err)
+
+			continue
 		}
-		if ignoredEdge.DirectionReverse {
-			locator.Direction = 1
-		}
-		ignoredEdges[locator] = struct{}{}
+		ignoredPairs[pair] = struct{}{}
 	}
 
+	// Add ignored pairs to set.
+	for _, ignorePair := range in.IgnoredPairs {
+		from, err := route.NewVertexFromBytes(ignorePair.From)
+		if err != nil {
+			return nil, err
+		}
+
+		to, err := route.NewVertexFromBytes(ignorePair.To)
+		if err != nil {
+			return nil, err
+		}
+
+		pair := routing.NewDirectedNodePair(from, to)
+		ignoredPairs[pair] = struct{}{}
+	}
+
+	// Since QueryRoutes allows having a different source other than
+	// ourselves, we'll only apply our max time lock if we are the source.
+	maxTotalTimelock := r.MaxTotalTimelock
+	if sourcePubKey != r.SelfNode {
+		maxTotalTimelock = math.MaxUint32
+	}
+	cltvLimit, err := ValidateCLTVLimit(in.CltvLimit, maxTotalTimelock)
+	if err != nil {
+		return nil, err
+	}
+
+	// We need to subtract the final delta before passing it into path
+	// finding. The optimal path is independent of the final cltv delta and
+	// the path finding algorithm is unaware of this value.
+	finalCLTVDelta := uint16(zpay32.DefaultFinalCLTVDelta)
+	if in.FinalCltvDelta != 0 {
+		finalCLTVDelta = uint16(in.FinalCltvDelta)
+	}
+	cltvLimit -= uint32(finalCLTVDelta)
+
+	var destTLV map[uint64][]byte
 	restrictions := &routing.RestrictParams{
 		FeeLimit: feeLimit,
-		ProbabilitySource: func(node route.Vertex,
-			edge routing.EdgeLocator,
+		ProbabilitySource: func(fromNode, toNode route.Vertex,
 			amt lnwire.MilliSatoshi) float64 {
 
-			if _, ok := ignoredNodes[node]; ok {
+			if _, ok := ignoredNodes[fromNode]; ok {
 				return 0
 			}
 
-			if _, ok := ignoredEdges[edge]; ok {
+			pair := routing.DirectedNodePair{
+				From: fromNode,
+				To:   toNode,
+			}
+			if _, ok := ignoredPairs[pair]; ok {
 				return 0
 			}
 
@@ -171,44 +212,93 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 				return 1
 			}
 
-			return r.MissionControl.GetEdgeProbability(
-				node, edge, amt,
+			return r.MissionControl.GetProbability(
+				fromNode, toNode, amt,
 			)
 		},
+		DestPayloadTLV: len(destTLV) != 0,
+		CltvLimit:      cltvLimit,
+	}
+
+	// If we have any TLV records destined for the final hop, then we'll
+	// attempt to decode them now into a form that the router can more
+	// easily manipulate.
+	destTlvRecords, err := tlv.MapToRecords(destTLV)
+	if err != nil {
+		return nil, err
 	}
 
 	// Query the channel router for a possible path to the destination that
 	// can carry `in.Amt` satoshis _including_ the total fee required on
 	// the route.
-	var (
-		route   *route.Route
-		findErr error
+	route, err := r.FindRoute(
+		sourcePubKey, targetPubKey, amtMSat, restrictions,
+		destTlvRecords, finalCLTVDelta,
 	)
-
-	if in.FinalCltvDelta == 0 {
-		route, findErr = r.FindRoute(
-			sourcePubKey, targetPubKey, amtMSat, restrictions,
-		)
-	} else {
-		route, findErr = r.FindRoute(
-			sourcePubKey, targetPubKey, amtMSat, restrictions,
-			uint16(in.FinalCltvDelta),
-		)
-	}
-	if findErr != nil {
-		return nil, findErr
+	if err != nil {
+		return nil, err
 	}
 
 	// For each valid route, we'll convert the result into the format
 	// required by the RPC system.
+	rpcRoute, err := r.MarshallRoute(route)
+	if err != nil {
+		return nil, err
+	}
 
-	rpcRoute := r.MarshallRoute(route)
+	// Calculate route success probability. Do not rely on a probability
+	// that could have been returned from path finding, because mission
+	// control may have been disabled in the provided ProbabilitySource.
+	successProb := r.getSuccessProbability(route)
 
 	routeResp := &lnrpc.QueryRoutesResponse{
-		Routes: []*lnrpc.Route{rpcRoute},
+		Routes:      []*lnrpc.Route{rpcRoute},
+		SuccessProb: successProb,
 	}
 
 	return routeResp, nil
+}
+
+// getSuccessProbability returns the success probability for the given route
+// based on the current state of mission control.
+func (r *RouterBackend) getSuccessProbability(rt *route.Route) float64 {
+	fromNode := rt.SourcePubKey
+	amtToFwd := rt.TotalAmount
+	successProb := 1.0
+	for _, hop := range rt.Hops {
+		toNode := hop.PubKeyBytes
+
+		probability := r.MissionControl.GetProbability(
+			fromNode, toNode, amtToFwd,
+		)
+
+		successProb *= probability
+
+		amtToFwd = hop.AmtToForward
+		fromNode = toNode
+	}
+
+	return successProb
+}
+
+// rpcEdgeToPair looks up the provided channel and returns the channel endpoints
+// as a directed pair.
+func (r *RouterBackend) rpcEdgeToPair(e *lnrpc.EdgeLocator) (
+	routing.DirectedNodePair, error) {
+
+	a, b, err := r.FetchChannelEndpoints(e.ChannelId)
+	if err != nil {
+		return routing.DirectedNodePair{}, err
+	}
+
+	var pair routing.DirectedNodePair
+	if e.DirectionReverse {
+		pair.From, pair.To = b, a
+	} else {
+		pair.From, pair.To = a, b
+	}
+
+	return pair, nil
 }
 
 // calculateFeeLimit returns the fee limit in millisatoshis. If a percentage
@@ -233,7 +323,7 @@ func calculateFeeLimit(feeLimit *lnrpc.FeeLimit,
 }
 
 // MarshallRoute marshalls an internal route to an rpc route struct.
-func (r *RouterBackend) MarshallRoute(route *route.Route) *lnrpc.Route {
+func (r *RouterBackend) MarshallRoute(route *route.Route) (*lnrpc.Route, error) {
 	resp := &lnrpc.Route{
 		TotalTimeLock: route.TotalTimeLock,
 		TotalFees:     int64(route.TotalFees().ToSatoshis()),
@@ -268,11 +358,12 @@ func (r *RouterBackend) MarshallRoute(route *route.Route) *lnrpc.Route {
 			PubKey: hex.EncodeToString(
 				hop.PubKeyBytes[:],
 			),
+			TlvPayload: !hop.LegacyPayload,
 		}
 		incomingAmt = hop.AmtToForward
 	}
 
-	return resp
+	return resp, nil
 }
 
 // UnmarshallHopByChannelLookup unmarshalls an rpc hop for which the pub key is
@@ -298,11 +389,15 @@ func (r *RouterBackend) UnmarshallHopByChannelLookup(hop *lnrpc.Hop,
 		return nil, fmt.Errorf("channel edge does not match expected node")
 	}
 
+	var tlvRecords []tlv.Record
+
 	return &route.Hop{
 		OutgoingTimeLock: hop.Expiry,
 		AmtToForward:     lnwire.MilliSatoshi(hop.AmtToForwardMsat),
 		PubKeyBytes:      pubKeyBytes,
 		ChannelID:        hop.ChanId,
+		TLVRecords:       tlvRecords,
+		LegacyPayload:    !hop.TlvPayload,
 	}, nil
 }
 
@@ -318,11 +413,15 @@ func UnmarshallKnownPubkeyHop(hop *lnrpc.Hop) (*route.Hop, error) {
 	var pubKeyBytes [33]byte
 	copy(pubKeyBytes[:], pubKey)
 
+	var tlvRecords []tlv.Record
+
 	return &route.Hop{
 		OutgoingTimeLock: hop.Expiry,
 		AmtToForward:     lnwire.MilliSatoshi(hop.AmtToForwardMsat),
 		PubKeyBytes:      pubKeyBytes,
 		ChannelID:        hop.ChanId,
+		TLVRecords:       tlvRecords,
+		LegacyPayload:    !hop.TlvPayload,
 	}, nil
 }
 
@@ -386,11 +485,14 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		payIntent.OutgoingChannelID = &rpcPayReq.OutgoingChanId
 	}
 
-	// Take cltv limit from request if set.
-	if rpcPayReq.CltvLimit != 0 {
-		cltvLimit := uint32(rpcPayReq.CltvLimit)
-		payIntent.CltvLimit = &cltvLimit
+	// Take the CLTV limit from the request if set, otherwise use the max.
+	cltvLimit, err := ValidateCLTVLimit(
+		uint32(rpcPayReq.CltvLimit), r.MaxTotalTimelock,
+	)
+	if err != nil {
+		return nil, err
 	}
+	payIntent.CltvLimit = cltvLimit
 
 	// Take fee limit from request.
 	payIntent.FeeLimit = lnwire.NewMSatFromSatoshis(
@@ -400,6 +502,15 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 	// Set payment attempt timeout.
 	if rpcPayReq.TimeoutSeconds == 0 {
 		return nil, errors.New("timeout_seconds must be specified")
+	}
+
+	var destTLV map[uint64][]byte
+	if len(destTLV) != 0 {
+		var err error
+		payIntent.FinalDestRecords, err = tlv.MapToRecords(destTLV)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	payIntent.PayAttemptTimeout = time.Second *
@@ -484,12 +595,11 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		// from the other fields.
 
 		// Payment destination.
-		if len(rpcPayReq.Dest) != 33 {
-			return nil, errors.New("invalid key length")
-
+		target, err := route.NewVertexFromBytes(rpcPayReq.Dest)
+		if err != nil {
+			return nil, err
 		}
-		pubBytes := rpcPayReq.Dest
-		copy(payIntent.Target[:], pubBytes)
+		payIntent.Target = target
 
 		// Final payment CLTV delta.
 		if rpcPayReq.FinalCltvDelta != 0 {
@@ -581,4 +691,19 @@ func ValidatePayReqExpiry(payReq *zpay32.Invoice) error {
 	}
 
 	return nil
+}
+
+// ValidateCLTVLimit returns a valid CLTV limit given a value and a maximum. If
+// the value exceeds the maximum, then an error is returned. If the value is 0,
+// then the maximum is used.
+func ValidateCLTVLimit(val, max uint32) (uint32, error) {
+	switch {
+	case val == 0:
+		return max, nil
+	case val > max:
+		return 0, fmt.Errorf("total time lock of %v exceeds max "+
+			"allowed %v", val, max)
+	default:
+		return val, nil
+	}
 }

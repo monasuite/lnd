@@ -730,6 +730,14 @@
             "required": false,
             "type": "boolean",
             "format": "boolean"
+          },
+          {
+            "name": "cltv_limit",
+            "description": "* \nAn optional maximum total time lock for the route. If the source is empty or\nourselves, this should not exceed lnd's `--max-cltv-expiry` setting. If\nzero, then the value of `--max-cltv-expiry` is used as the limit.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
           }
         ],
         "tags": [
@@ -1654,6 +1662,81 @@
           "type": "string",
           "format": "int64",
           "description": "*\nThe minimum satoshis the other node is required to reserve in its balance."
+        },
+        "static_remote_key": {
+          "type": "boolean",
+          "format": "boolean",
+          "description": "*\nIf true, then this channel uses the modern commitment format where the key\nin the output of the remote party does not change each state. This makes\nback up and recovery easier as when the channel is closed, the funds go\ndirectly to that key."
+        }
+      }
+    },
+    "lnrpcChannelAcceptRequest": {
+      "type": "object",
+      "properties": {
+        "node_pubkey": {
+          "type": "string",
+          "format": "byte",
+          "description": "/ The pubkey of the node that wishes to open an inbound channel."
+        },
+        "chain_hash": {
+          "type": "string",
+          "format": "byte",
+          "description": "/ The hash of the genesis block that the proposed channel resides in."
+        },
+        "pending_chan_id": {
+          "type": "string",
+          "format": "byte",
+          "description": "/ The pending channel id."
+        },
+        "funding_amt": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ The funding amount in satoshis that initiator wishes to use in the channel."
+        },
+        "push_amt": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ The push amount of the proposed channel in millisatoshis."
+        },
+        "dust_limit": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ The dust limit of the initiator's commitment tx."
+        },
+        "max_value_in_flight": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ The maximum amount of coins in millisatoshis that can be pending in this channel."
+        },
+        "channel_reserve": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ The minimum amount of satoshis the initiator requires us to have at all times."
+        },
+        "min_htlc": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ The smallest HTLC in millisatoshis that the initiator will accept."
+        },
+        "fee_per_kw": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ The initial fee rate that the initiator suggests for both commitment transactions."
+        },
+        "csv_delay": {
+          "type": "integer",
+          "format": "int64",
+          "description": "*\nThe number of blocks to use for the relative time lock in the pay-to-self output\nof both commitment transactions."
+        },
+        "max_accepted_htlcs": {
+          "type": "integer",
+          "format": "int64",
+          "description": "/ The total number of incoming HTLC's that the initiator will accept."
+        },
+        "channel_flags": {
+          "type": "integer",
+          "format": "int64",
+          "description": "/ A bit-field which the initiator uses to specify proposed channel behavior."
         }
       }
     },
@@ -2218,6 +2301,11 @@
         "color": {
           "type": "string",
           "title": "/ The color of the current node in hex code format"
+        },
+        "synced_to_graph": {
+          "type": "boolean",
+          "format": "boolean",
+          "description": "Whether we consider ourselves synced with the public channel graph."
         }
       }
     },
@@ -2300,6 +2388,11 @@
         "pub_key": {
           "type": "string",
           "description": "*\nAn optional public key of the hop. If the public key is given, the payment\ncan be executed without relying on a copy of the channel graph."
+        },
+        "tlv_payload": {
+          "type": "boolean",
+          "format": "boolean",
+          "description": "* \nIf set to true, then this hop will be encoded using the new variable length\nTLV format."
         }
       }
     },
@@ -2471,8 +2564,69 @@
         "state": {
           "$ref": "#/definitions/InvoiceInvoiceState",
           "description": "*\nThe state the invoice is in."
+        },
+        "htlcs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/lnrpcInvoiceHTLC"
+          },
+          "description": "/ List of HTLCs paying to this invoice [EXPERIMENTAL]."
         }
       }
+    },
+    "lnrpcInvoiceHTLC": {
+      "type": "object",
+      "properties": {
+        "chan_id": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ Short channel id over which the htlc was received."
+        },
+        "htlc_index": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ Index identifying the htlc on the channel."
+        },
+        "amt_msat": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ The amount of the htlc in msat."
+        },
+        "accept_height": {
+          "type": "integer",
+          "format": "int32",
+          "description": "/ Block height at which this htlc was accepted."
+        },
+        "accept_time": {
+          "type": "string",
+          "format": "int64",
+          "description": "/ Time at which this htlc was accepted."
+        },
+        "resolve_time": {
+          "type": "string",
+          "format": "int64",
+          "description": "/ Time at which this htlc was settled or canceled."
+        },
+        "expiry_height": {
+          "type": "integer",
+          "format": "int32",
+          "description": "/ Block height at which this htlc expires."
+        },
+        "state": {
+          "$ref": "#/definitions/lnrpcInvoiceHTLCState",
+          "description": "/ Current state the htlc is in."
+        }
+      },
+      "title": "/ Details of an HTLC that paid to an invoice"
+    },
+    "lnrpcInvoiceHTLCState": {
+      "type": "string",
+      "enum": [
+        "ACCEPTED",
+        "SETTLED",
+        "CANCELED"
+      ],
+      "default": "ACCEPTED"
     },
     "lnrpcLightningAddress": {
       "type": "object",
@@ -3071,6 +3225,11 @@
           "type": "integer",
           "format": "int64",
           "description": "/ The required timelock delta for HTLCs forwarded over the channel."
+        },
+        "max_htlc_msat": {
+          "type": "string",
+          "format": "uint64",
+          "description": "/ If set, the maximum HTLC size in milli-satoshis. If unset, the maximum HTLC will be unchanged."
         }
       }
     },
@@ -3084,7 +3243,13 @@
           "type": "array",
           "items": {
             "$ref": "#/definitions/lnrpcRoute"
-          }
+          },
+          "description": "*\nThe route that results from the path finding operation. This is still a\nrepeated field to retain backwards compatibility."
+        },
+        "success_prob": {
+          "type": "number",
+          "format": "double",
+          "title": "*\nThe success probability of the returned route based on the current mission\ncontrol state. [EXPERIMENTAL]"
         }
       }
     },
@@ -3280,7 +3445,15 @@
         "cltv_limit": {
           "type": "integer",
           "format": "int64",
-          "description": "* \nAn optional maximum total time lock for the route. If zero, there is no\nmaximum enforced."
+          "description": "* \nAn optional maximum total time lock for the route. This should not exceed\nlnd's `--max-cltv-expiry` setting. If zero, then the value of\n`--max-cltv-expiry` is enforced."
+        },
+        "dest_tlv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "format": "byte"
+          },
+          "description": "* \nAn optional field that can be used to pass an arbitrary set of TLV records\nto a peer which understands the new records. This can be used to pass\napplication specific data during the payment attempt."
         }
       }
     },

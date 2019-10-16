@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
-	"strings"
 	"sync"
 	"time"
 
@@ -59,11 +58,6 @@ type BtcWallet struct {
 	netParams *chaincfg.Params
 
 	chainKeyScope waddrmgr.KeyScope
-
-	// utxoCache is a cache used to speed up repeated calls to
-	// FetchInputInfo.
-	utxoCache map[wire.OutPoint]*wire.TxOut
-	cacheMtx  sync.RWMutex
 }
 
 // A compile time check to ensure that BtcWallet implements the
@@ -95,8 +89,10 @@ func New(cfg Config) (*BtcWallet, error) {
 		} else {
 			pubPass = cfg.PublicPass
 		}
-		loader := base.NewLoader(cfg.NetParams, netDir,
-			cfg.RecoveryWindow)
+		loader := base.NewLoader(
+			cfg.NetParams, netDir, cfg.NoFreelistSync,
+			cfg.RecoveryWindow,
+		)
 		walletExists, err := loader.WalletExists()
 		if err != nil {
 			return nil, err
@@ -130,7 +126,6 @@ func New(cfg Config) (*BtcWallet, error) {
 		chain:         cfg.ChainSource,
 		netParams:     cfg.NetParams,
 		chainKeyScope: chainKeyScope,
-		utxoCache:     make(map[wire.OutPoint]*wire.TxOut),
 	}, nil
 }
 
@@ -435,47 +430,25 @@ func (b *BtcWallet) ListUnspentWitness(minConfs, maxConfs int32) (
 // network (either in the mempool or chain) no error will be returned.
 func (b *BtcWallet) PublishTransaction(tx *wire.MsgTx) error {
 	if err := b.wallet.PublishTransaction(tx); err != nil {
-		switch b.chain.(type) {
-		case *chain.RPCClient:
-			if strings.Contains(err.Error(), "already spent") {
-				// Output was already spent.
-				return lnwallet.ErrDoubleSpend
-			}
-			if strings.Contains(err.Error(), "already been spent") {
-				// Output was already spent.
-				return lnwallet.ErrDoubleSpend
-			}
-			if strings.Contains(err.Error(), "orphan transaction") {
-				// Transaction is spending either output that
-				// is missing or already spent.
-				return lnwallet.ErrDoubleSpend
-			}
 
-		case *chain.BitcoindClient:
-			if strings.Contains(err.Error(), "txn-mempool-conflict") {
-				// Output was spent by other transaction
-				// already in the mempool.
-				return lnwallet.ErrDoubleSpend
-			}
-			if strings.Contains(err.Error(), "insufficient fee") {
-				// RBF enabled transaction did not have enough fee.
-				return lnwallet.ErrDoubleSpend
-			}
-			if strings.Contains(err.Error(), "Missing inputs") {
-				// Transaction is spending either output that
-				// is missing or already spent.
-				return lnwallet.ErrDoubleSpend
-			}
+		// If we failed to publish the transaction, check whether we
+		// got an error of known type.
+		switch err.(type) {
 
-		case *chain.NeutrinoClient:
-			if strings.Contains(err.Error(), "already spent") {
-				// Output was already spent.
-				return lnwallet.ErrDoubleSpend
-			}
+		// If the wallet reports a double spend, convert it to our
+		// internal ErrDoubleSpend and return.
+		case *base.ErrDoubleSpend:
+			return lnwallet.ErrDoubleSpend
+
+		// If the wallet reports a replacement error, return
+		// ErrDoubleSpend, as we currently are never attempting to
+		// replace transactions.
+		case *base.ErrReplacement:
+			return lnwallet.ErrDoubleSpend
 
 		default:
+			return err
 		}
-		return err
 	}
 	return nil
 }

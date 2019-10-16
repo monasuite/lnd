@@ -16,7 +16,6 @@ import (
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
-	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwallet"
 )
 
@@ -228,7 +227,6 @@ func (*mockChainIO) GetBlock(blockHash *chainhash.Hash) (*wire.MsgBlock, error) 
 // interaction with the bitcoin network.
 type mockWalletController struct {
 	rootKey               *btcec.PrivateKey
-	prevAddres            btcutil.Address
 	publishedTransactions chan *wire.MsgTx
 	index                 uint32
 	utxos                 []*lnwallet.Utxo
@@ -242,12 +240,15 @@ func (*mockWalletController) BackEnd() string {
 // FetchInputInfo will be called to get info about the inputs to the funding
 // transaction.
 func (*mockWalletController) FetchInputInfo(
-	prevOut *wire.OutPoint) (*wire.TxOut, error) {
-	txOut := &wire.TxOut{
-		Value:    int64(10 * btcutil.SatoshiPerBitcoin),
-		PkScript: []byte("dummy"),
+	prevOut *wire.OutPoint) (*lnwallet.Utxo, error) {
+	utxo := &lnwallet.Utxo{
+		AddressType:   lnwallet.WitnessPubKey,
+		Value:         10 * btcutil.SatoshiPerBitcoin,
+		PkScript:      []byte("dummy"),
+		Confirmations: 1,
+		OutPoint:      *prevOut,
 	}
-	return txOut, nil
+	return utxo, nil
 }
 func (*mockWalletController) ConfirmedBalance(confs int32) (btcutil.Amount, error) {
 	return 0, nil
@@ -351,34 +352,4 @@ func (m *mockSecretKeyRing) DerivePrivKey(keyDesc keychain.KeyDescriptor) (*btce
 func (m *mockSecretKeyRing) ScalarMult(keyDesc keychain.KeyDescriptor,
 	pubKey *btcec.PublicKey) ([]byte, error) {
 	return nil, nil
-}
-
-type mockPreimageCache struct {
-	sync.Mutex
-	preimageMap map[lntypes.Hash]lntypes.Preimage
-}
-
-func newMockPreimageCache() *mockPreimageCache {
-	return &mockPreimageCache{
-		preimageMap: make(map[lntypes.Hash]lntypes.Preimage),
-	}
-}
-
-func (m *mockPreimageCache) LookupPreimage(hash lntypes.Hash) (lntypes.Preimage, bool) {
-	m.Lock()
-	defer m.Unlock()
-
-	p, ok := m.preimageMap[hash]
-	return p, ok
-}
-
-func (m *mockPreimageCache) AddPreimages(preimages ...lntypes.Preimage) error {
-	m.Lock()
-	defer m.Unlock()
-
-	for _, preimage := range preimages {
-		m.preimageMap[preimage.Hash()] = preimage
-	}
-
-	return nil
 }

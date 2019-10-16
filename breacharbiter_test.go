@@ -29,7 +29,7 @@ import (
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
-	"github.com/monasuite/lnd/lntest"
+	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/shachain"
@@ -90,6 +90,11 @@ var (
 			0x2e, 0x9c, 0x51, 0x0f, 0x8e, 0xf5, 0x2b, 0xd0, 0x21,
 			0xa9, 0xa1, 0xf4, 0x80, 0x9d, 0x3b, 0x4d,
 		},
+		{0x02, 0xce, 0x0b, 0x14, 0xfb, 0x84, 0x2b, 0x1b,
+			0x2e, 0x9c, 0x51, 0x0f, 0x8e, 0xf5, 0x2b, 0xd0, 0x21,
+			0xa5, 0x49, 0xfd, 0xd6, 0x75, 0xc9, 0x80, 0x75, 0xf1,
+			0xa3, 0xa1, 0xf4, 0x80, 0x9d, 0x3b, 0x4d,
+		},
 	}
 
 	breachedOutputs = []breachedOutput{
@@ -106,6 +111,42 @@ var (
 					0x02, 0x02, 0x02, 0x02, 0x02, 0x02,
 					0x02, 0x02,
 				},
+				WitnessScript: []byte{
+					0x00, 0x14, 0xee, 0x91, 0x41, 0x7e,
+					0x85, 0x6c, 0xde, 0x10, 0xa2, 0x91,
+					0x1e, 0xdc, 0xbd, 0xbd, 0x69, 0xe2,
+					0xef, 0xb5, 0x71, 0x48,
+				},
+				Output: &wire.TxOut{
+					Value: 5000000000,
+					PkScript: []byte{
+						0x41, // OP_DATA_65
+						0x04, 0xd6, 0x4b, 0xdf, 0xd0,
+						0x9e, 0xb1, 0xc5, 0xfe, 0x29,
+						0x5a, 0xbd, 0xeb, 0x1d, 0xca,
+						0x42, 0x81, 0xbe, 0x98, 0x8e,
+						0x2d, 0xa0, 0xb6, 0xc1, 0xc6,
+						0xa5, 0x9d, 0xc2, 0x26, 0xc2,
+						0x86, 0x24, 0xe1, 0x81, 0x75,
+						0xe8, 0x51, 0xc9, 0x6b, 0x97,
+						0x3d, 0x81, 0xb0, 0x1c, 0xc3,
+						0x1f, 0x04, 0x78, 0x34, 0xbc,
+						0x06, 0xd6, 0xd6, 0xed, 0xf6,
+						0x20, 0xd1, 0x84, 0x24, 0x1a,
+						0x6a, 0xed, 0x8b, 0x63,
+						0xa6, // 65-byte signature
+						0xac, // OP_CHECKSIG
+					},
+				},
+				HashType: txscript.SigHashAll,
+			},
+			secondLevelWitnessScript: breachKeys[0],
+		},
+		{
+			amt:         btcutil.Amount(1e7),
+			outpoint:    breachOutPoints[0],
+			witnessType: input.CommitSpendNoDelayTweakless,
+			signDesc: input.SignDescriptor{
 				WitnessScript: []byte{
 					0x00, 0x14, 0xee, 0x91, 0x41, 0x7e,
 					0x85, 0x6c, 0xde, 0x10, 0xa2, 0x91,
@@ -1339,7 +1380,8 @@ func testBreachSpends(t *testing.T, test breachTest) {
 
 	// Notify the breach arbiter about the breach.
 	retribution, err := lnwallet.NewBreachRetribution(
-		alice.State(), height, 1)
+		alice.State(), height, 1,
+	)
 	if err != nil {
 		t.Fatalf("unable to create breach retribution: %v", err)
 	}
@@ -1537,7 +1579,7 @@ func assertBrarCleanup(t *testing.T, brar *breachArbiter,
 
 	t.Helper()
 
-	err := lntest.WaitNoError(func() error {
+	err := wait.NoError(func() error {
 		isBreached, err := brar.IsBreached(chanPoint)
 		if err != nil {
 			return err
@@ -1754,20 +1796,29 @@ func createInitChannels(revocationWindow int) (*lnwallet.LightningChannel, *lnwa
 	}
 	aliceCommitPoint := input.ComputeCommitmentPoint(aliceFirstRevoke[:])
 
-	aliceCommitTx, bobCommitTx, err := lnwallet.CreateCommitmentTxns(channelBal,
-		channelBal, &aliceCfg, &bobCfg, aliceCommitPoint, bobCommitPoint,
-		*fundingTxIn)
+	aliceCommitTx, bobCommitTx, err := lnwallet.CreateCommitmentTxns(
+		channelBal, channelBal, &aliceCfg, &bobCfg, aliceCommitPoint,
+		bobCommitPoint, *fundingTxIn, true,
+	)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	alicePath, err := ioutil.TempDir("", "alicedb")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	dbAlice, err := channeldb.Open(alicePath)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	bobPath, err := ioutil.TempDir("", "bobdb")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	dbBob, err := channeldb.Open(bobPath)
 	if err != nil {
 		return nil, nil, nil, err
@@ -1814,7 +1865,7 @@ func createInitChannels(revocationWindow int) (*lnwallet.LightningChannel, *lnwa
 		IdentityPub:             aliceKeyPub,
 		FundingOutpoint:         *prevOut,
 		ShortChannelID:          shortChanID,
-		ChanType:                channeldb.SingleFunder,
+		ChanType:                channeldb.SingleFunderTweakless,
 		IsInitiator:             true,
 		Capacity:                channelCapacity,
 		RemoteCurrentRevocation: bobCommitPoint,
@@ -1832,7 +1883,7 @@ func createInitChannels(revocationWindow int) (*lnwallet.LightningChannel, *lnwa
 		IdentityPub:             bobKeyPub,
 		FundingOutpoint:         *prevOut,
 		ShortChannelID:          shortChanID,
-		ChanType:                channeldb.SingleFunder,
+		ChanType:                channeldb.SingleFunderTweakless,
 		IsInitiator:             false,
 		Capacity:                channelCapacity,
 		RemoteCurrentRevocation: aliceCommitPoint,
@@ -1981,20 +2032,4 @@ func forceStateTransition(chanA, chanB *lnwallet.LightningChannel) error {
 	}
 
 	return nil
-}
-
-// calcStaticFee calculates appropriate fees for commitment transactions.  This
-// function provides a simple way to allow test balance assertions to take fee
-// calculations into account.
-//
-// TODO(bvu): Refactor when dynamic fee estimation is added.
-// TODO(conner) remove code duplication
-func calcStaticFee(numHTLCs int) btcutil.Amount {
-	const (
-		commitWeight = btcutil.Amount(724)
-		htlcWeight   = 172
-		feePerKw     = btcutil.Amount(24/4) * 1000
-	)
-	return feePerKw * (commitWeight +
-		btcutil.Amount(htlcWeight*numHTLCs)) / 1000
 }

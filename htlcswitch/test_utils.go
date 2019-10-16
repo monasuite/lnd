@@ -26,9 +26,11 @@ import (
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/contractcourt"
+	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnpeer"
+	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
@@ -40,15 +42,7 @@ var (
 	bobPrivKey   = []byte("bob priv key")
 	carolPrivKey = []byte("carol priv key")
 
-	testPrivKey = []byte{
-		0x81, 0xb6, 0x37, 0xd8, 0xfc, 0xd2, 0xc6, 0xda,
-		0x63, 0x59, 0xe6, 0x96, 0x31, 0x13, 0xa1, 0x17,
-		0xd, 0xe7, 0x95, 0xe4, 0xb7, 0x25, 0xb8, 0x4d,
-		0x1e, 0xb, 0x4c, 0xfd, 0x9e, 0xc5, 0x8c, 0xe9,
-	}
-
-	_, testPubKey = btcec.PrivKeyFromBytes(btcec.S256(), testPrivKey)
-	testSig       = &btcec.Signature{
+	testSig = &btcec.Signature{
 		R: new(big.Int),
 		S: new(big.Int),
 	}
@@ -263,20 +257,29 @@ func createTestChannel(alicePrivKey, bobPrivKey []byte,
 	}
 	aliceCommitPoint := input.ComputeCommitmentPoint(aliceFirstRevoke[:])
 
-	aliceCommitTx, bobCommitTx, err := lnwallet.CreateCommitmentTxns(aliceAmount,
-		bobAmount, &aliceCfg, &bobCfg, aliceCommitPoint, bobCommitPoint,
-		*fundingTxIn)
+	aliceCommitTx, bobCommitTx, err := lnwallet.CreateCommitmentTxns(
+		aliceAmount, bobAmount, &aliceCfg, &bobCfg, aliceCommitPoint,
+		bobCommitPoint, *fundingTxIn, true,
+	)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	alicePath, err := ioutil.TempDir("", "alicedb")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	dbAlice, err := channeldb.Open(alicePath)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	bobPath, err := ioutil.TempDir("", "bobdb")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	dbBob, err := channeldb.Open(bobPath)
 	if err != nil {
 		return nil, nil, nil, err
@@ -324,7 +327,7 @@ func createTestChannel(alicePrivKey, bobPrivKey []byte,
 		RemoteChanCfg:           bobCfg,
 		IdentityPub:             aliceKeyPub,
 		FundingOutpoint:         *prevOut,
-		ChanType:                channeldb.SingleFunder,
+		ChanType:                channeldb.SingleFunderTweakless,
 		IsInitiator:             true,
 		Capacity:                channelCapacity,
 		RemoteCurrentRevocation: bobCommitPoint,
@@ -343,7 +346,7 @@ func createTestChannel(alicePrivKey, bobPrivKey []byte,
 		RemoteChanCfg:           aliceCfg,
 		IdentityPub:             bobKeyPub,
 		FundingOutpoint:         *prevOut,
-		ChanType:                channeldb.SingleFunder,
+		ChanType:                channeldb.SingleFunderTweakless,
 		IsInitiator:             false,
 		Capacity:                channelCapacity,
 		RemoteCurrentRevocation: aliceCommitPoint,
@@ -557,6 +560,7 @@ func generatePaymentWithPreimage(invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 			Value:           invoiceAmt,
 			PaymentPreimage: preimage,
 		},
+		FinalCltvDelta: testInvoiceCltvExpiry,
 	}
 
 	htlc := &lnwire.UpdateAddHTLC{
@@ -595,7 +599,9 @@ func generatePayment(invoiceAmt, htlcAmt lnwire.MilliSatoshi, timelock uint32,
 }
 
 // generateRoute generates the path blob by given array of peers.
-func generateRoute(hops ...ForwardingInfo) ([lnwire.OnionPacketSize]byte, error) {
+func generateRoute(hops ...hop.ForwardingInfo) (
+	[lnwire.OnionPacketSize]byte, error) {
+
 	var blob [lnwire.OnionPacketSize]byte
 	if len(hops) == 0 {
 		return blob, errors.New("empty path")
@@ -634,16 +640,17 @@ type threeHopNetwork struct {
 // also the time lock value needed to route an HTLC with the target amount over
 // the specified path.
 func generateHops(payAmt lnwire.MilliSatoshi, startingHeight uint32,
-	path ...*channelLink) (lnwire.MilliSatoshi, uint32, []ForwardingInfo) {
+	path ...*channelLink) (lnwire.MilliSatoshi, uint32,
+	[]hop.ForwardingInfo) {
 
 	totalTimelock := startingHeight
 	runningAmt := payAmt
 
-	hops := make([]ForwardingInfo, len(path))
+	hops := make([]hop.ForwardingInfo, len(path))
 	for i := len(path) - 1; i >= 0; i-- {
 		// If this is the last hop, then the next hop is the special
 		// "exit node". Otherwise, we look to the "prior" hop.
-		nextHop := exitHop
+		nextHop := hop.Exit
 		if i != len(path)-1 {
 			nextHop = path[i+1].channel.ShortChanID()
 		}
@@ -678,8 +685,8 @@ func generateHops(payAmt lnwire.MilliSatoshi, startingHeight uint32,
 			amount = runningAmt - fee
 		}
 
-		hops[i] = ForwardingInfo{
-			Network:         BitcoinHop,
+		hops[i] = hop.ForwardingInfo{
+			Network:         hop.BitcoinNetwork,
 			NextHop:         nextHop,
 			AmountToForward: amount,
 			OutgoingCTLV:    timeLock,
@@ -730,7 +737,7 @@ func waitForPayFuncResult(payFunc func() error, d time.Duration) error {
 // * from Alice to Carol through the Bob
 // * from Alice to some another peer through the Bob
 func makePayment(sendingPeer, receivingPeer lnpeer.Peer,
-	firstHop lnwire.ShortChannelID, hops []ForwardingInfo,
+	firstHop lnwire.ShortChannelID, hops []hop.ForwardingInfo,
 	invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	timelock uint32) *paymentResponse {
 
@@ -764,7 +771,7 @@ func makePayment(sendingPeer, receivingPeer lnpeer.Peer,
 // preparePayment creates an invoice at the receivingPeer and returns a function
 // that, when called, launches the payment from the sendingPeer.
 func preparePayment(sendingPeer, receivingPeer lnpeer.Peer,
-	firstHop lnwire.ShortChannelID, hops []ForwardingInfo,
+	firstHop lnwire.ShortChannelID, hops []hop.ForwardingInfo,
 	invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	timelock uint32) (*channeldb.Invoice, func() error, error) {
 
@@ -832,7 +839,12 @@ func (n *threeHopNetwork) start() error {
 		return err
 	}
 
-	return nil
+	return waitLinksEligible(map[string]*channelLink{
+		"alice":      n.aliceChannelLink,
+		"bob first":  n.firstBobChannelLink,
+		"bob second": n.secondBobChannelLink,
+		"carol":      n.carolChannelLink,
+	})
 }
 
 // stop stops nodes and cleanup its databases.
@@ -1049,7 +1061,7 @@ func createTwoClusterChannels(aliceToBob, bobToCarol btcutil.Amount) (
 type hopNetwork struct {
 	feeEstimator *mockFeeEstimator
 	globalPolicy ForwardingPolicy
-	obfuscator   ErrorEncrypter
+	obfuscator   hop.ErrorEncrypter
 
 	defaultDelta uint32
 }
@@ -1096,7 +1108,7 @@ func (h *hopNetwork) createChannelLink(server, peer *mockServer,
 			ForwardPackets:     server.htlcSwitch.ForwardPackets,
 			DecodeHopIterators: decoder.DecodeHopIterators,
 			ExtractErrorEncrypter: func(*btcec.PublicKey) (
-				ErrorEncrypter, lnwire.FailCode) {
+				hop.ErrorEncrypter, lnwire.FailCode) {
 				return h.obfuscator, lnwire.CodeNone
 			},
 			FetchLastChannelUpdate: mockGetChanUpdateMessage,
@@ -1115,12 +1127,17 @@ func (h *hopNetwork) createChannelLink(server, peer *mockServer,
 			MaxFeeUpdateTimeout:     maxFeeUpdateTimeout,
 			OnChannelFailure:        func(lnwire.ChannelID, lnwire.ShortChannelID, LinkFailureError) {},
 			OutgoingCltvRejectDelta: 3,
+			MaxOutgoingCltvExpiry:   DefaultMaxOutgoingCltvExpiry,
+			MaxFeeAllocation:        DefaultMaxLinkFeeAllocation,
+			NotifyActiveChannel:     func(wire.OutPoint) {},
+			NotifyInactiveChannel:   func(wire.OutPoint) {},
 		},
 		channel,
 	)
 	if err := server.htlcSwitch.AddLink(link); err != nil {
 		return nil, fmt.Errorf("unable to add channel link: %v", err)
 	}
+
 	go func() {
 		for {
 			select {
@@ -1221,7 +1238,10 @@ func (n *twoHopNetwork) start() error {
 		return err
 	}
 
-	return nil
+	return waitLinksEligible(map[string]*channelLink{
+		"alice": n.aliceChannelLink,
+		"bob":   n.bobChannelLink,
+	})
 }
 
 // stop stops nodes and cleanup its databases.
@@ -1243,7 +1263,7 @@ func (n *twoHopNetwork) stop() {
 }
 
 func (n *twoHopNetwork) makeHoldPayment(sendingPeer, receivingPeer lnpeer.Peer,
-	firstHop lnwire.ShortChannelID, hops []ForwardingInfo,
+	firstHop lnwire.ShortChannelID, hops []hop.ForwardingInfo,
 	invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	timelock uint32, preimage lntypes.Preimage) chan error {
 
@@ -1311,12 +1331,26 @@ func (n *twoHopNetwork) makeHoldPayment(sendingPeer, receivingPeer lnpeer.Peer,
 	return paymentErr
 }
 
+// waitLinksEligible blocks until all links the provided name-to-link map are
+// eligible to forward HTLCs.
+func waitLinksEligible(links map[string]*channelLink) error {
+	return wait.NoError(func() error {
+		for name, link := range links {
+			if link.EligibleToForward() {
+				continue
+			}
+			return fmt.Errorf("%s channel link not eligible", name)
+		}
+		return nil
+	}, 3*time.Second)
+}
+
 // timeout implements a test level timeout.
 func timeout(t *testing.T) func() {
 	done := make(chan struct{})
 	go func() {
 		select {
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 			pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
 
 			panic("test timeout")

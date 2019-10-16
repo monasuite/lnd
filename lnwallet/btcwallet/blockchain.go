@@ -10,9 +10,9 @@ import (
 	"github.com/btcsuite/btcutil"
 
 	"github.com/monaarchives/btcwallet/chain"
-	"github.com/monaarchives/btcwallet/waddrmgr"
-	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/neutrino"
+	"github.com/monasuite/neutrino/headerfs"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 var (
@@ -48,7 +48,7 @@ func (b *BtcWallet) GetUtxo(op *wire.OutPoint, pkScript []byte,
 				OutPoint: *op,
 				PkScript: pkScript,
 			}),
-			neutrino.StartBlock(&waddrmgr.BlockStamp{
+			neutrino.StartBlock(&headerfs.BlockStamp{
 				Height: int32(heightHint),
 			}),
 			neutrino.QuitChan(cancel),

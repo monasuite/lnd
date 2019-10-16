@@ -1,6 +1,7 @@
 package lntest
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/net/context"
 	"google.golang.org/grpc/grpclog"
 
 	"github.com/btcsuite/btcd/chaincfg"
@@ -22,6 +22,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/lnwire"
 )
 
@@ -434,44 +435,61 @@ func (n *NetworkHarness) EnsureConnected(ctx context.Context, a, b *HarnessNode)
 			},
 		}
 
-		ctxt, _ = context.WithTimeout(ctx, 15*time.Second)
-		err = n.connect(ctxt, req, a)
-		switch {
+		var predErr error
+		err = wait.Predicate(func() bool {
+			ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
 
-		// Request was successful, wait for both to display the
-		// connection.
-		case err == nil:
-			return errConnectionRequested
+			err := n.connect(ctx, req, a)
+			switch {
 
-		// If the two are already connected, we return early with no
-		// error.
-		case strings.Contains(err.Error(), "already connected to peer"):
-			return nil
+			// Request was successful, wait for both to display the
+			// connection.
+			case err == nil:
+				predErr = errConnectionRequested
+				return true
 
-		default:
-			return err
+			// If the two are already connected, we return early
+			// with no error.
+			case strings.Contains(
+				err.Error(), "already connected to peer",
+			):
+				predErr = nil
+				return true
+
+			default:
+				predErr = err
+				return false
+			}
+
+		}, DefaultTimeout)
+		if err != nil {
+			return fmt.Errorf("connection not succeeded within 15 "+
+				"seconds: %v", predErr)
 		}
+
+		return predErr
 	}
 
 	aErr := tryConnect(a, b)
 	bErr := tryConnect(b, a)
 	switch {
+	// If both reported already being connected to each other, we can exit
+	// early.
 	case aErr == nil && bErr == nil:
-		// If both reported already being connected to each other, we
-		// can exit early.
 		return nil
 
+	// Return any critical errors returned by either alice.
 	case aErr != nil && aErr != errConnectionRequested:
-		// Return any critical errors returned by either alice.
 		return aErr
 
+	// Return any critical errors returned by either bob.
 	case bErr != nil && bErr != errConnectionRequested:
-		// Return any critical errors returned by either bob.
 		return bErr
 
+	// Otherwise one or both requested a connection, so we wait for the
+	// peers lists to reflect the connection.
 	default:
-		// Otherwise one or both requested a connection, so we wait for
-		// the peers lists to reflect the connection.
 	}
 
 	findSelfInPeerList := func(a, b *HarnessNode) bool {
@@ -493,7 +511,7 @@ func (n *NetworkHarness) EnsureConnected(ctx context.Context, a, b *HarnessNode)
 		return false
 	}
 
-	err := WaitPredicate(func() bool {
+	err := wait.Predicate(func() bool {
 		return findSelfInPeerList(a, b) && findSelfInPeerList(b, a)
 	}, time.Second*15)
 	if err != nil {
@@ -526,7 +544,7 @@ func (n *NetworkHarness) ConnectNodes(ctx context.Context, a, b *HarnessNode) er
 		return err
 	}
 
-	err = WaitPredicate(func() bool {
+	err = wait.Predicate(func() bool {
 		// If node B is seen in the ListPeers response from node A,
 		// then we can exit early as the connection has been fully
 		// established.
@@ -1068,12 +1086,12 @@ func (n *NetworkHarness) CloseChannel(ctx context.Context,
 
 		// Before proceeding, we'll ensure that the channel is active
 		// for both nodes.
-		err = WaitPredicate(activeChanPredicate(lnNode), timeout)
+		err = wait.Predicate(activeChanPredicate(lnNode), timeout)
 		if err != nil {
 			return nil, nil, fmt.Errorf("channel of closing " +
 				"node not active in time")
 		}
-		err = WaitPredicate(activeChanPredicate(receivingNode), timeout)
+		err = wait.Predicate(activeChanPredicate(receivingNode), timeout)
 		if err != nil {
 			return nil, nil, fmt.Errorf("channel of receiving " +
 				"node not active in time")
@@ -1194,83 +1212,11 @@ func (n *NetworkHarness) AssertChannelExists(ctx context.Context,
 		return false
 	}
 
-	if err := WaitPredicate(pred, time.Second*15); err != nil {
+	if err := wait.Predicate(pred, time.Second*15); err != nil {
 		return fmt.Errorf("channel not found: %v", predErr)
 	}
 
 	return nil
-}
-
-// WaitPredicate is a helper test function that will wait for a timeout period
-// of time until the passed predicate returns true. This function is helpful as
-// timing doesn't always line up well when running integration tests with
-// several running lnd nodes. This function gives callers a way to assert that
-// some property is upheld within a particular time frame.
-func WaitPredicate(pred func() bool, timeout time.Duration) error {
-	const pollInterval = 20 * time.Millisecond
-
-	exitTimer := time.After(timeout)
-	for {
-		<-time.After(pollInterval)
-
-		select {
-		case <-exitTimer:
-			return fmt.Errorf("predicate not satisfied after time out")
-		default:
-		}
-
-		if pred() {
-			return nil
-		}
-	}
-}
-
-// WaitNoError is a wrapper around WaitPredicate that waits for the passed
-// method f to execute without error, and returns the last error encountered if
-// this doesn't happen within the timeout.
-func WaitNoError(f func() error, timeout time.Duration) error {
-	var predErr error
-	pred := func() bool {
-		if err := f(); err != nil {
-			predErr = err
-			return false
-		}
-		return true
-	}
-
-	// If f() doesn't succeed within the timeout, return the last
-	// encountered error.
-	if err := WaitPredicate(pred, timeout); err != nil {
-		return predErr
-	}
-
-	return nil
-}
-
-// WaitInvariant is a helper test function that will wait for a timeout period
-// of time, verifying that a statement remains true for the entire duration.
-// This function is helpful as timing doesn't always line up well when running
-// integration tests with several running lnd nodes. This function gives callers
-// a way to assert that some property is maintained over a particular time
-// frame.
-func WaitInvariant(statement func() bool, timeout time.Duration) error {
-	const pollInterval = 20 * time.Millisecond
-
-	exitTimer := time.After(timeout)
-	for {
-		<-time.After(pollInterval)
-
-		// Fail if the invariant is broken while polling.
-		if !statement() {
-			return fmt.Errorf("invariant broken before time out")
-		}
-
-		select {
-		case <-exitTimer:
-			return nil
-		default:
-		}
-	}
 }
 
 // DumpLogs reads the current logs generated by the passed node, and returns
@@ -1373,7 +1319,7 @@ func (n *NetworkHarness) sendCoins(ctx context.Context, amt btcutil.Amount,
 
 	// Now, wait for ListUnspent to show the unconfirmed transaction
 	// containing the correct pkscript.
-	err = WaitNoError(func() error {
+	err = wait.NoError(func() error {
 		// Since neutrino doesn't support unconfirmed outputs, skip
 		// this check.
 		if target.cfg.BackendCfg.Name() == "neutrino" {

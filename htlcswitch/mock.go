@@ -24,6 +24,7 @@ import (
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/contractcourt"
+	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/invoices"
 	"github.com/monasuite/lnd/lnpeer"
@@ -127,8 +128,6 @@ type mockServer struct {
 	name     string
 	messages chan lnwire.Message
 
-	errChan chan error
-
 	id         [33]byte
 	htlcSwitch *Switch
 
@@ -172,12 +171,10 @@ func initSwitchWithDB(startingHeight uint32, db *channeldb.DB) (*Switch, error) 
 		FetchLastChannelUpdate: func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate, error) {
 			return nil, nil
 		},
-		Notifier:              &mockNotifier{},
-		FwdEventTicker:        ticker.NewForce(DefaultFwdEventInterval),
-		LogEventTicker:        ticker.NewForce(DefaultLogInterval),
-		AckEventTicker:        ticker.NewForce(DefaultAckInterval),
-		NotifyActiveChannel:   func(wire.OutPoint) {},
-		NotifyInactiveChannel: func(wire.OutPoint) {},
+		Notifier:       &mockNotifier{},
+		FwdEventTicker: ticker.NewForce(DefaultFwdEventInterval),
+		LogEventTicker: ticker.NewForce(DefaultLogInterval),
+		AckEventTicker: ticker.NewForce(DefaultAckInterval),
 	}
 
 	return New(cfg, startingHeight)
@@ -268,21 +265,28 @@ func (s *mockServer) QuitSignal() <-chan struct{} {
 // mockHopIterator represents the test version of hop iterator which instead
 // of encrypting the path in onion blob just stores the path as a list of hops.
 type mockHopIterator struct {
-	hops []ForwardingInfo
+	hops []hop.ForwardingInfo
 }
 
-func newMockHopIterator(hops ...ForwardingInfo) HopIterator {
+func newMockHopIterator(hops ...hop.ForwardingInfo) hop.Iterator {
 	return &mockHopIterator{hops: hops}
 }
 
-func (r *mockHopIterator) ForwardingInstructions() ForwardingInfo {
+func (r *mockHopIterator) ForwardingInstructions() (
+	hop.ForwardingInfo, error) {
+
 	h := r.hops[0]
 	r.hops = r.hops[1:]
-	return h
+	return h, nil
+}
+
+func (r *mockHopIterator) ExtraOnionBlob() []byte {
+	return nil
 }
 
 func (r *mockHopIterator) ExtractErrorEncrypter(
-	extracter ErrorEncrypterExtracter) (ErrorEncrypter, lnwire.FailCode) {
+	extracter hop.ErrorEncrypterExtracter) (hop.ErrorEncrypter,
+	lnwire.FailCode) {
 
 	return extracter(nil)
 }
@@ -296,7 +300,7 @@ func (r *mockHopIterator) EncodeNextHop(w io.Writer) error {
 	}
 
 	for _, hop := range r.hops {
-		if err := hop.encode(w); err != nil {
+		if err := encodeFwdInfo(w, &hop); err != nil {
 			return err
 		}
 	}
@@ -304,7 +308,7 @@ func (r *mockHopIterator) EncodeNextHop(w io.Writer) error {
 	return nil
 }
 
-func (f *ForwardingInfo) encode(w io.Writer) error {
+func encodeFwdInfo(w io.Writer, f *hop.ForwardingInfo) error {
 	if _, err := w.Write([]byte{byte(f.Network)}); err != nil {
 		return err
 	}
@@ -324,7 +328,7 @@ func (f *ForwardingInfo) encode(w io.Writer) error {
 	return nil
 }
 
-var _ HopIterator = (*mockHopIterator)(nil)
+var _ hop.Iterator = (*mockHopIterator)(nil)
 
 // mockObfuscator mock implementation of the failure obfuscator which only
 // encodes the failure and do not makes any onion obfuscation.
@@ -333,7 +337,7 @@ type mockObfuscator struct {
 }
 
 // NewMockObfuscator initializes a dummy mockObfuscator used for testing.
-func NewMockObfuscator() ErrorEncrypter {
+func NewMockObfuscator() hop.ErrorEncrypter {
 	return &mockObfuscator{}
 }
 
@@ -341,8 +345,8 @@ func (o *mockObfuscator) OnionPacket() *sphinx.OnionPacket {
 	return o.ogPacket
 }
 
-func (o *mockObfuscator) Type() EncrypterType {
-	return EncrypterTypeMock
+func (o *mockObfuscator) Type() hop.EncrypterType {
+	return hop.EncrypterTypeMock
 }
 
 func (o *mockObfuscator) Encode(w io.Writer) error {
@@ -353,7 +357,9 @@ func (o *mockObfuscator) Decode(r io.Reader) error {
 	return nil
 }
 
-func (o *mockObfuscator) Reextract(extracter ErrorEncrypterExtracter) error {
+func (o *mockObfuscator) Reextract(
+	extracter hop.ErrorEncrypterExtracter) error {
+
 	return nil
 }
 
@@ -404,19 +410,19 @@ var _ ErrorDecrypter = (*mockDeobfuscator)(nil)
 type mockIteratorDecoder struct {
 	mu sync.RWMutex
 
-	responses map[[32]byte][]DecodeHopIteratorResponse
+	responses map[[32]byte][]hop.DecodeHopIteratorResponse
 
 	decodeFail bool
 }
 
 func newMockIteratorDecoder() *mockIteratorDecoder {
 	return &mockIteratorDecoder{
-		responses: make(map[[32]byte][]DecodeHopIteratorResponse),
+		responses: make(map[[32]byte][]hop.DecodeHopIteratorResponse),
 	}
 }
 
 func (p *mockIteratorDecoder) DecodeHopIterator(r io.Reader, rHash []byte,
-	cltv uint32) (HopIterator, lnwire.FailCode) {
+	cltv uint32) (hop.Iterator, lnwire.FailCode) {
 
 	var b [4]byte
 	_, err := r.Read(b[:])
@@ -425,10 +431,10 @@ func (p *mockIteratorDecoder) DecodeHopIterator(r io.Reader, rHash []byte,
 	}
 	hopLength := binary.BigEndian.Uint32(b[:])
 
-	hops := make([]ForwardingInfo, hopLength)
+	hops := make([]hop.ForwardingInfo, hopLength)
 	for i := uint32(0); i < hopLength; i++ {
-		f := &ForwardingInfo{}
-		if err := f.decode(r); err != nil {
+		f := &hop.ForwardingInfo{}
+		if err := decodeFwdInfo(r, f); err != nil {
 			return nil, lnwire.CodeTemporaryChannelFailure
 		}
 
@@ -439,7 +445,8 @@ func (p *mockIteratorDecoder) DecodeHopIterator(r io.Reader, rHash []byte,
 }
 
 func (p *mockIteratorDecoder) DecodeHopIterators(id []byte,
-	reqs []DecodeHopIteratorRequest) ([]DecodeHopIteratorResponse, error) {
+	reqs []hop.DecodeHopIteratorRequest) (
+	[]hop.DecodeHopIteratorResponse, error) {
 
 	idHash := sha256.Sum256(id)
 
@@ -452,7 +459,7 @@ func (p *mockIteratorDecoder) DecodeHopIterators(id []byte,
 
 	batchSize := len(reqs)
 
-	resps := make([]DecodeHopIteratorResponse, 0, batchSize)
+	resps := make([]hop.DecodeHopIteratorResponse, 0, batchSize)
 	for _, req := range reqs {
 		iterator, failcode := p.DecodeHopIterator(
 			req.OnionReader, req.RHash, req.IncomingCltv,
@@ -462,7 +469,7 @@ func (p *mockIteratorDecoder) DecodeHopIterators(id []byte,
 			failcode = lnwire.CodeTemporaryChannelFailure
 		}
 
-		resp := DecodeHopIteratorResponse{
+		resp := hop.DecodeHopIteratorResponse{
 			HopIterator: iterator,
 			FailCode:    failcode,
 		}
@@ -476,12 +483,12 @@ func (p *mockIteratorDecoder) DecodeHopIterators(id []byte,
 	return resps, nil
 }
 
-func (f *ForwardingInfo) decode(r io.Reader) error {
+func decodeFwdInfo(r io.Reader, f *hop.ForwardingInfo) error {
 	var net [1]byte
 	if _, err := r.Read(net[:]); err != nil {
 		return err
 	}
-	f.Network = NetworkHop(net[0])
+	f.Network = hop.Network(net[0])
 
 	if err := binary.Read(r, binary.BigEndian, &f.NextHop); err != nil {
 		return err
@@ -590,6 +597,14 @@ func (s *mockServer) WipeChannel(*wire.OutPoint) error {
 	return nil
 }
 
+func (s *mockServer) LocalGlobalFeatures() *lnwire.FeatureVector {
+	return nil
+}
+
+func (s *mockServer) RemoteGlobalFeatures() *lnwire.FeatureVector {
+	return nil
+}
+
 func (s *mockServer) Stop() error {
 	if !atomic.CompareAndSwapInt32(&s.shutdown, 0, 1) {
 		return nil
@@ -613,8 +628,6 @@ type mockChannelLink struct {
 	chanID lnwire.ChannelID
 
 	peer lnpeer.Peer
-
-	startMailBox bool
 
 	mailBox MailBox
 
@@ -764,13 +777,9 @@ func newMockRegistry(minDelta uint32) *mockInvoiceRegistry {
 		panic(err)
 	}
 
-	decodeExpiry := func(invoice string) (uint32, error) {
-		return testInvoiceCltvExpiry, nil
-	}
-
 	finalCltvRejectDelta := int32(5)
 
-	registry := invoices.NewRegistry(cdb, decodeExpiry, finalCltvRejectDelta)
+	registry := invoices.NewRegistry(cdb, finalCltvRejectDelta)
 	registry.Start()
 
 	return &mockInvoiceRegistry{
@@ -779,7 +788,9 @@ func newMockRegistry(minDelta uint32) *mockInvoiceRegistry {
 	}
 }
 
-func (i *mockInvoiceRegistry) LookupInvoice(rHash lntypes.Hash) (channeldb.Invoice, uint32, error) {
+func (i *mockInvoiceRegistry) LookupInvoice(rHash lntypes.Hash) (
+	channeldb.Invoice, error) {
+
 	return i.registry.LookupInvoice(rHash)
 }
 
@@ -789,10 +800,11 @@ func (i *mockInvoiceRegistry) SettleHodlInvoice(preimage lntypes.Preimage) error
 
 func (i *mockInvoiceRegistry) NotifyExitHopHtlc(rhash lntypes.Hash,
 	amt lnwire.MilliSatoshi, expiry uint32, currentHeight int32,
-	hodlChan chan<- interface{}) (*invoices.HodlEvent, error) {
+	circuitKey channeldb.CircuitKey, hodlChan chan<- interface{},
+	eob []byte) (*invoices.HodlEvent, error) {
 
 	event, err := i.registry.NotifyExitHopHtlc(
-		rhash, amt, expiry, currentHeight, hodlChan,
+		rhash, amt, expiry, currentHeight, circuitKey, hodlChan, eob,
 	)
 	if err != nil {
 		return nil, err

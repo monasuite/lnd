@@ -10,7 +10,7 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/ticker"
-	"github.com/monasuite/lnd/lntest"
+	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/lnwire"
 )
 
@@ -185,6 +185,13 @@ func TestSyncManagerInitialHistoricalSync(t *testing.T) {
 	t.Parallel()
 
 	syncMgr := newTestSyncManager(0)
+
+	// The graph should not be considered as synced since the sync manager
+	// has yet to start.
+	if syncMgr.IsGraphSynced() {
+		t.Fatal("expected graph to not be considered as synced")
+	}
+
 	syncMgr.Start()
 	defer syncMgr.Stop()
 
@@ -198,6 +205,12 @@ func TestSyncManagerInitialHistoricalSync(t *testing.T) {
 		NumBlocks:        math.MaxUint32,
 	})
 
+	// The graph should not be considered as synced since the initial
+	// historical sync has not finished.
+	if syncMgr.IsGraphSynced() {
+		t.Fatal("expected graph to not be considered as synced")
+	}
+
 	// If an additional peer connects, then another historical sync should
 	// not be attempted.
 	finalHistoricalPeer := randPeer(t, syncMgr.quit)
@@ -208,7 +221,14 @@ func TestSyncManagerInitialHistoricalSync(t *testing.T) {
 	// If we disconnect the peer performing the initial historical sync, a
 	// new one should be chosen.
 	syncMgr.PruneSyncState(peer.PubKey())
+
+	// Complete the initial historical sync by transitionining the syncer to
+	// its final chansSynced state. The graph should be considered as synced
+	// after the fact.
 	assertTransitionToChansSynced(t, finalHistoricalSyncer, finalHistoricalPeer)
+	if !syncMgr.IsGraphSynced() {
+		t.Fatal("expected graph to be considered as synced")
+	}
 
 	// Once the initial historical sync has succeeded, another one should
 	// not be attempted by disconnecting the peer who performed it.
@@ -287,6 +307,58 @@ func TestSyncManagerForceHistoricalSync(t *testing.T) {
 		FirstBlockHeight: 0,
 		NumBlocks:        math.MaxUint32,
 	})
+}
+
+// TestSyncManagerGraphSyncedAfterHistoricalSyncReplacement ensures that the
+// sync manager properly marks the graph as synced given that our initial
+// historical sync has stalled, but a replacement has fully completed.
+func TestSyncManagerGraphSyncedAfterHistoricalSyncReplacement(t *testing.T) {
+	t.Parallel()
+
+	syncMgr := newTestSyncManager(0)
+	syncMgr.Start()
+	defer syncMgr.Stop()
+
+	// We should expect to see a QueryChannelRange message with a
+	// FirstBlockHeight of the genesis block, signaling that an initial
+	// historical sync is being attempted.
+	peer := randPeer(t, syncMgr.quit)
+	syncMgr.InitSyncState(peer)
+	assertMsgSent(t, peer, &lnwire.QueryChannelRange{
+		FirstBlockHeight: 0,
+		NumBlocks:        math.MaxUint32,
+	})
+
+	// The graph should not be considered as synced since the initial
+	// historical sync has not finished.
+	if syncMgr.IsGraphSynced() {
+		t.Fatal("expected graph to not be considered as synced")
+	}
+
+	// If an additional peer connects, then another historical sync should
+	// not be attempted.
+	finalHistoricalPeer := randPeer(t, syncMgr.quit)
+	syncMgr.InitSyncState(finalHistoricalPeer)
+	finalHistoricalSyncer := assertSyncerExistence(t, syncMgr, finalHistoricalPeer)
+	assertNoMsgSent(t, finalHistoricalPeer)
+
+	// To simulate that our initial historical sync has stalled, we'll force
+	// a historical sync with the new peer to ensure it is replaced.
+	syncMgr.cfg.HistoricalSyncTicker.(*ticker.Force).Force <- time.Time{}
+
+	// The graph should still not be considered as synced since the
+	// replacement historical sync has not finished.
+	if syncMgr.IsGraphSynced() {
+		t.Fatal("expected graph to not be considered as synced")
+	}
+
+	// Complete the replacement historical sync by transitioning the syncer
+	// to its final chansSynced state. The graph should be considered as
+	// synced after the fact.
+	assertTransitionToChansSynced(t, finalHistoricalSyncer, finalHistoricalPeer)
+	if !syncMgr.IsGraphSynced() {
+		t.Fatal("expected graph to be considered as synced")
+	}
 }
 
 // TestSyncManagerWaitUntilInitialHistoricalSync ensures that no GossipSyncers
@@ -432,7 +504,7 @@ func assertSyncerStatus(t *testing.T, s *GossipSyncer, syncState syncerState,
 
 	// We'll check the status of our syncer within a WaitPredicate as some
 	// sync transitions might cause this to be racy.
-	err := lntest.WaitNoError(func() error {
+	err := wait.NoError(func() error {
 		state := s.syncState()
 		if s.syncState() != syncState {
 			return fmt.Errorf("expected syncState %v for peer "+
@@ -473,7 +545,7 @@ func assertTransitionToChansSynced(t *testing.T, s *GossipSyncer, peer *mockPeer
 		t.Fatal("expected to receive FilterKnownChanIDs request")
 	}
 
-	err := lntest.WaitNoError(func() error {
+	err := wait.NoError(func() error {
 		state := syncerState(atomic.LoadUint32(&s.state))
 		if state != chansSynced {
 			return fmt.Errorf("expected syncerState %v, got %v",

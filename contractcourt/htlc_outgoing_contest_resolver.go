@@ -65,7 +65,7 @@ func (h *htlcOutgoingContestResolver) Resolve() (ContractResolver, error) {
 	// sweep the pre-image from the output.
 	case commitSpend, ok := <-spendNtfn.Spend:
 		if !ok {
-			return nil, fmt.Errorf("quitting")
+			return nil, errResolverShuttingDown
 		}
 
 		// TODO(roasbeef): Checkpoint?
@@ -122,7 +122,7 @@ func (h *htlcOutgoingContestResolver) Resolve() (ContractResolver, error) {
 		// HTLC expiration.
 		case newBlock, ok := <-blockEpochs.Epochs:
 			if !ok {
-				return nil, fmt.Errorf("quitting")
+				return nil, errResolverShuttingDown
 			}
 
 			// If this new height expires the HTLC, then we can
@@ -142,7 +142,7 @@ func (h *htlcOutgoingContestResolver) Resolve() (ContractResolver, error) {
 		// revealed on-chain.
 		case commitSpend, ok := <-spendNtfn.Spend:
 			if !ok {
-				return nil, fmt.Errorf("quitting")
+				return nil, errResolverShuttingDown
 			}
 
 			// The only way this output can be spent by the remote
@@ -152,7 +152,7 @@ func (h *htlcOutgoingContestResolver) Resolve() (ContractResolver, error) {
 			return h.claimCleanUp(commitSpend)
 
 		case <-h.Quit:
-			return nil, fmt.Errorf("resolver cancelled")
+			return nil, fmt.Errorf("resolver canceled")
 		}
 	}
 }

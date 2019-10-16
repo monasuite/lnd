@@ -2,12 +2,14 @@ package lnd
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -15,8 +17,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/monasuite/lnd/chanacceptor"
 	"github.com/monasuite/lnd/lnrpc/routerrpc"
 	"github.com/monasuite/lnd/routing/route"
+	"github.com/monasuite/lnd/tlv"
 	"github.com/monasuite/lnd/watchtower"
 
 	"github.com/btcsuite/btcd/blockchain"
@@ -27,7 +31,7 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/coreos/bbolt"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	proxy "github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/monaarchives/btcwallet/waddrmgr"
 	"github.com/monaarchives/btcwallet/wallet/txauthor"
@@ -53,7 +57,6 @@ import (
 	"github.com/monasuite/lnd/sweep"
 	"github.com/monasuite/lnd/zpay32"
 	"github.com/tv42/zbase32"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"gopkg.in/macaroon-bakery.v2/bakery"
 )
@@ -75,7 +78,11 @@ var (
 	// It is set to the value under the Bitcoin chain as default.
 	MaxPaymentMSat = maxBtcPaymentMSat
 
-	defaultAccount uint32 = waddrmgr.DefaultAccountNum
+	// defaultAcceptorTimeout is the time after which an RPCAcceptor will time
+	// out and return false if it hasn't yet received a response.
+	//
+	// TODO: Make this configurable
+	defaultAcceptorTimeout = 15 * time.Second
 
 	// readPermissions is a slice of all entities that allow read
 	// permissions for authorization purposes, all lowercase.
@@ -383,6 +390,13 @@ func mainRPCServerPermissions() map[string][]bakery.Op {
 			Entity: "offchain",
 			Action: "read",
 		}},
+		"/lnrpc.Lightning/ChannelAcceptor": {{
+			Entity: "onchain",
+			Action: "write",
+		}, {
+			Entity: "offchain",
+			Action: "write",
+		}},
 	}
 }
 
@@ -393,8 +407,6 @@ type rpcServer struct {
 	shutdown int32 // To be used atomically.
 
 	server *server
-
-	wg sync.WaitGroup
 
 	// subServers are a set of sub-RPC servers that use the same gRPC and
 	// listening sockets as the main RPC server, but which maintain their
@@ -407,6 +419,11 @@ type rpcServer struct {
 	// sub-servers will use to register themselves and accept client
 	// requests from.
 	grpcServer *grpc.Server
+
+	// listeners is a list of listeners to use when starting the grpc
+	// server. We make it configurable such that the grpc server can listen
+	// on custom interfaces.
+	listeners []net.Listener
 
 	// listenerCleanUp are a set of closures functions that will allow this
 	// main RPC server to clean up all the listening socket created for the
@@ -428,6 +445,10 @@ type rpcServer struct {
 	// rpc sub server.
 	routerBackend *routerrpc.RouterBackend
 
+	// chanPredicate is used in the bidirectional ChannelAcceptor streaming
+	// method.
+	chanPredicate *chanacceptor.ChainedAcceptor
+
 	quit chan struct{}
 }
 
@@ -441,10 +462,11 @@ var _ lnrpc.LightningServer = (*rpcServer)(nil)
 // base level options passed to the grPC server. This typically includes things
 // like requiring TLS, etc.
 func newRPCServer(s *server, macService *macaroons.Service,
-	subServerCgs *subRPCServerConfigs, serverOpts []grpc.ServerOption,
-	restDialOpts []grpc.DialOption, restProxyDest string,
-	atpl *autopilot.Manager, invoiceRegistry *invoices.InvoiceRegistry,
-	tower *watchtower.Standalone, tlsCfg *tls.Config) (*rpcServer, error) {
+	subServerCgs *subRPCServerConfigs, restDialOpts []grpc.DialOption,
+	restProxyDest string, atpl *autopilot.Manager,
+	invoiceRegistry *invoices.InvoiceRegistry, tower *watchtower.Standalone,
+	tlsCfg *tls.Config, getListeners rpcListeners,
+	chanPredicate *chanacceptor.ChainedAcceptor) (*rpcServer, error) {
 
 	// Set up router rpc backend.
 	channelGraph := s.chanDB.ChannelGraph()
@@ -480,10 +502,11 @@ func newRPCServer(s *server, macService *macaroons.Service,
 
 			return info.NodeKey1Bytes, info.NodeKey2Bytes, nil
 		},
-		FindRoute:       s.chanRouter.FindRoute,
-		MissionControl:  s.missionControl,
-		ActiveNetParams: activeNetParams.Params,
-		Tower:           s.controlTower,
+		FindRoute:        s.chanRouter.FindRoute,
+		MissionControl:   s.missionControl,
+		ActiveNetParams:  activeNetParams.Params,
+		Tower:            s.controlTower,
+		MaxTotalTimelock: cfg.MaxOutgoingCltvExpiry,
 	}
 
 	var (
@@ -560,6 +583,21 @@ func newRPCServer(s *server, macService *macaroons.Service,
 	unaryInterceptors := append(macUnaryInterceptors, promUnaryInterceptors...)
 	strmInterceptors := append(macStrmInterceptors, promStrmInterceptors...)
 
+	// We'll also add our logging interceptors as well, so we can
+	// automatically log all errors that happen during RPC calls.
+	unaryInterceptors = append(
+		unaryInterceptors, errorLogUnaryServerInterceptor(rpcsLog),
+	)
+	strmInterceptors = append(
+		strmInterceptors, errorLogStreamServerInterceptor(rpcsLog),
+	)
+
+	// Get the listeners and server options to use for this rpc server.
+	listeners, cleanup, serverOpts, err := getListeners()
+	if err != nil {
+		return nil, err
+	}
+
 	// If any interceptors have been set up, add them to the server options.
 	if len(unaryInterceptors) != 0 && len(strmInterceptors) != 0 {
 		chainedUnary := grpc_middleware.WithUnaryServerChain(
@@ -575,14 +613,17 @@ func newRPCServer(s *server, macService *macaroons.Service,
 	// gRPC server, and register the main lnrpc server along side.
 	grpcServer := grpc.NewServer(serverOpts...)
 	rootRPCServer := &rpcServer{
-		restDialOpts:  restDialOpts,
-		restProxyDest: restProxyDest,
-		subServers:    subServers,
-		tlsCfg:        tlsCfg,
-		grpcServer:    grpcServer,
-		server:        s,
-		routerBackend: routerBackend,
-		quit:          make(chan struct{}, 1),
+		restDialOpts:    restDialOpts,
+		listeners:       listeners,
+		listenerCleanUp: []func(){cleanup},
+		restProxyDest:   restProxyDest,
+		subServers:      subServers,
+		tlsCfg:          tlsCfg,
+		grpcServer:      grpcServer,
+		server:          s,
+		routerBackend:   routerBackend,
+		chanPredicate:   chanPredicate,
+		quit:            make(chan struct{}, 1),
 	}
 	lnrpc.RegisterLightningServer(grpcServer, rootRPCServer)
 
@@ -622,23 +663,11 @@ func (r *rpcServer) Start() error {
 
 	// With all the sub-servers started, we'll spin up the listeners for
 	// the main RPC server itself.
-	for _, listener := range cfg.RPCListeners {
-		lis, err := lncfg.ListenOnAddress(listener)
-		if err != nil {
-			ltndLog.Errorf(
-				"RPC server unable to listen on %s", listener,
-			)
-			return err
-		}
-
-		r.listenerCleanUp = append(r.listenerCleanUp, func() {
-			lis.Close()
-		})
-
-		go func() {
+	for _, lis := range r.listeners {
+		go func(lis net.Listener) {
 			rpcsLog.Infof("RPC server listening on %s", lis.Addr())
 			r.grpcServer.Serve(lis)
-		}()
+		}(lis)
 	}
 
 	// If Prometheus monitoring is enabled, start the Prometheus exporter.
@@ -2029,6 +2058,8 @@ func (r *rpcServer) GetInfo(ctx context.Context,
 		uris[i] = fmt.Sprintf("%s@%s", encodedIDPub, addr.String())
 	}
 
+	isGraphSynced := r.server.authGossiper.SyncManager().IsGraphSynced()
+
 	// TODO(roasbeef): add synced height n stuff
 	return &lnrpc.GetInfoResponse{
 		IdentityPubkey:      encodedIDPub,
@@ -2046,6 +2077,7 @@ func (r *rpcServer) GetInfo(ctx context.Context,
 		Color:               routing.EncodeHexColor(nodeAnn.RGBColor),
 		BestHeaderTimestamp: int64(bestHeaderTimestamp),
 		Version:             build.Version(),
+		SyncedToGraph:       isGraphSynced,
 	}, nil
 }
 
@@ -2343,10 +2375,13 @@ func (r *rpcServer) PendingChannels(ctx context.Context,
 		pub := waitingClose.IdentityPub.SerializeCompressed()
 		chanPoint := waitingClose.FundingOutpoint
 		channel := &lnrpc.PendingChannelsResponse_PendingChannel{
-			RemoteNodePub: hex.EncodeToString(pub),
-			ChannelPoint:  chanPoint.String(),
-			Capacity:      int64(waitingClose.Capacity),
-			LocalBalance:  int64(waitingClose.LocalCommitment.LocalBalance.ToSatoshis()),
+			RemoteNodePub:        hex.EncodeToString(pub),
+			ChannelPoint:         chanPoint.String(),
+			Capacity:             int64(waitingClose.Capacity),
+			LocalBalance:         int64(waitingClose.LocalCommitment.LocalBalance.ToSatoshis()),
+			RemoteBalance:        int64(waitingClose.LocalCommitment.RemoteBalance.ToSatoshis()),
+			LocalChanReserveSat:  int64(waitingClose.LocalChanCfg.ChanReserve),
+			RemoteChanReserveSat: int64(waitingClose.RemoteChanCfg.ChanReserve),
 		}
 
 		// A close tx has been broadcasted, all our balance will be in
@@ -2651,6 +2686,7 @@ func createRPCOpenChannel(r *rpcServer, graph *channeldb.ChannelGraph,
 		ChanStatusFlags:       dbChannel.ChanStatus().String(),
 		LocalChanReserveSat:   int64(dbChannel.LocalChanCfg.ChanReserve),
 		RemoteChanReserveSat:  int64(dbChannel.RemoteChanCfg.ChanReserve),
+		StaticRemoteKey:       dbChannel.ChanType.IsTweakless(),
 	}
 
 	for i, htlc := range localCommit.Htlcs {
@@ -2906,13 +2942,15 @@ func (r *rpcServer) unmarshallSendToRouteRequest(
 type rpcPaymentIntent struct {
 	msat              lnwire.MilliSatoshi
 	feeLimit          lnwire.MilliSatoshi
-	cltvLimit         *uint32
+	cltvLimit         uint32
 	dest              route.Vertex
 	rHash             [32]byte
 	cltvDelta         uint16
 	routeHints        [][]zpay32.HopHint
 	outgoingChannelID *uint64
 	payReq            []byte
+
+	destTLV []tlv.Record
 
 	route *route.Route
 }
@@ -2951,9 +2989,23 @@ func extractPaymentIntent(rpcPayReq *rpcPaymentRequest) (rpcPaymentIntent, error
 		payIntent.outgoingChannelID = &rpcPayReq.OutgoingChanId
 	}
 
-	// Take cltv limit from request if set.
-	if rpcPayReq.CltvLimit != 0 {
-		payIntent.cltvLimit = &rpcPayReq.CltvLimit
+	// Take the CLTV limit from the request if set, otherwise use the max.
+	cltvLimit, err := routerrpc.ValidateCLTVLimit(
+		rpcPayReq.CltvLimit, cfg.MaxOutgoingCltvExpiry,
+	)
+	if err != nil {
+		return payIntent, err
+	}
+	payIntent.cltvLimit = cltvLimit
+
+	if len(rpcPayReq.DestTlv) != 0 {
+		var err error
+		payIntent.destTLV, err = tlv.MapToRecords(
+			rpcPayReq.DestTlv,
+		)
+		if err != nil {
+			return payIntent, err
+		}
 	}
 
 	// If the payment request field isn't blank, then the details of the
@@ -3055,14 +3107,6 @@ func extractPaymentIntent(rpcPayReq *rpcPaymentRequest) (rpcPaymentIntent, error
 
 		copy(payIntent.rHash[:], paymentHash)
 
-	// If we're in debug HTLC mode, then all outgoing HTLCs will pay to the
-	// same debug rHash. Otherwise, we pay to the rHash specified within
-	// the RPC request.
-	case cfg.DebugHTLC &&
-		bytes.Equal(payIntent.rHash[:], lntypes.ZeroHash[:]):
-
-		copy(payIntent.rHash[:], invoices.DebugHash[:])
-
 	default:
 		copy(payIntent.rHash[:], rpcPayReq.PaymentHash)
 	}
@@ -3119,6 +3163,7 @@ func (r *rpcServer) dispatchPaymentIntent(
 			OutgoingChannelID: payIntent.outgoingChannelID,
 			PaymentRequest:    payIntent.payReq,
 			PayAttemptTimeout: routing.DefaultPayAttemptTimeout,
+			FinalDestRecords:  payIntent.destTLV,
 		}
 
 		preImage, route, routerErr = r.server.chanRouter.SendPayment(
@@ -3289,10 +3334,16 @@ func (r *rpcServer) sendPayment(stream *paymentStream) error {
 					return
 				}
 
-				marshalledRouted := r.routerBackend.
-					MarshallRoute(resp.Route)
+				backend := r.routerBackend
+				marshalledRouted, err := backend.MarshallRoute(
+					resp.Route,
+				)
+				if err != nil {
+					errChan <- err
+					return
+				}
 
-				err := stream.send(&lnrpc.SendResponse{
+				err = stream.send(&lnrpc.SendResponse{
 					PaymentHash:     payIntent.rHash[:],
 					PaymentPreimage: resp.Preimage[:],
 					PaymentRoute:    marshalledRouted,
@@ -3371,10 +3422,15 @@ func (r *rpcServer) sendPaymentSync(ctx context.Context,
 		}, nil
 	}
 
+	rpcRoute, err := r.routerBackend.MarshallRoute(resp.Route)
+	if err != nil {
+		return nil, err
+	}
+
 	return &lnrpc.SendResponse{
 		PaymentHash:     payIntent.rHash[:],
 		PaymentPreimage: resp.Preimage[:],
-		PaymentRoute:    r.routerBackend.MarshallRoute(resp.Route),
+		PaymentRoute:    rpcRoute,
 	}, nil
 }
 
@@ -3464,7 +3520,7 @@ func (r *rpcServer) LookupInvoice(ctx context.Context,
 
 	rpcsLog.Tracef("[lookupinvoice] searching for invoice %x", payHash[:])
 
-	invoice, _, err := r.server.invoices.LookupInvoice(payHash)
+	invoice, err := r.server.invoices.LookupInvoice(payHash)
 	if err != nil {
 		return nil, err
 	}
@@ -3593,6 +3649,7 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 				Amount:           int64(tx.Value),
 				NumConfirmations: tx.NumConfirmations,
 				BlockHash:        tx.BlockHash.String(),
+				BlockHeight:      tx.BlockHeight,
 				TimeStamp:        tx.Timestamp,
 				TotalFees:        tx.TotalFees,
 				DestAddresses:    destAddresses,
@@ -3741,15 +3798,19 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 func marshalDbEdge(edgeInfo *channeldb.ChannelEdgeInfo,
 	c1, c2 *channeldb.ChannelEdgePolicy) *lnrpc.ChannelEdge {
 
-	var (
-		lastUpdate int64
-	)
+	// Order the edges by increasing pubkey.
+	if bytes.Compare(edgeInfo.NodeKey2Bytes[:],
+		edgeInfo.NodeKey1Bytes[:]) < 0 {
 
-	if c2 != nil {
-		lastUpdate = c2.LastUpdate.Unix()
+		c2, c1 = c1, c2
 	}
+
+	var lastUpdate int64
 	if c1 != nil {
 		lastUpdate = c1.LastUpdate.Unix()
+	}
+	if c2 != nil && c2.LastUpdate.Unix() > lastUpdate {
+		lastUpdate = c2.LastUpdate.Unix()
 	}
 
 	edge := &lnrpc.ChannelEdge{
@@ -4079,7 +4140,7 @@ func (r *rpcServer) SubscribeChannelGraph(req *lnrpc.GraphTopologySubscription,
 		case topChange, ok := <-client.TopologyChanges:
 			// If the second value from the channel read is nil,
 			// then this means that the channel router is exiting
-			// or the notification client was cancelled. So we'll
+			// or the notification client was canceled. So we'll
 			// exit early.
 			if !ok {
 				return errors.New("server shutting down")
@@ -4428,7 +4489,7 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 		for {
 			timeSlice, err := fwdEventLog.Query(query)
 			if err != nil {
-				return 0, nil
+				return 0, err
 			}
 
 			// If the timeslice is empty, then we'll return as
@@ -4569,6 +4630,7 @@ func (r *rpcServer) UpdateChannelPolicy(ctx context.Context,
 	chanPolicy := routing.ChannelPolicy{
 		FeeSchema:     feeSchema,
 		TimeLockDelta: req.TimeLockDelta,
+		MaxHTLC:       lnwire.MilliSatoshi(req.MaxHtlcMsat),
 	}
 
 	rpcsLog.Debugf("[updatechanpolicy] updating channel policy base_fee=%v, "+
@@ -4576,32 +4638,11 @@ func (r *rpcServer) UpdateChannelPolicy(ctx context.Context,
 		req.BaseFeeMsat, req.FeeRate, feeRateFixed, req.TimeLockDelta,
 		spew.Sdump(targetChans))
 
-	// With the scope resolved, we'll now send this to the
-	// AuthenticatedGossiper so it can propagate the new policy for our
-	// target channel(s).
-	err := r.server.authGossiper.PropagateChanPolicyUpdate(
-		chanPolicy, targetChans...,
-	)
+	// With the scope resolved, we'll now send this to the local channel
+	// manager so it can propagate the new policy for our target channel(s).
+	err := r.server.localChanMgr.UpdatePolicy(chanPolicy, targetChans...)
 	if err != nil {
 		return nil, err
-	}
-
-	// Finally, we'll apply the set of active links amongst the target
-	// channels.
-	//
-	// We create a partially policy as the logic won't overwrite a valid
-	// sub-policy with a "nil" one.
-	p := htlcswitch.ForwardingPolicy{
-		BaseFee:       baseFeeMsat,
-		FeeRate:       lnwire.MilliSatoshi(feeRateFixed),
-		TimeLockDelta: req.TimeLockDelta,
-	}
-	err = r.server.htlcSwitch.UpdateForwardingPolicies(p, targetChans...)
-	if err != nil {
-		// If we're unable update the fees due to the links not being
-		// online, then we don't need to fail the call. We'll simply
-		// log the failure.
-		rpcsLog.Warnf("Unable to update link fees: %v", err)
 	}
 
 	return &lnrpc.PolicyUpdateResponse{}, nil
@@ -4637,13 +4678,8 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 		numEvents uint32
 	)
 
-	// If the start time wasn't specified, we'll default to 24 hours ago.
-	if req.StartTime == 0 {
-		now := time.Now()
-		startTime = now.Add(-time.Hour * 24)
-	} else {
-		startTime = time.Unix(int64(req.StartTime), 0)
-	}
+	// startTime defaults to the Unix epoch (0 unixtime, or midnight 01-01-1970).
+	startTime = time.Unix(int64(req.StartTime), 0)
 
 	// If the end time wasn't specified, assume a default end time of now.
 	if req.EndTime == 0 {
@@ -5035,6 +5071,171 @@ func (r *rpcServer) SubscribeChannelBackups(req *lnrpc.ChannelBackupSubscription
 
 		case <-r.quit:
 			return nil
+		}
+	}
+}
+
+// chanAcceptInfo is used in the ChannelAcceptor bidirectional stream and
+// encapsulates the request information sent from the RPCAcceptor to the
+// RPCServer.
+type chanAcceptInfo struct {
+	chanReq      *chanacceptor.ChannelAcceptRequest
+	responseChan chan bool
+}
+
+// ChannelAcceptor dispatches a bi-directional streaming RPC in which
+// OpenChannel requests are sent to the client and the client responds with
+// a boolean that tells LND whether or not to accept the channel. This allows
+// node operators to specify their own criteria for accepting inbound channels
+// through a single persistent connection.
+func (r *rpcServer) ChannelAcceptor(stream lnrpc.Lightning_ChannelAcceptorServer) error {
+	chainedAcceptor := r.chanPredicate
+
+	// Create two channels to handle requests and responses respectively.
+	newRequests := make(chan *chanAcceptInfo)
+	responses := make(chan lnrpc.ChannelAcceptResponse)
+
+	// Define a quit channel that will be used to signal to the RPCAcceptor's
+	// closure whether the stream still exists.
+	quit := make(chan struct{})
+	defer close(quit)
+
+	// demultiplexReq is a closure that will be passed to the RPCAcceptor and
+	// acts as an intermediary between the RPCAcceptor and the RPCServer.
+	demultiplexReq := func(req *chanacceptor.ChannelAcceptRequest) bool {
+		respChan := make(chan bool, 1)
+
+		newRequest := &chanAcceptInfo{
+			chanReq:      req,
+			responseChan: respChan,
+		}
+
+		// timeout is the time after which ChannelAcceptRequests expire.
+		timeout := time.After(defaultAcceptorTimeout)
+
+		// Send the request to the newRequests channel.
+		select {
+		case newRequests <- newRequest:
+		case <-timeout:
+			rpcsLog.Errorf("RPCAcceptor returned false - reached timeout of %d",
+				defaultAcceptorTimeout)
+			return false
+		case <-quit:
+			return false
+		case <-r.quit:
+			return false
+		}
+
+		// Receive the response and return it. If no response has been received
+		// in defaultAcceptorTimeout, then return false.
+		select {
+		case resp := <-respChan:
+			return resp
+		case <-timeout:
+			rpcsLog.Errorf("RPCAcceptor returned false - reached timeout of %d",
+				defaultAcceptorTimeout)
+			return false
+		case <-quit:
+			return false
+		case <-r.quit:
+			return false
+		}
+	}
+
+	// Create a new RPCAcceptor via the NewRPCAcceptor method.
+	rpcAcceptor := chanacceptor.NewRPCAcceptor(demultiplexReq)
+
+	// Add the RPCAcceptor to the ChainedAcceptor and defer its removal.
+	id := chainedAcceptor.AddAcceptor(rpcAcceptor)
+	defer chainedAcceptor.RemoveAcceptor(id)
+
+	// errChan is used by the receive loop to signal any errors that occur
+	// during reading from the stream. This is primarily used to shutdown the
+	// send loop in the case of an RPC client disconnecting.
+	errChan := make(chan error, 1)
+
+	// We need to have the stream.Recv() in a goroutine since the call is
+	// blocking and would prevent us from sending more ChannelAcceptRequests to
+	// the RPC client.
+	go func() {
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				errChan <- err
+				return
+			}
+
+			var pendingID [32]byte
+			copy(pendingID[:], resp.PendingChanId)
+
+			openChanResp := lnrpc.ChannelAcceptResponse{
+				Accept:        resp.Accept,
+				PendingChanId: pendingID[:],
+			}
+
+			// Now that we have the response from the RPC client, send it to
+			// the responses chan.
+			select {
+			case responses <- openChanResp:
+			case <-quit:
+				return
+			case <-r.quit:
+				return
+			}
+		}
+	}()
+
+	acceptRequests := make(map[[32]byte]chan bool)
+
+	for {
+		select {
+		case newRequest := <-newRequests:
+
+			req := newRequest.chanReq
+			pendingChanID := req.OpenChanMsg.PendingChannelID
+
+			acceptRequests[pendingChanID] = newRequest.responseChan
+
+			// A ChannelAcceptRequest has been received, send it to the client.
+			chanAcceptReq := &lnrpc.ChannelAcceptRequest{
+				NodePubkey:       req.Node.SerializeCompressed(),
+				ChainHash:        req.OpenChanMsg.ChainHash[:],
+				PendingChanId:    req.OpenChanMsg.PendingChannelID[:],
+				FundingAmt:       uint64(req.OpenChanMsg.FundingAmount),
+				PushAmt:          uint64(req.OpenChanMsg.PushAmount),
+				DustLimit:        uint64(req.OpenChanMsg.DustLimit),
+				MaxValueInFlight: uint64(req.OpenChanMsg.MaxValueInFlight),
+				ChannelReserve:   uint64(req.OpenChanMsg.ChannelReserve),
+				MinHtlc:          uint64(req.OpenChanMsg.HtlcMinimum),
+				FeePerKw:         uint64(req.OpenChanMsg.FeePerKiloWeight),
+				CsvDelay:         uint32(req.OpenChanMsg.CsvDelay),
+				MaxAcceptedHtlcs: uint32(req.OpenChanMsg.MaxAcceptedHTLCs),
+				ChannelFlags:     uint32(req.OpenChanMsg.ChannelFlags),
+			}
+
+			if err := stream.Send(chanAcceptReq); err != nil {
+				return err
+			}
+		case resp := <-responses:
+			// Look up the appropriate channel to send on given the pending ID.
+			// If a channel is found, send the response over it.
+			var pendingID [32]byte
+			copy(pendingID[:], resp.PendingChanId)
+			respChan, ok := acceptRequests[pendingID]
+			if !ok {
+				continue
+			}
+
+			// Send the response boolean over the buffered response channel.
+			respChan <- resp.Accept
+
+			// Delete the channel from the acceptRequests map.
+			delete(acceptRequests, pendingID)
+		case err := <-errChan:
+			rpcsLog.Errorf("Received an error: %v, shutting down", err)
+			return err
+		case <-r.quit:
+			return fmt.Errorf("RPC server is shutting down")
 		}
 	}
 }

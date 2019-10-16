@@ -1,6 +1,7 @@
 package lnd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"github.com/btcsuite/btclog"
 	"github.com/jrick/logrotate/rotator"
 	sphinx "github.com/lightningnetwork/lightning-onion"
-	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/build"
 	"github.com/monasuite/lnd/chainntnfs"
@@ -31,11 +31,13 @@ import (
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/monitoring"
 	"github.com/monasuite/lnd/netann"
+	"github.com/monasuite/lnd/peernotifier"
 	"github.com/monasuite/lnd/routing"
 	"github.com/monasuite/lnd/signal"
 	"github.com/monasuite/lnd/sweep"
 	"github.com/monasuite/lnd/watchtower"
 	"github.com/monasuite/lnd/watchtower/wtclient"
+	"google.golang.org/grpc"
 )
 
 // Loggers per subsystem.  A single backend logger is created and all subsystem
@@ -90,6 +92,7 @@ var (
 	chbuLog = build.NewSubLogger("CHBU", backendLog.Logger)
 	promLog = build.NewSubLogger("PROM", backendLog.Logger)
 	wtclLog = build.NewSubLogger("WTCL", backendLog.Logger)
+	prnfLog = build.NewSubLogger("PRNF", backendLog.Logger)
 )
 
 // Initialize package-global logger variables.
@@ -119,6 +122,7 @@ func init() {
 	chanbackup.UseLogger(chbuLog)
 	monitoring.UseLogger(promLog)
 	wtclient.UseLogger(wtclLog)
+	peernotifier.UseLogger(prnfLog)
 
 	addSubLogger(routerrpc.Subsystem, routerrpc.UseLogger)
 	addSubLogger(wtclientrpc.Subsystem, wtclientrpc.UseLogger)
@@ -159,12 +163,13 @@ var subsystemLoggers = map[string]btclog.Logger{
 	"INVC": invcLog,
 	"NANN": nannLog,
 	"WTWR": wtwrLog,
-	"NTFR": ntfnLog,
+	"NTFR": ntfrLog,
 	"IRPC": irpcLog,
 	"CHNF": chnfLog,
 	"CHBU": chbuLog,
 	"PROM": promLog,
 	"WTCL": wtclLog,
+	"PRNF": prnfLog,
 }
 
 // initLogRotator initializes the logging rotator to write logs to logFile and
@@ -230,4 +235,37 @@ func (c logClosure) String() string {
 // logging system.
 func newLogClosure(c func() string) logClosure {
 	return logClosure(c)
+}
+
+// errorLogUnaryServerInterceptor is a simple UnaryServerInterceptor that will
+// automatically log any errors that occur when serving a client's unary
+// request.
+func errorLogUnaryServerInterceptor(logger btclog.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler) (interface{}, error) {
+
+		resp, err := handler(ctx, req)
+		if err != nil {
+			// TODO(roasbeef): also log request details?
+			logger.Errorf("[%v]: %v", info.FullMethod, err)
+		}
+
+		return resp, err
+	}
+}
+
+// errorLogStreamServerInterceptor is a simple StreamServerInterceptor that
+// will log any errors that occur while processing a client or server streaming
+// RPC.
+func errorLogStreamServerInterceptor(logger btclog.Logger) grpc.StreamServerInterceptor {
+	return func(srv interface{}, ss grpc.ServerStream,
+		info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+
+		err := handler(srv, ss)
+		if err != nil {
+			logger.Errorf("[%v]: %v", info.FullMethod, err)
+		}
+
+		return err
+	}
 }

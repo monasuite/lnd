@@ -12,6 +12,7 @@ import (
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lnrpc/walletrpc"
 	"github.com/monasuite/lnd/lntest"
+	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/sweep"
 )
 
@@ -140,7 +141,7 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 	mineBlocks(t, net, 1, 2)
 
 	// The input used to CPFP should no longer be pending.
-	err = lntest.WaitNoError(func() error {
+	err = wait.NoError(func() error {
 		req := &walletrpc.PendingSweepsRequest{}
 		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 		resp, err := net.Bob.WalletKitClient.PendingSweeps(ctxt, req)

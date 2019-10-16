@@ -1,91 +1,30 @@
-package htlcswitch
+package hop
 
 import (
-	"encoding/binary"
+	"bytes"
+	"fmt"
 	"io"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/lightningnetwork/lightning-onion"
+	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/monasuite/lnd/lnwire"
 )
 
-// NetworkHop indicates the blockchain network that is intended to be the next
-// hop for a forwarded HTLC. The existence of this field within the
-// ForwardingInfo struct enables the ability for HTLC to cross chain-boundaries
-// at will.
-type NetworkHop uint8
-
-const (
-	// BitcoinHop denotes that an HTLC is to be forwarded along the Bitcoin
-	// link with the specified short channel ID.
-	BitcoinHop NetworkHop = iota
-
-	// MonacoinHop denotes that an HTLC is to be forwarded along the
-	// Monacoin link with the specified short channel ID.
-	MonacoinHop
-)
-
-// String returns the string representation of the target NetworkHop.
-func (c NetworkHop) String() string {
-	switch c {
-	case BitcoinHop:
-		return "Bitcoin"
-	case MonacoinHop:
-		return "Monacoin"
-	default:
-		return "Kekcoin"
-	}
-}
-
-var (
-	// exitHop is a special "hop" which denotes that an incoming HTLC is
-	// meant to pay finally to the receiving node.
-	exitHop lnwire.ShortChannelID
-
-	// sourceHop is a sentinel value denoting that an incoming HTLC is
-	// initiated by our own switch.
-	sourceHop lnwire.ShortChannelID
-)
-
-// ForwardingInfo contains all the information that is necessary to forward and
-// incoming HTLC to the next hop encoded within a valid HopIterator instance.
-// Forwarding links are to use this information to authenticate the information
-// received within the incoming HTLC, to ensure that the prior hop didn't
-// tamper with the end-to-end routing information at all.
-type ForwardingInfo struct {
-	// Network is the target blockchain network that the HTLC will travel
-	// over next.
-	Network NetworkHop
-
-	// NextHop is the channel ID of the next hop. The received HTLC should
-	// be forwarded to this particular channel in order to continue the
-	// end-to-end route.
-	NextHop lnwire.ShortChannelID
-
-	// AmountToForward is the amount of milli-satoshis that the receiving
-	// node should forward to the next hop.
-	AmountToForward lnwire.MilliSatoshi
-
-	// OutgoingCTLV is the specified value of the CTLV timelock to be used
-	// in the outgoing HTLC.
-	OutgoingCTLV uint32
-
-	// TODO(roasbeef): modify sphinx logic to not just discard the
-	// remaining bytes, instead should include the rest as excess
-}
-
-// HopIterator is an interface that abstracts away the routing information
+// Iterator is an interface that abstracts away the routing information
 // included in HTLC's which includes the entirety of the payment path of an
 // HTLC. This interface provides two basic method which carry out: how to
 // interpret the forwarding information encoded within the HTLC packet, and hop
 // to encode the forwarding information for the _next_ hop.
-type HopIterator interface {
+type Iterator interface {
 	// ForwardingInstructions returns the set of fields that detail exactly
 	// _how_ this hop should forward the HTLC to the next hop.
 	// Additionally, the information encoded within the returned
 	// ForwardingInfo is to be used by each hop to authenticate the
 	// information given to it by the prior hop.
-	ForwardingInstructions() ForwardingInfo
+	ForwardingInstructions() (ForwardingInfo, error)
+
+	// ExtraOnionBlob returns the additional EOB data (if available).
+	ExtraOnionBlob() []byte
 
 	// EncodeNextHop encodes the onion packet destined for the next hop
 	// into the passed io.Writer.
@@ -124,7 +63,7 @@ func makeSphinxHopIterator(ogPacket *sphinx.OnionPacket,
 
 // A compile time check to ensure sphinxHopIterator implements the HopIterator
 // interface.
-var _ HopIterator = (*sphinxHopIterator)(nil)
+var _ Iterator = (*sphinxHopIterator)(nil)
 
 // Encode encodes iterator and writes it to the writer.
 //
@@ -139,24 +78,42 @@ func (r *sphinxHopIterator) EncodeNextHop(w io.Writer) error {
 // hop to authenticate the information given to it by the prior hop.
 //
 // NOTE: Part of the HopIterator interface.
-func (r *sphinxHopIterator) ForwardingInstructions() ForwardingInfo {
-	fwdInst := r.processedPacket.ForwardingInstructions
+func (r *sphinxHopIterator) ForwardingInstructions() (ForwardingInfo, error) {
+	switch r.processedPacket.Payload.Type {
+	// If this is the legacy payload, then we'll extract the information
+	// directly from the pre-populated ForwardingInstructions field.
+	case sphinx.PayloadLegacy:
+		fwdInst := r.processedPacket.ForwardingInstructions
+		p := NewLegacyPayload(fwdInst)
 
-	var nextHop lnwire.ShortChannelID
-	switch r.processedPacket.Action {
-	case sphinx.ExitNode:
-		nextHop = exitHop
-	case sphinx.MoreHops:
-		s := binary.BigEndian.Uint64(fwdInst.NextAddress[:])
-		nextHop = lnwire.NewShortChanIDFromInt(s)
+		return p.ForwardingInfo(), nil
+
+	// Otherwise, if this is the TLV payload, then we'll make a new stream
+	// to decode only what we need to make routing decisions.
+	case sphinx.PayloadTLV:
+		p, err := NewPayloadFromReader(bytes.NewReader(
+			r.processedPacket.Payload.Payload,
+		))
+		if err != nil {
+			return ForwardingInfo{}, err
+		}
+
+		return p.ForwardingInfo(), nil
+
+	default:
+		return ForwardingInfo{}, fmt.Errorf("unknown "+
+			"sphinx payload type: %v",
+			r.processedPacket.Payload.Type)
+	}
+}
+
+// ExtraOnionBlob returns the additional EOB data (if available).
+func (r *sphinxHopIterator) ExtraOnionBlob() []byte {
+	if r.processedPacket.Payload.Type == sphinx.PayloadLegacy {
+		return nil
 	}
 
-	return ForwardingInfo{
-		Network:         BitcoinHop,
-		NextHop:         nextHop,
-		AmountToForward: lnwire.MilliSatoshi(fwdInst.ForwardAmount),
-		OutgoingCTLV:    fwdInst.OutgoingCltv,
-	}
+	return r.processedPacket.Payload.Payload
 }
 
 // ExtractErrorEncrypter decodes and returns the ErrorEncrypter for this hop,
@@ -204,7 +161,7 @@ func (p *OnionProcessor) Stop() error {
 // instance using the rHash as the associated data when checking the relevant
 // MACs during the decoding process.
 func (p *OnionProcessor) DecodeHopIterator(r io.Reader, rHash []byte,
-	incomingCltv uint32) (HopIterator, lnwire.FailCode) {
+	incomingCltv uint32) (Iterator, lnwire.FailCode) {
 
 	onionPkt := &sphinx.OnionPacket{}
 	if err := onionPkt.Decode(r); err != nil {
@@ -256,7 +213,7 @@ type DecodeHopIteratorRequest struct {
 // DecodeHopIteratorResponse encapsulates the outcome of a batched sphinx onion
 // processing.
 type DecodeHopIteratorResponse struct {
-	HopIterator HopIterator
+	HopIterator Iterator
 	FailCode    lnwire.FailCode
 }
 
@@ -265,7 +222,7 @@ type DecodeHopIteratorResponse struct {
 //
 // NOTE: The HopIterator should be considered invalid if the fail code is
 // anything but lnwire.CodeNone.
-func (r *DecodeHopIteratorResponse) Result() (HopIterator, lnwire.FailCode) {
+func (r *DecodeHopIteratorResponse) Result() (Iterator, lnwire.FailCode) {
 	return r.HopIterator, r.FailCode
 }
 

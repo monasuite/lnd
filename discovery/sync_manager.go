@@ -3,6 +3,7 @@ package discovery
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -82,6 +83,12 @@ type SyncManagerCfg struct {
 	// SyncManager when it should attempt a historical sync with a gossip
 	// sync peer.
 	HistoricalSyncTicker ticker.Ticker
+
+	// IgnoreHistoricalFilters will prevent syncers from replying with
+	// historical data when the remote peer sets a gossip_timestamp_range.
+	// This prevents ranges with old start times from causing us to dump the
+	// graph on connect.
+	IgnoreHistoricalFilters bool
 }
 
 // SyncManager is a subsystem of the gossiper that manages the gossip syncers
@@ -94,14 +101,20 @@ type SyncManagerCfg struct {
 // attempt a historical sync to ensure we have as much of the public channel
 // graph as possible.
 type SyncManager struct {
+	// initialHistoricalSyncCompleted serves as a barrier when initializing
+	// new active GossipSyncers. If 0, the initial historical sync has not
+	// completed, so we'll defer initializing any active GossipSyncers. If
+	// 1, then we can transition the GossipSyncer immediately. We set up
+	// this barrier to ensure we have most of the graph before attempting to
+	// accept new updates at tip.
+	//
+	// NOTE: This must be used atomically.
+	initialHistoricalSyncCompleted int32
+
 	start sync.Once
 	stop  sync.Once
 
 	cfg SyncManagerCfg
-
-	// historicalSync allows us to perform an initial historical sync only
-	// _once_ with a peer during the SyncManager's startup.
-	historicalSync sync.Once
 
 	// newSyncers is a channel we'll use to process requests to create
 	// GossipSyncers for newly connected peers.
@@ -186,15 +199,6 @@ func (m *SyncManager) syncerHandler() {
 	defer m.cfg.HistoricalSyncTicker.Stop()
 
 	var (
-		// initialHistoricalSyncCompleted serves as a barrier when
-		// initializing new active GossipSyncers. If false, the initial
-		// historical sync has not completed, so we'll defer
-		// initializing any active GossipSyncers. If true, then we can
-		// transition the GossipSyncer immediately. We set up this
-		// barrier to ensure we have most of the graph before attempting
-		// to accept new updates at tip.
-		initialHistoricalSyncCompleted = false
-
 		// initialHistoricalSyncer is the syncer we are currently
 		// performing an initial historical sync with.
 		initialHistoricalSyncer *GossipSyncer
@@ -245,10 +249,10 @@ func (m *SyncManager) syncerHandler() {
 				fallthrough
 
 			// If the initial historical sync has yet to complete,
-			// then we'll declare is as passive and attempt to
+			// then we'll declare it as passive and attempt to
 			// transition it when the initial historical sync
 			// completes.
-			case !initialHistoricalSyncCompleted:
+			case !m.IsGraphSynced():
 				s.setSyncType(PassiveSync)
 				m.inactiveSyncers[s.cfg.peerPub] = s
 
@@ -273,7 +277,7 @@ func (m *SyncManager) syncerHandler() {
 			if !attemptHistoricalSync {
 				continue
 			}
-			initialHistoricalSyncCompleted = false
+			m.markGraphSyncing()
 
 			log.Debugf("Attempting initial historical sync with "+
 				"GossipSyncer(%x)", s.cfg.peerPub)
@@ -338,7 +342,7 @@ func (m *SyncManager) syncerHandler() {
 		case <-initialHistoricalSyncSignal:
 			initialHistoricalSyncer = nil
 			initialHistoricalSyncSignal = nil
-			initialHistoricalSyncCompleted = true
+			m.markGraphSynced()
 
 			log.Debug("Initial historical sync completed")
 
@@ -373,7 +377,22 @@ func (m *SyncManager) syncerHandler() {
 		// Our HistoricalSyncTicker has ticked, so we'll randomly select
 		// a peer and force a historical sync with them.
 		case <-m.cfg.HistoricalSyncTicker.Ticks():
-			m.forceHistoricalSync()
+			s := m.forceHistoricalSync()
+
+			// If we don't have a syncer available or we've already
+			// performed our initial historical sync, then we have
+			// nothing left to do.
+			if s == nil || m.IsGraphSynced() {
+				continue
+			}
+
+			// Otherwise, we'll track the peer we've performed a
+			// historical sync with in order to handle the case
+			// where our previous historical sync peer did not
+			// respond to our queries and we haven't ingested as
+			// much of the graph as we should.
+			initialHistoricalSyncer = s
+			initialHistoricalSyncSignal = s.ResetSyncedSignal()
 
 		case <-m.quit:
 			return
@@ -400,6 +419,7 @@ func (m *SyncManager) createGossipSyncer(peer lnpeer.Peer) *GossipSyncer {
 		sendToPeerSync: func(msgs ...lnwire.Message) error {
 			return peer.SendMessageLazy(true, msgs...)
 		},
+		ignoreHistoricalFilters: m.cfg.IgnoreHistoricalFilters,
 	})
 
 	// Gossip syncers are initialized by default in a PassiveSync type
@@ -659,4 +679,23 @@ func (m *SyncManager) gossipSyncers() map[route.Vertex]*GossipSyncer {
 	}
 
 	return syncers
+}
+
+// markGraphSynced allows us to report that the initial historical sync has
+// completed.
+func (m *SyncManager) markGraphSynced() {
+	atomic.StoreInt32(&m.initialHistoricalSyncCompleted, 1)
+}
+
+// markGraphSyncing allows us to report that the initial historical sync is
+// still undergoing.
+func (m *SyncManager) markGraphSyncing() {
+	atomic.StoreInt32(&m.initialHistoricalSyncCompleted, 0)
+}
+
+// IsGraphSynced determines whether we've completed our initial historical sync.
+// The initial historical sync is done to ensure we've ingested as much of the
+// public graph as possible.
+func (m *SyncManager) IsGraphSynced() bool {
+	return atomic.LoadInt32(&m.initialHistoricalSyncCompleted) == 1
 }

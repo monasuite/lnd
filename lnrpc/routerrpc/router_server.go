@@ -72,6 +72,10 @@ var (
 			Entity: "offchain",
 			Action: "write",
 		}},
+		"/routerrpc.Router/BuildRoute": {{
+			Entity: "offchain",
+			Action: "read",
+		}},
 	}
 
 	// DefaultRouterMacFilename is the default name of the router macaroon
@@ -244,12 +248,15 @@ func (s *Server) EstimateRouteFee(ctx context.Context,
 	feeLimit := lnwire.NewMSatFromSatoshis(btcutil.SatoshiPerBitcoin)
 
 	// Finally, we'll query for a route to the destination that can carry
-	// that target amount, we'll only request a single route.
+	// that target amount, we'll only request a single route. Set a
+	// restriction for the default CLTV limit, otherwise we can find a route
+	// that exceeds it and is useless to us.
 	route, err := s.cfg.Router.FindRoute(
 		s.cfg.RouterBackend.SelfNode, destNode, amtMsat,
 		&routing.RestrictParams{
-			FeeLimit: feeLimit,
-		},
+			FeeLimit:  feeLimit,
+			CltvLimit: s.cfg.RouterBackend.MaxTotalTimelock,
+		}, nil,
 	)
 	if err != nil {
 		return nil, err
@@ -322,8 +329,9 @@ func marshallError(sendError error) (*Failure, error) {
 
 	switch onionErr := fErr.FailureMessage.(type) {
 
-	case *lnwire.FailUnknownPaymentHash:
-		response.Code = Failure_UNKNOWN_PAYMENT_HASH
+	case *lnwire.FailIncorrectDetails:
+		response.Code = Failure_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS
+		response.Height = onionErr.Height()
 
 	case *lnwire.FailIncorrectPaymentAmount:
 		response.Code = Failure_INCORRECT_PAYMENT_AMOUNT
@@ -345,6 +353,9 @@ func marshallError(sendError error) (*Failure, error) {
 	case *lnwire.FailExpiryTooSoon:
 		response.Code = Failure_EXPIRY_TOO_SOON
 		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+
+	case *lnwire.FailExpiryTooFar:
+		response.Code = Failure_EXPIRY_TOO_FAR
 
 	case *lnwire.FailInvalidOnionVersion:
 		response.Code = Failure_INVALID_ONION_VERSION
@@ -399,8 +410,12 @@ func marshallError(sendError error) (*Failure, error) {
 
 	case *lnwire.FailPermanentChannelFailure:
 		response.Code = Failure_PERMANENT_CHANNEL_FAILURE
-	default:
+
+	case nil:
 		response.Code = Failure_UNKNOWN_FAILURE
+
+	default:
+		return nil, fmt.Errorf("cannot marshall failure %T", onionErr)
 	}
 
 	response.FailureSourceIndex = uint32(fErr.FailureSourceIdx)
@@ -436,7 +451,10 @@ func marshallChannelUpdate(update *lnwire.ChannelUpdate) *ChannelUpdate {
 func (s *Server) ResetMissionControl(ctx context.Context,
 	req *ResetMissionControlRequest) (*ResetMissionControlResponse, error) {
 
-	s.cfg.RouterBackend.MissionControl.ResetHistory()
+	err := s.cfg.RouterBackend.MissionControl.ResetHistory()
+	if err != nil {
+		return nil, err
+	}
 
 	return &ResetMissionControlResponse{}, nil
 }
@@ -448,40 +466,44 @@ func (s *Server) QueryMissionControl(ctx context.Context,
 
 	snapshot := s.cfg.RouterBackend.MissionControl.GetHistorySnapshot()
 
-	rpcNodes := make([]*NodeHistory, len(snapshot.Nodes))
-	for i, n := range snapshot.Nodes {
+	rpcNodes := make([]*NodeHistory, 0, len(snapshot.Nodes))
+	for _, n := range snapshot.Nodes {
 		// Copy node struct to prevent loop variable binding bugs.
 		node := n
 
-		channels := make([]*ChannelHistory, len(node.Channels))
-		for j, channel := range node.Channels {
-			channels[j] = &ChannelHistory{
-				ChannelId:    channel.ChannelID,
-				LastFailTime: channel.LastFail.Unix(),
-				MinPenalizeAmtSat: int64(
-					channel.MinPenalizeAmt.ToSatoshis(),
-				),
-				SuccessProb: float32(channel.SuccessProb),
-			}
-		}
-
-		var lastFail int64
-		if node.LastFail != nil {
-			lastFail = node.LastFail.Unix()
-		}
-
-		rpcNodes[i] = &NodeHistory{
+		rpcNode := NodeHistory{
 			Pubkey:       node.Node[:],
-			LastFailTime: lastFail,
-			OtherChanSuccessProb: float32(
-				node.OtherChanSuccessProb,
+			LastFailTime: node.LastFail.Unix(),
+			OtherSuccessProb: float32(
+				node.OtherSuccessProb,
 			),
-			Channels: channels,
 		}
+
+		rpcNodes = append(rpcNodes, &rpcNode)
+	}
+
+	rpcPairs := make([]*PairHistory, 0, len(snapshot.Pairs))
+	for _, p := range snapshot.Pairs {
+		// Prevent binding to loop variable.
+		pair := p
+
+		rpcPair := PairHistory{
+			NodeFrom:  pair.Pair.From[:],
+			NodeTo:    pair.Pair.To[:],
+			Timestamp: pair.Timestamp.Unix(),
+			MinPenalizeAmtSat: int64(
+				pair.MinPenalizeAmt.ToSatoshis(),
+			),
+			SuccessProb:           float32(pair.SuccessProb),
+			LastAttemptSuccessful: pair.LastAttemptSuccessful,
+		}
+
+		rpcPairs = append(rpcPairs, &rpcPair)
 	}
 
 	response := QueryMissionControlResponse{
 		Nodes: rpcNodes,
+		Pairs: rpcPairs,
 	}
 
 	return &response, nil
@@ -544,9 +566,12 @@ func (s *Server) trackPayment(paymentHash lntypes.Hash,
 
 			status.State = PaymentState_SUCCEEDED
 			status.Preimage = result.Preimage[:]
-			status.Route = router.MarshallRoute(
+			status.Route, err = router.MarshallRoute(
 				result.Route,
 			)
+			if err != nil {
+				return err
+			}
 		} else {
 			state, err := marshallFailureReason(
 				result.FailureReason,
@@ -556,9 +581,12 @@ func (s *Server) trackPayment(paymentHash lntypes.Hash,
 			}
 			status.State = state
 			if result.Route != nil {
-				status.Route = router.MarshallRoute(
+				status.Route, err = router.MarshallRoute(
 					result.Route,
 				)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -597,4 +625,50 @@ func marshallFailureReason(reason channeldb.FailureReason) (
 	}
 
 	return 0, errors.New("unknown failure reason")
+}
+
+// BuildRoute builds a route from a list of hop addresses.
+func (s *Server) BuildRoute(ctx context.Context,
+	req *BuildRouteRequest) (*BuildRouteResponse, error) {
+
+	// Unmarshall hop list.
+	hops := make([]route.Vertex, len(req.HopPubkeys))
+	for i, pubkeyBytes := range req.HopPubkeys {
+		pubkey, err := route.NewVertexFromBytes(pubkeyBytes)
+		if err != nil {
+			return nil, err
+		}
+		hops[i] = pubkey
+	}
+
+	// Prepare BuildRoute call parameters from rpc request.
+	var amt *lnwire.MilliSatoshi
+	if req.AmtMsat != 0 {
+		rpcAmt := lnwire.MilliSatoshi(req.AmtMsat)
+		amt = &rpcAmt
+	}
+
+	var outgoingChan *uint64
+	if req.OutgoingChanId != 0 {
+		outgoingChan = &req.OutgoingChanId
+	}
+
+	// Build the route and return it to the caller.
+	route, err := s.cfg.Router.BuildRoute(
+		amt, hops, outgoingChan, req.FinalCltvDelta,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	rpcRoute, err := s.cfg.RouterBackend.MarshallRoute(route)
+	if err != nil {
+		return nil, err
+	}
+
+	routeResp := &BuildRouteResponse{
+		Route: rpcRoute,
+	}
+
+	return routeResp, nil
 }

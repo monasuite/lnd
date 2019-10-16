@@ -15,9 +15,6 @@ import (
 	"github.com/monasuite/lnd/shachain"
 )
 
-// outPointSize is the size of a serialized outpoint on disk.
-const outPointSize = 36
-
 // writeOutpoint writes an outpoint to the passed writer using the minimal
 // amount of bytes possible.
 func writeOutpoint(w io.Writer, o *wire.OutPoint) error {
@@ -79,6 +76,7 @@ func WriteElement(w io.Writer, element interface{}) error {
 
 		if e.PubKey != nil {
 			if err := binary.Write(w, byteOrder, true); err != nil {
+				return fmt.Errorf("error writing serialized element: %s", err)
 			}
 
 			return WriteElement(w, e.PubKey)
@@ -108,7 +106,7 @@ func WriteElement(w io.Writer, element interface{}) error {
 			return err
 		}
 
-	case uint64:
+	case int64, uint64:
 		if err := binary.Write(w, byteOrder, e); err != nil {
 			return err
 		}
@@ -280,7 +278,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 
-	case *uint64:
+	case *int64, *uint64:
 		if err := binary.Read(r, byteOrder, e); err != nil {
 			return err
 		}

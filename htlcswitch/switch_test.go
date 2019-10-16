@@ -1803,7 +1803,7 @@ func TestSwitchSendPayment(t *testing.T) {
 	// the add htlc request with error and sent the htlc fail request
 	// back. This request should be forwarded back to alice channel link.
 	obfuscator := NewMockObfuscator()
-	failure := lnwire.NewFailUnknownPaymentHash(update.Amount)
+	failure := lnwire.NewFailIncorrectDetails(update.Amount, 100)
 	reason, err := obfuscator.EncryptFirstHop(failure)
 	if err != nil {
 		t.Fatalf("unable obfuscate failure: %v", err)
@@ -1824,14 +1824,9 @@ func TestSwitchSendPayment(t *testing.T) {
 
 	select {
 	case err := <-errChan:
-		fErr, ok := err.(*ForwardingError)
-		if !ok {
-			t.Fatal("expected ForwardingError")
-		}
-
-		if _, ok := fErr.FailureMessage.(*lnwire.FailUnknownPaymentHash); !ok {
-			t.Fatalf("expected UnknownPaymentHash got %v", fErr)
-		}
+		assertFailureCode(
+			t, err, lnwire.CodeIncorrectOrUnknownPaymentDetails,
+		)
 	case <-time.After(time.Second):
 		t.Fatal("err wasn't received")
 	}
@@ -2102,8 +2097,8 @@ func TestUpdateFailMalformedHTLCErrorConversion(t *testing.T) {
 
 		fwdingErr := err.(*ForwardingError)
 		failureMsg := fwdingErr.FailureMessage
-		if _, ok := failureMsg.(*lnwire.FailTemporaryChannelFailure); !ok {
-			t.Fatalf("expected temp chan failure instead got: %v",
+		if _, ok := failureMsg.(*lnwire.FailInvalidOnionKey); !ok {
+			t.Fatalf("expected onion failure instead got: %v",
 				fwdingErr.FailureMessage)
 		}
 	}

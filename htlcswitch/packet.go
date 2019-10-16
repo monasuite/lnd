@@ -2,6 +2,7 @@ package htlcswitch
 
 import (
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/lnwire"
 )
 
@@ -19,14 +20,6 @@ type htlcPacket struct {
 	// incomingHTLCID is the ID of the HTLC that we have received from the peer
 	// on the incoming channel.
 	incomingHTLCID uint64
-
-	// incomingHtlcAmt is the value of the *incoming* HTLC. This will be
-	// set by the link when it receives an incoming HTLC to be forwarded
-	// through the switch. Then the outgoing link will use this once it
-	// creates a full circuit add. This allows us to properly populate the
-	// forwarding event for this circuit/packet in the case the payment
-	// circuit is successful.
-	incomingHtlcAmt lnwire.MilliSatoshi
 
 	// outgoingHTLCID is the ID of the HTLC that we offered to the peer on the
 	// outgoing channel.
@@ -54,7 +47,7 @@ type htlcPacket struct {
 
 	// obfuscator contains the necessary state to allow the switch to wrap
 	// any forwarded errors in an additional layer of encryption.
-	obfuscator ErrorEncrypter
+	obfuscator hop.ErrorEncrypter
 
 	// localFailure is set to true if an HTLC fails for a local payment before
 	// the first hop. In this case, the failure reason is simply encoded, not

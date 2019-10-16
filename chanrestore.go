@@ -83,9 +83,23 @@ func (c *chanDBRestorer) openChannelShell(backup chanbackup.Single) (
 		return nil, fmt.Errorf("unable to derive htlc key: %v", err)
 	}
 
+	var chanType channeldb.ChannelType
+	switch backup.Version {
+
+	case chanbackup.DefaultSingleVersion:
+		chanType = channeldb.SingleFunder
+
+	case chanbackup.TweaklessCommitVersion:
+		chanType = channeldb.SingleFunderTweakless
+
+	default:
+		return nil, fmt.Errorf("unknown Single version: %v", err)
+	}
+
 	chanShell := channeldb.ChannelShell{
 		NodeAddrs: backup.Addresses,
 		Chan: &channeldb.OpenChannel{
+			ChanType:                chanType,
 			ChainHash:               backup.ChainHash,
 			IsInitiator:             backup.IsInitiator,
 			Capacity:                backup.Capacity,
@@ -166,7 +180,7 @@ func (s *server) ConnectPeer(nodePub *btcec.PublicKey, addrs []net.Addr) error {
 
 	// For each of the known addresses, we'll attempt to launch a
 	// persistent connection to the (pub, addr) pair. In the event that any
-	// of them connect, all the other stale requests will be cancelled.
+	// of them connect, all the other stale requests will be canceled.
 	for _, addr := range addrs {
 		netAddr := &lnwire.NetAddress{
 			IdentityKey: nodePub,

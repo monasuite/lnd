@@ -8,7 +8,6 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/tor"
@@ -142,7 +141,10 @@ var _ autopilot.ChannelController = (*chanController)(nil)
 // and all interfaces needed to drive it won't be launched before the Manager's
 // StartAgent method is called.
 func initAutoPilot(svr *server, cfg *autoPilotConfig) (*autopilot.ManagerCfg, error) {
-	atplLog.Infof("Instantiating autopilot with cfg: %v", spew.Sdump(cfg))
+	atplLog.Infof("Instantiating autopilot with max_channels=%d, allocation=%f, "+
+		"min_chan_size=%d, max_chan_size=%d, private=%t, min_confs=%d, "+
+		"conf_target=%d", cfg.MaxChannels, cfg.Allocation, cfg.MinChannelSize,
+		cfg.MaxChannelSize, cfg.Private, cfg.MinConfs, cfg.ConfTarget)
 
 	// Set up the constraints the autopilot heuristics must adhere to.
 	atplConstraints := autopilot.NewConstraints(

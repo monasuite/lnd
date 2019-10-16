@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
@@ -23,22 +22,11 @@ import (
 )
 
 var (
-	netParams = &chaincfg.TestNet3Params
-
 	key = [chainhash.HashSize]byte{
 		0x81, 0xb6, 0x37, 0xd8, 0xfc, 0xd2, 0xc6, 0xda,
 		0x68, 0x59, 0xe6, 0x96, 0x31, 0x13, 0xa1, 0x17,
 		0xd, 0xe7, 0x93, 0xe4, 0xb7, 0x25, 0xb8, 0x4d,
 		0x1e, 0xb, 0x4c, 0xf9, 0x9e, 0xc5, 0x8c, 0xe9,
-	}
-	id = &wire.OutPoint{
-		Hash: [chainhash.HashSize]byte{
-			0x51, 0xb6, 0x37, 0xd8, 0xfc, 0xd2, 0xc6, 0xda,
-			0x48, 0x59, 0xe6, 0x96, 0x31, 0x13, 0xa1, 0x17,
-			0x2d, 0xe7, 0x93, 0xe4, 0xb7, 0x25, 0xb8, 0x4d,
-			0x1f, 0xb, 0x4c, 0xf9, 0x9e, 0xc5, 0x8c, 0xe9,
-		},
-		Index: 9,
 	}
 	rev = [chainhash.HashSize]byte{
 		0x51, 0xb6, 0x37, 0xd8, 0xfc, 0xd2, 0xc6, 0xda,
@@ -76,10 +64,6 @@ var (
 			},
 		},
 		LockTime: 5,
-	}
-	testOutpoint = &wire.OutPoint{
-		Hash:  key,
-		Index: 0,
 	}
 	privKey, pubKey = btcec.PrivKeyFromBytes(btcec.S256(), key[:])
 
@@ -279,7 +263,12 @@ func TestOpenChannelPutGetDelete(t *testing.T) {
 			OnionBlob:     []byte("onionblob"),
 		},
 	}
-	if err := state.FullSync(); err != nil {
+
+	addr := &net.TCPAddr{
+		IP:   net.ParseIP("127.0.0.1"),
+		Port: 18556,
+	}
+	if err := state.SyncPending(addr, 101); err != nil {
 		t.Fatalf("unable to save and serialize channel state: %v", err)
 	}
 
@@ -379,7 +368,12 @@ func TestChannelStateTransition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to create channel state: %v", err)
 	}
-	if err := channel.FullSync(); err != nil {
+
+	addr := &net.TCPAddr{
+		IP:   net.ParseIP("127.0.0.1"),
+		Port: 18556,
+	}
+	if err := channel.SyncPending(addr, 101); err != nil {
 		t.Fatalf("unable to save and serialize channel state: %v", err)
 	}
 
@@ -897,7 +891,13 @@ func TestFetchWaitingCloseChannels(t *testing.T) {
 	// This would happen in the event of a force close and should make the
 	// channels enter a state of waiting close.
 	for _, channel := range channels {
-		if err := channel.MarkCommitmentBroadcasted(); err != nil {
+		closeTx := wire.NewMsgTx(2)
+		closeTx.AddTxIn(
+			&wire.TxIn{
+				PreviousOutPoint: channel.FundingOutpoint,
+			},
+		)
+		if err := channel.MarkCommitmentBroadcasted(closeTx); err != nil {
 			t.Fatalf("unable to mark commitment broadcast: %v", err)
 		}
 	}
@@ -921,6 +921,19 @@ func TestFetchWaitingCloseChannels(t *testing.T) {
 		if _, ok := expectedChannels[channel.FundingOutpoint]; !ok {
 			t.Fatalf("expected channel %v to be waiting close",
 				channel.FundingOutpoint)
+		}
+
+		// Finally, make sure we can retrieve the closing tx for the
+		// channel.
+		closeTx, err := channel.BroadcastedCommitment()
+		if err != nil {
+			t.Fatalf("Unable to retrieve commitment: %v", err)
+		}
+
+		if closeTx.TxIn[0].PreviousOutPoint != channel.FundingOutpoint {
+			t.Fatalf("expected outpoint %v, got %v",
+				channel.FundingOutpoint,
+				closeTx.TxIn[0].PreviousOutPoint)
 		}
 	}
 }

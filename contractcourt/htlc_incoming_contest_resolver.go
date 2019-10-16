@@ -3,7 +3,6 @@ package contractcourt
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/monasuite/lnd/channeldb"
@@ -26,6 +25,9 @@ type htlcIncomingContestResolver struct {
 	// before we learn of the preimage then we can't claim it on chain
 	// successfully.
 	htlcExpiry uint32
+
+	// circuitKey describes the incoming htlc that is being resolved.
+	circuitKey channeldb.CircuitKey
 
 	// htlcSuccessResolver is the inner resolver that may be utilized if we
 	// learn of the preimage.
@@ -63,11 +65,11 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 	select {
 	case newBlock, ok := <-blockEpochs.Epochs:
 		if !ok {
-			return nil, fmt.Errorf("quitting")
+			return nil, errResolverShuttingDown
 		}
 		currentHeight = newBlock.Height
 	case <-h.Quit:
-		return nil, fmt.Errorf("resolver stopped")
+		return nil, errResolverShuttingDown
 	}
 
 	// We'll first check if this HTLC has been timed out, if so, we can
@@ -166,7 +168,7 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 	// identical to HTLC resolution in the link.
 	event, err := h.Registry.NotifyExitHopHtlc(
 		h.payHash, h.htlcAmt, h.htlcExpiry, currentHeight,
-		hodlChan,
+		h.circuitKey, hodlChan, nil,
 	)
 	switch err {
 	case channeldb.ErrInvoiceNotFound:
@@ -221,7 +223,7 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 
 		case newBlock, ok := <-blockEpochs.Epochs:
 			if !ok {
-				return nil, fmt.Errorf("quitting")
+				return nil, errResolverShuttingDown
 			}
 
 			// If this new height expires the HTLC, then this means
@@ -238,7 +240,7 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 			}
 
 		case <-h.Quit:
-			return nil, fmt.Errorf("resolver stopped")
+			return nil, errResolverShuttingDown
 		}
 	}
 }

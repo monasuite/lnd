@@ -26,6 +26,7 @@ import (
 	"github.com/monasuite/lnd/chanbackup"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/discovery"
+	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/htlcswitch/hodl"
 	"github.com/monasuite/lnd/lncfg"
 	"github.com/monasuite/lnd/lnrpc/routerrpc"
@@ -231,8 +232,9 @@ type config struct {
 	ShowVersion bool `short:"V" long:"version" description:"Display version information and exit"`
 
 	LndDir          string   `long:"lnddir" description:"The base directory that contains lnd's data, logs, configuration file, etc."`
-	ConfigFile      string   `long:"C" long:"configfile" description:"Path to configuration file"`
+	ConfigFile      string   `short:"C" long:"configfile" description:"Path to configuration file"`
 	DataDir         string   `short:"b" long:"datadir" description:"The directory to store lnd's data within"`
+	SyncFreelist    bool     `long:"sync-freelist" description:"Whether the databases used within lnd should sync their freelist to disk. This is disabled by default resulting in improved memory performance during operation, but with an increase in startup time."`
 	TLSCertPath     string   `long:"tlscertpath" description:"Path to write the TLS certificate for lnd's RPC and REST services"`
 	TLSKeyPath      string   `long:"tlskeypath" description:"Path to write the TLS private key for lnd's RPC and REST services"`
 	TLSExtraIPs     []string `long:"tlsextraip" description:"Adds an extra ip to the generated certificate"`
@@ -258,6 +260,7 @@ type config struct {
 	Listeners        []net.Addr
 	ExternalIPs      []net.Addr
 	DisableListen    bool          `long:"nolisten" description:"Disable listening for incoming peer connections"`
+	DisableRest      bool          `long:"norest" description:"Disable REST API"`
 	NAT              bool          `long:"nat" description:"Toggle NAT traversal support (using either UPnP or NAT-PMP) to automatically advertise your external IP address to the network -- NOTE this does not support devices behind multiple NATs"`
 	MinBackoff       time.Duration `long:"minbackoff" description:"Shortest backoff when reconnecting to persistent peers. Valid time units are {s, m, h}."`
 	MaxBackoff       time.Duration `long:"maxbackoff" description:"Longest backoff when reconnecting to persistent peers. Valid time units are {s, m, h}."`
@@ -268,7 +271,6 @@ type config struct {
 
 	Profile string `long:"profile" description:"Enable HTTP profiling on given port -- NOTE port must be between 1024 and 65535"`
 
-	DebugHTLC          bool   `long:"debughtlc" description:"Activate the debug htlc mode. With the debug HTLC mode, all payments sent use a pre-determined R-Hash. Additionally, all HTLCs sent to a node with the debug HTLC R-Hash are immediately settled in the next available state transition."`
 	UnsafeDisconnect   bool   `long:"unsafe-disconnect" description:"Allows the rpcserver to intentionally disconnect from peers with open channels. USED FOR TESTING ONLY."`
 	UnsafeReplay       bool   `long:"unsafe-replay" description:"Causes a link to replay the adds on its commitment txn after starting up, this enables testing of the sphinx replay logic."`
 	MaxPendingChannels int    `long:"maxpendingchannels" description:"The maximum number of incoming pending channels permitted per peer."`
@@ -307,9 +309,17 @@ type config struct {
 	NumGraphSyncPeers      int           `long:"numgraphsyncpeers" description:"The number of peers that we should receive new graph updates from. This option can be tuned to save bandwidth for light clients or routing nodes."`
 	HistoricalSyncInterval time.Duration `long:"historicalsyncinterval" description:"The polling interval between historical graph sync attempts. Each historical graph sync attempt ensures we reconcile with the remote peer's graph from the genesis block."`
 
+	IgnoreHistoricalGossipFilters bool `long:"ignore-historical-gossip-filters" description:"If true, will not reply with historical data that matches the range specified by a remote peer's gossip_timestamp_filter. Doing so will result in lower memory and bandwidth requirements."`
+
 	RejectPush bool `long:"rejectpush" description:"If true, lnd will not accept channel opening requests with non-zero push amounts. This should prevent accidental pushes to merchant nodes."`
 
+	RejectHTLC bool `long:"rejecthtlc" description:"If true, lnd will not forward any HTLCs that are meant as onward payments. This option will still allow lnd to send HTLCs and receive HTLCs but lnd won't be used as a hop."`
+
 	StaggerInitialReconnect bool `long:"stagger-initial-reconnect" description:"If true, will apply a randomized staggering between 0s and 30s when reconnecting to persistent peers on startup. The first 10 reconnections will be attempted instantly, regardless of the flag's value"`
+
+	MaxOutgoingCltvExpiry uint32 `long:"max-cltv-expiry" description:"The maximum number of blocks funds could be locked up for when forwarding payments."`
+
+	MaxChannelFeeAllocation float64 `long:"max-channel-fee-allocation" description:"The maximum percentage of total funds that can be allocated to a channel's commitment fee. This only applies for the initiator of the channel. Valid values are within [0.1, 1]."`
 
 	net tor.Net
 
@@ -324,6 +334,8 @@ type config struct {
 	WtClient *lncfg.WtClient `group:"wtclient" namespace:"wtclient"`
 
 	Watchtower *lncfg.Watchtower `group:"watchtower" namespace:"watchtower"`
+
+	LegacyProtocol *lncfg.LegacyProtocol `group:"legacyprotocol" namespace:"legacyprotocol"`
 }
 
 // loadConfig initializes and parses the config using a config file and command
@@ -424,6 +436,8 @@ func loadConfig() (*config, error) {
 		Watchtower: &lncfg.Watchtower{
 			TowerDir: defaultTowerDir,
 		},
+		MaxOutgoingCltvExpiry:   htlcswitch.DefaultMaxOutgoingCltvExpiry,
+		MaxChannelFeeAllocation: htlcswitch.DefaultMaxLinkFeeAllocation,
 	}
 
 	// Pre-parse the command line options to pick up an alternative config
@@ -582,6 +596,13 @@ func loadConfig() (*config, error) {
 		return nil, err
 	}
 
+	// Ensure a valid max channel fee allocation was set.
+	if cfg.MaxChannelFeeAllocation <= 0 || cfg.MaxChannelFeeAllocation > 1 {
+		return nil, fmt.Errorf("invalid max channel fee allocation: "+
+			"%v, must be within (0, 1]",
+			cfg.MaxChannelFeeAllocation)
+	}
+
 	// Validate the Tor config parameters.
 	socks, err := lncfg.ParseAddressString(
 		cfg.Tor.SOCKS, strconv.Itoa(defaultTorSOCKSPort),
@@ -708,12 +729,6 @@ func loadConfig() (*config, error) {
 			return nil, err
 		}
 
-		if cfg.Monacoin.MainNet && cfg.DebugHTLC {
-			str := "%s: debug-htlc mode cannot be used " +
-				"on monacoin mainnet"
-			err := fmt.Errorf(str, funcName)
-			return nil, err
-		}
 		// The monacoin chain is the current active chain. However
 		// throughout the codebase we required chaincfg.Params. So as a
 		// temporary hack, we'll mutate the default net params for
@@ -795,20 +810,6 @@ func loadConfig() (*config, error) {
 			str := "%s: either --bitcoin.mainnet, or " +
 				"bitcoin.testnet, bitcoin.simnet, or bitcoin.regtest " +
 				"must be specified"
-			err := fmt.Errorf(str, funcName)
-			return nil, err
-		}
-
-		if cfg.Bitcoin.MainNet && cfg.DebugHTLC {
-			str := "%s: debug-htlc mode cannot be used " +
-				"on bitcoin mainnet"
-			err := fmt.Errorf(str, funcName)
-			return nil, err
-		}
-
-		if cfg.Bitcoin.Node == "neutrino" && cfg.Bitcoin.MainNet {
-			str := "%s: neutrino isn't yet supported for " +
-				"bitcoin's mainnet"
 			err := fmt.Errorf(str, funcName)
 			return nil, err
 		}
@@ -1024,11 +1025,17 @@ func loadConfig() (*config, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = lncfg.EnforceSafeAuthentication(
-		cfg.RESTListeners, !cfg.NoMacaroons,
-	)
-	if err != nil {
-		return nil, err
+
+	if cfg.DisableRest {
+		ltndLog.Infof("REST API is disabled!")
+		cfg.RESTListeners = nil
+	} else {
+		err = lncfg.EnforceSafeAuthentication(
+			cfg.RESTListeners, !cfg.NoMacaroons,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Remove the listening addresses specified if listening is disabled.
@@ -1494,7 +1501,7 @@ func extractBitcoindRPCParams(bitcoindConfigPath string) (string, string, string
 // ZMQ rawblock and rawtx notifications are different.
 func checkZMQOptions(zmqBlockHost, zmqTxHost string) error {
 	if zmqBlockHost == zmqTxHost {
-		return errors.New("zmqpubrawblock and zmqpubrawtx must be set" +
+		return errors.New("zmqpubrawblock and zmqpubrawtx must be set " +
 			"to different addresses")
 	}
 

@@ -33,7 +33,7 @@ type PaymentSession interface {
 type paymentSession struct {
 	additionalEdges map[route.Vertex][]*channeldb.ChannelEdgePolicy
 
-	bandwidthHints map[uint64]lnwire.MilliSatoshi
+	getBandwidthHints func() (map[uint64]lnwire.MilliSatoshi, error)
 
 	sessionSource *SessionSource
 
@@ -73,15 +73,10 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 	// does not reject the HTLC if some blocks are mined while it's in-flight.
 	finalCltvDelta += BlockPadding
 
-	// If a route cltv limit was specified, we need to subtract the final
-	// delta before passing it into path finding. The optimal path is
-	// independent of the final cltv delta and the path finding algorithm is
-	// unaware of this value.
-	var cltvLimit *uint32
-	if payment.CltvLimit != nil {
-		limit := *payment.CltvLimit - uint32(finalCltvDelta)
-		cltvLimit = &limit
-	}
+	// We need to subtract the final delta before passing it into path
+	// finding. The optimal path is independent of the final cltv delta and
+	// the path finding algorithm is unaware of this value.
+	cltvLimit := payment.CltvLimit - uint32(finalCltvDelta)
 
 	// TODO(roasbeef): sync logic amongst dist sys
 
@@ -91,17 +86,28 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 	ss := p.sessionSource
 
 	restrictions := &RestrictParams{
-		ProbabilitySource: ss.MissionControl.GetEdgeProbability,
+		ProbabilitySource: ss.MissionControl.GetProbability,
 		FeeLimit:          payment.FeeLimit,
 		OutgoingChannelID: payment.OutgoingChannelID,
 		CltvLimit:         cltvLimit,
+	}
+
+	// We'll also obtain a set of bandwidthHints from the lower layer for
+	// each of our outbound channels. This will allow the path finding to
+	// skip any links that aren't active or just don't have enough bandwidth
+	// to carry the payment. New bandwidth hints are queried for every new
+	// path finding attempt, because concurrent payments may change
+	// balances.
+	bandwidthHints, err := p.getBandwidthHints()
+	if err != nil {
+		return nil, err
 	}
 
 	path, err := p.pathFinder(
 		&graphParams{
 			graph:           ss.Graph,
 			additionalEdges: p.additionalEdges,
-			bandwidthHints:  p.bandwidthHints,
+			bandwidthHints:  bandwidthHints,
 		},
 		restrictions, &ss.PathFindingConfig,
 		ss.SelfNode.PubKeyBytes, payment.Target,
@@ -116,6 +122,7 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 	sourceVertex := route.Vertex(ss.SelfNode.PubKeyBytes)
 	route, err := newRoute(
 		payment.Amount, sourceVertex, path, height, finalCltvDelta,
+		payment.FinalDestRecords,
 	)
 	if err != nil {
 		// TODO(roasbeef): return which edge/vertex didn't work
@@ -124,10 +131,4 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 	}
 
 	return route, err
-}
-
-// nodeChannel is a combination of the node pubkey and one of its channels.
-type nodeChannel struct {
-	node    route.Vertex
-	channel uint64
 }

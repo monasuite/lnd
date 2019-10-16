@@ -29,12 +29,14 @@ import (
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/brontide"
+	"github.com/monasuite/lnd/chanacceptor"
 	"github.com/monasuite/lnd/chanbackup"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/channelnotifier"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/discovery"
 	"github.com/monasuite/lnd/htlcswitch"
+	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/invoices"
 	"github.com/monasuite/lnd/lncfg"
@@ -45,8 +47,10 @@ import (
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/nat"
 	"github.com/monasuite/lnd/netann"
+	"github.com/monasuite/lnd/peernotifier"
 	"github.com/monasuite/lnd/pool"
 	"github.com/monasuite/lnd/routing"
+	"github.com/monasuite/lnd/routing/localchans"
 	"github.com/monasuite/lnd/routing/route"
 	"github.com/monasuite/lnd/sweep"
 	"github.com/monasuite/lnd/tor"
@@ -54,7 +58,6 @@ import (
 	"github.com/monasuite/lnd/watchtower/wtclient"
 	"github.com/monasuite/lnd/watchtower/wtdb"
 	"github.com/monasuite/lnd/watchtower/wtpolicy"
-	"github.com/monasuite/lnd/zpay32"
 )
 
 const (
@@ -158,7 +161,7 @@ type server struct {
 	peerConnectedListeners    map[string][]chan<- lnpeer.Peer
 	peerDisconnectedListeners map[string][]chan<- struct{}
 
-	persistentPeers        map[string]struct{}
+	persistentPeers        map[string]bool
 	persistentPeersBackoff map[string]time.Duration
 	persistentConnReqs     map[string][]*connmgr.ConnReq
 	persistentRetryCancels map[string]chan struct{}
@@ -188,6 +191,8 @@ type server struct {
 
 	channelNotifier *channelnotifier.ChannelNotifier
 
+	peerNotifier *peernotifier.PeerNotifier
+
 	witnessBeacon contractcourt.WitnessBeacon
 
 	breachArbiter *breachArbiter
@@ -200,13 +205,15 @@ type server struct {
 
 	authGossiper *discovery.AuthenticatedGossiper
 
+	localChanMgr *localchans.Manager
+
 	utxoNursery *utxoNursery
 
 	sweeper *sweep.UtxoSweeper
 
 	chainArb *contractcourt.ChainArbitrator
 
-	sphinx *htlcswitch.OnionProcessor
+	sphinx *hop.OnionProcessor
 
 	towerClient wtclient.Client
 
@@ -291,7 +298,8 @@ func noiseDial(idPriv *btcec.PrivateKey) func(net.Addr) (net.Conn, error) {
 func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 	towerClientDB *wtdb.ClientDB, cc *chainControl,
 	privKey *btcec.PrivateKey,
-	chansToRestore walletunlocker.ChannelsToRecover) (*server, error) {
+	chansToRestore walletunlocker.ChannelsToRecover,
+	chanPredicate chanacceptor.ChannelAcceptor) (*server, error) {
 
 	var err error
 
@@ -309,6 +317,18 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 	}
 
 	globalFeatures := lnwire.NewRawFeatureVector()
+
+	// Only if we're not being forced to use the legacy onion format, will
+	// we signal our knowledge of the new TLV onion format.
+	if !cfg.LegacyProtocol.LegacyOnion() {
+		globalFeatures.Set(lnwire.TLVOnionPayloadOptional)
+	}
+
+	// Similarly, we default to the new modern commitment format unless the
+	// legacy commitment config is set to true.
+	if !cfg.LegacyProtocol.LegacyCommitment() {
+		globalFeatures.Set(lnwire.StaticRemoteKeyOptional)
+	}
 
 	var serializedPubKey [33]byte
 	copy(serializedPubKey[:], privKey.PubKey().SerializeCompressed())
@@ -338,14 +358,6 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 		readBufferPool, cfg.Workers.Read, pool.DefaultWorkerTimeout,
 	)
 
-	decodeFinalCltvExpiry := func(payReq string) (uint32, error) {
-		invoice, err := zpay32.Decode(payReq, activeNetParams.Params)
-		if err != nil {
-			return 0, err
-		}
-		return uint32(invoice.MinFinalCLTVExpiry()), nil
-	}
-
 	s := &server{
 		chanDB:         chanDB,
 		cc:             cc,
@@ -355,8 +367,7 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 		chansToRestore: chansToRestore,
 
 		invoices: invoices.NewRegistry(
-			chanDB, decodeFinalCltvExpiry,
-			defaultFinalCltvRejectDelta,
+			chanDB, defaultFinalCltvRejectDelta,
 		),
 
 		channelNotifier: channelnotifier.New(chanDB),
@@ -368,9 +379,9 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 
 		// TODO(roasbeef): derive proper onion key based on rotation
 		// schedule
-		sphinx: htlcswitch.NewOnionProcessor(sphinxRouter),
+		sphinx: hop.NewOnionProcessor(sphinxRouter),
 
-		persistentPeers:         make(map[string]struct{}),
+		persistentPeers:         make(map[string]bool),
 		persistentPeersBackoff:  make(map[string]time.Duration),
 		persistentConnReqs:      make(map[string][]*connmgr.ConnReq),
 		persistentRetryCancels:  make(map[string]chan struct{}),
@@ -383,24 +394,15 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 		peerConnectedListeners:    make(map[string][]chan<- lnpeer.Peer),
 		peerDisconnectedListeners: make(map[string][]chan<- struct{}),
 
-		globalFeatures: lnwire.NewFeatureVector(globalFeatures,
-			lnwire.GlobalFeatures),
+		globalFeatures: lnwire.NewFeatureVector(
+			globalFeatures, lnwire.GlobalFeatures,
+		),
 		quit: make(chan struct{}),
 	}
 
 	s.witnessBeacon = &preimageBeacon{
 		wCache:      chanDB.NewWitnessCache(),
 		subscribers: make(map[uint64]*preimageSubscriber),
-	}
-
-	// If the debug HTLC flag is on, then we invoice a "master debug"
-	// invoice which all outgoing payments will be sent and all incoming
-	// HTLCs with the debug R-Hash immediately settled.
-	if cfg.DebugHTLC {
-		kiloCoin := btcutil.Amount(btcutil.SatoshiPerBitcoin * 1000)
-		s.invoices.AddDebugInvoice(kiloCoin, invoices.DebugPre)
-		srvrLog.Debugf("Debug HTLC invoice inserted, preimage=%x, hash=%x",
-			invoices.DebugPre[:], invoices.DebugHash[:])
 	}
 
 	_, currentHeight, err := s.cc.chainIO.GetBestBlock()
@@ -440,8 +442,7 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 		FwdEventTicker:         ticker.New(htlcswitch.DefaultFwdEventInterval),
 		LogEventTicker:         ticker.New(htlcswitch.DefaultLogInterval),
 		AckEventTicker:         ticker.New(htlcswitch.DefaultAckInterval),
-		NotifyActiveChannel:    s.channelNotifier.NotifyActiveChannelEvent,
-		NotifyInactiveChannel:  s.channelNotifier.NotifyInactiveChannelEvent,
+		RejectHTLC:             cfg.RejectHTLC,
 	}, uint32(currentHeight))
 	if err != nil {
 		return nil, err
@@ -653,21 +654,28 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 	// servers, the mission control instance itself can be moved there too.
 	routingConfig := routerrpc.GetRoutingConfig(cfg.SubRPCServers.RouterRPC)
 
-	s.missionControl = routing.NewMissionControl(
+	s.missionControl, err = routing.NewMissionControl(
+		chanDB.DB,
 		&routing.MissionControlConfig{
 			AprioriHopProbability: routingConfig.AprioriHopProbability,
 			PenaltyHalfLife:       routingConfig.PenaltyHalfLife,
+			MaxMcHistory:          routingConfig.MaxMcHistory,
 		},
 	)
+	if err != nil {
+		return nil, fmt.Errorf("can't create mission control: %v", err)
+	}
 
 	srvrLog.Debugf("Instantiating payment session source with config: "+
 		"PaymentAttemptPenalty=%v, MinRouteProbability=%v",
-		int64(routingConfig.PaymentAttemptPenalty.ToSatoshis()),
+		int64(routingConfig.AttemptCost),
 		routingConfig.MinRouteProbability)
 
 	pathFindingConfig := routing.PathFindingConfig{
-		PaymentAttemptPenalty: routingConfig.PaymentAttemptPenalty,
-		MinProbability:        routingConfig.MinRouteProbability,
+		PaymentAttemptPenalty: lnwire.NewMSatFromSatoshis(
+			routingConfig.AttemptCost,
+		),
+		MinProbability: routingConfig.MinRouteProbability,
 	}
 
 	paymentSessionSource := &routing.SessionSource{
@@ -712,27 +720,39 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 	}
 
 	s.authGossiper = discovery.New(discovery.Config{
-		Router:               s.chanRouter,
-		Notifier:             s.cc.chainNotifier,
-		ChainHash:            *activeNetParams.GenesisHash,
-		Broadcast:            s.BroadcastMessage,
-		ChanSeries:           chanSeries,
-		NotifyWhenOnline:     s.NotifyWhenOnline,
-		NotifyWhenOffline:    s.NotifyWhenOffline,
-		ProofMatureDelta:     0,
-		TrickleDelay:         time.Millisecond * time.Duration(cfg.TrickleDelay),
-		RetransmitDelay:      time.Minute * 30,
-		WaitingProofStore:    waitingProofStore,
-		MessageStore:         gossipMessageStore,
-		AnnSigner:            s.nodeSigner,
-		RotateTicker:         ticker.New(discovery.DefaultSyncerRotationInterval),
-		HistoricalSyncTicker: ticker.New(cfg.HistoricalSyncInterval),
-		NumActiveSyncers:     cfg.NumGraphSyncPeers,
-		MinimumBatchSize:     10,
-		SubBatchDelay:        time.Second * 5,
+		Router:            s.chanRouter,
+		Notifier:          s.cc.chainNotifier,
+		ChainHash:         *activeNetParams.GenesisHash,
+		Broadcast:         s.BroadcastMessage,
+		ChanSeries:        chanSeries,
+		NotifyWhenOnline:  s.NotifyWhenOnline,
+		NotifyWhenOffline: s.NotifyWhenOffline,
+		SelfNodeAnnouncement: func(refresh bool) (lnwire.NodeAnnouncement, error) {
+			return s.genNodeAnnouncement(refresh)
+		},
+		ProofMatureDelta:        0,
+		TrickleDelay:            time.Millisecond * time.Duration(cfg.TrickleDelay),
+		RetransmitTicker:        ticker.New(time.Minute * 30),
+		RebroadcastInterval:     time.Hour * 24,
+		WaitingProofStore:       waitingProofStore,
+		MessageStore:            gossipMessageStore,
+		AnnSigner:               s.nodeSigner,
+		RotateTicker:            ticker.New(discovery.DefaultSyncerRotationInterval),
+		HistoricalSyncTicker:    ticker.New(cfg.HistoricalSyncInterval),
+		NumActiveSyncers:        cfg.NumGraphSyncPeers,
+		MinimumBatchSize:        10,
+		SubBatchDelay:           time.Second * 5,
+		IgnoreHistoricalFilters: cfg.IgnoreHistoricalGossipFilters,
 	},
 		s.identityPriv.PubKey(),
 	)
+
+	s.localChanMgr = &localchans.Manager{
+		ForAllOutgoingChannels:    s.chanRouter.ForAllOutgoingChannels,
+		PropagateChanPolicyUpdate: s.authGossiper.PropagateChanPolicyUpdate,
+		UpdateForwardingPolicies:  s.htlcSwitch.UpdateForwardingPolicies,
+		FetchChannel:              s.chanDB.FetchChannel,
+	}
 
 	utxnStore, err := newNurseryStore(activeNetParams.GenesisHash, chanDB)
 	if err != nil {
@@ -897,6 +917,7 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 	if _, err := rand.Read(chanIDSeed[:]); err != nil {
 		return nil, err
 	}
+
 	s.fundingMgr, err = newFundingManager(fundingConfig{
 		IDKey:              privKey.PubKey(),
 		Wallet:             cc.wallet,
@@ -1011,10 +1032,16 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 			peerKey *btcec.PublicKey) error {
 
 			// First, we'll mark this new peer as a persistent peer
-			// for re-connection purposes.
+			// for re-connection purposes. If the peer is not yet
+			// tracked or the user hasn't requested it to be perm,
+			// we'll set false to prevent the server from continuing
+			// to connect to this peer even if the number of
+			// channels with this peer is zero.
 			s.mu.Lock()
 			pubStr := string(peerKey.SerializeCompressed())
-			s.persistentPeers[pubStr] = struct{}{}
+			if _, ok := s.persistentPeers[pubStr]; !ok {
+				s.persistentPeers[pubStr] = false
+			}
 			s.mu.Unlock()
 
 			// With that taken care of, we'll send this channel to
@@ -1058,6 +1085,7 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 		MaxPendingChannels:     cfg.MaxPendingChannels,
 		RejectPush:             cfg.RejectPush,
 		NotifyOpenChannelEvent: s.channelNotifier.NotifyOpenChannelEvent,
+		OpenChannelPredicate:   chanPredicate,
 	})
 	if err != nil {
 		return nil, err
@@ -1080,6 +1108,10 @@ func newServer(listenAddrs []net.Addr, chanDB *channeldb.DB,
 	if err != nil {
 		return nil, err
 	}
+
+	// Assemble a peer notifier which will provide clients with subscriptions
+	// to peer online and offline events.
+	s.peerNotifier = peernotifier.New()
 
 	if cfg.WtClient.Active {
 		policy := wtpolicy.DefaultPolicy()
@@ -1180,6 +1212,10 @@ func (s *server) Start() error {
 			return
 		}
 		if err := s.channelNotifier.Start(); err != nil {
+			startErr = err
+			return
+		}
+		if err := s.peerNotifier.Start(); err != nil {
 			startErr = err
 			return
 		}
@@ -1341,6 +1377,7 @@ func (s *server) Stop() error {
 		s.chainArb.Stop()
 		s.sweeper.Stop()
 		s.channelNotifier.Stop()
+		s.peerNotifier.Stop()
 		s.cc.wallet.Shutdown()
 		s.cc.chainView.Stop()
 		s.connMgr.Stop()
@@ -2098,8 +2135,11 @@ func (s *server) establishPersistentConnections() error {
 	var numOutboundConns int
 	for pubStr, nodeAddr := range nodeAddrsMap {
 		// Add this peer to the set of peers we should maintain a
-		// persistent connection with.
-		s.persistentPeers[pubStr] = struct{}{}
+		// persistent connection with. We set the value to false to
+		// indicate that we should not continue to reconnect if the
+		// number of channels returns to zero, since this peer has not
+		// been requested as perm by the user.
+		s.persistentPeers[pubStr] = false
 		if _, ok := s.persistentPeersBackoff[pubStr]; !ok {
 			s.persistentPeersBackoff[pubStr] = cfg.MinBackoff
 		}
@@ -2166,15 +2206,20 @@ func (s *server) delayInitialReconnect(connReq *connmgr.ConnReq) {
 // persistent connections to a peer within the server. This is used to avoid
 // persistent connection retries to peers we do not have any open channels with.
 func (s *server) prunePersistentPeerConnection(compressedPubKey [33]byte) {
-	srvrLog.Infof("Pruning peer %x from persistent connections, number of "+
-		"open channels is now zero", compressedPubKey)
-
 	pubKeyStr := string(compressedPubKey[:])
 
 	s.mu.Lock()
-	delete(s.persistentPeers, pubKeyStr)
-	delete(s.persistentPeersBackoff, pubKeyStr)
-	s.cancelConnReqs(pubKeyStr, nil)
+	if perm, ok := s.persistentPeers[pubKeyStr]; ok && !perm {
+		delete(s.persistentPeers, pubKeyStr)
+		delete(s.persistentPeersBackoff, pubKeyStr)
+		s.cancelConnReqs(pubKeyStr, nil)
+		s.mu.Unlock()
+
+		srvrLog.Infof("Pruned peer %x from persistent connections, "+
+			"peer has no open channels", compressedPubKey)
+
+		return
+	}
 	s.mu.Unlock()
 }
 
@@ -2506,7 +2551,7 @@ func (s *server) OutboundPeerConnected(connReq *connmgr.ConnReq, conn net.Conn) 
 		return
 	}
 	if _, ok := s.persistentConnReqs[pubStr]; !ok && connReq != nil {
-		srvrLog.Debugf("Ignoring cancelled outbound connection")
+		srvrLog.Debugf("Ignoring canceled outbound connection")
 		s.connMgr.Remove(connReq.ID())
 		conn.Close()
 		return
@@ -2713,7 +2758,8 @@ func (s *server) addPeer(p *peer) {
 	// TODO(roasbeef): pipe all requests through to the
 	// queryHandler/peerManager
 
-	pubStr := string(p.addr.IdentityKey.SerializeCompressed())
+	pubSer := p.addr.IdentityKey.SerializeCompressed()
+	pubStr := string(pubSer)
 
 	s.peersByPub[pubStr] = p
 
@@ -2722,6 +2768,13 @@ func (s *server) addPeer(p *peer) {
 	} else {
 		s.outboundPeers[pubStr] = p
 	}
+
+	// Inform the peer notifier of a peer online event so that it can be reported
+	// to clients listening for peer events.
+	var pubKey [33]byte
+	copy(pubKey[:], pubSer)
+
+	s.peerNotifier.NotifyPeerOnline(pubKey)
 }
 
 // peerInitializer asynchronously starts a newly connected peer after it has
@@ -2963,7 +3016,8 @@ func (s *server) removePeer(p *peer) {
 		return
 	}
 
-	pubStr := string(p.addr.IdentityKey.SerializeCompressed())
+	pubSer := p.addr.IdentityKey.SerializeCompressed()
+	pubStr := string(pubSer)
 
 	delete(s.peersByPub, pubStr)
 
@@ -2972,6 +3026,13 @@ func (s *server) removePeer(p *peer) {
 	} else {
 		delete(s.outboundPeers, pubStr)
 	}
+
+	// Inform the peer notifier of a peer offline event so that it can be
+	// reported to clients listening for peer events.
+	var pubKey [33]byte
+	copy(pubKey[:], pubSer)
+
+	s.peerNotifier.NotifyPeerOffline(pubKey)
 }
 
 // openChanReq is a message sent to the server in order to request the
@@ -3047,7 +3108,11 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress, perm bool) error {
 			Permanent: true,
 		}
 
-		s.persistentPeers[targetPub] = struct{}{}
+		// Since the user requested a permanent connection, we'll set
+		// the entry to true which will tell the server to continue
+		// reconnecting even if the number of channels with this peer is
+		// zero.
+		s.persistentPeers[targetPub] = true
 		if _, ok := s.persistentPeersBackoff[targetPub]; !ok {
 			s.persistentPeersBackoff[targetPub] = cfg.MinBackoff
 		}
@@ -3159,6 +3224,18 @@ func (s *server) OpenChannel(
 		return req.updates, req.err
 	}
 	s.mu.RUnlock()
+
+	// We'll wait until the peer is active before beginning the channel
+	// opening process.
+	select {
+	case <-peer.activeSignal:
+	case <-peer.quit:
+		req.err <- fmt.Errorf("peer %x disconnected", pubKeyBytes)
+		return req.updates, req.err
+	case <-s.quit:
+		req.err <- ErrServerShuttingDown
+		return req.updates, req.err
+	}
 
 	// If the fee rate wasn't specified, then we'll use a default
 	// confirmation target.

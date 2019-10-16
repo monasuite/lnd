@@ -168,7 +168,7 @@ func migrateInvoiceTimeSeries(tx *bbolt.Tx) error {
 		invoiceBytesCopy = append(invoiceBytesCopy, padding...)
 
 		invoiceReader := bytes.NewReader(invoiceBytesCopy)
-		invoice, err := deserializeInvoice(invoiceReader)
+		invoice, err := deserializeInvoiceLegacy(invoiceReader)
 		if err != nil {
 			return fmt.Errorf("unable to decode invoice: %v", err)
 		}
@@ -227,7 +227,7 @@ func migrateInvoiceTimeSeries(tx *bbolt.Tx) error {
 		// We've fully migrated an invoice, so we'll now update the
 		// invoice in-place.
 		var b bytes.Buffer
-		if err := serializeInvoice(&b, &invoice); err != nil {
+		if err := serializeInvoiceLegacy(&b, &invoice); err != nil {
 			return err
 		}
 
@@ -515,6 +515,9 @@ func migratePruneEdgeUpdateIndex(tx *bbolt.Tx) error {
 	// already exist given the assumption that the buckets above do as
 	// well.
 	edgeIndex, err := edges.CreateBucketIfNotExists(edgeIndexBucket)
+	if err != nil {
+		return fmt.Errorf("error creating edge index bucket: %s", err)
+	}
 	if edgeIndex == nil {
 		return fmt.Errorf("unable to create/fetch edge index " +
 			"bucket")
@@ -845,7 +848,7 @@ func migrateOutgoingPayments(tx *bbolt.Tx) error {
 		}
 
 		var attemptBuf bytes.Buffer
-		if err := serializePaymentAttemptInfo(&attemptBuf, s); err != nil {
+		if err := serializePaymentAttemptInfoMigration9(&attemptBuf, s); err != nil {
 			return err
 		}
 

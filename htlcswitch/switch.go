@@ -2,7 +2,6 @@ package htlcswitch
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sync"
@@ -17,6 +16,7 @@ import (
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/contractcourt"
+	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
@@ -65,10 +65,6 @@ var (
 	// ErrUnreadableFailureMessage is returned when the failure message
 	// cannot be decrypted.
 	ErrUnreadableFailureMessage = errors.New("unreadable failure message")
-
-	// zeroPreimage is the empty preimage which is returned when we have
-	// some errors.
-	zeroPreimage [sha256.Size]byte
 )
 
 // plexPacket encapsulates switch packet and adds error channel to receive
@@ -142,7 +138,7 @@ type Config struct {
 	// ExtractErrorEncrypter is an interface allowing switch to reextract
 	// error encrypters stored in the circuit map on restarts, since they
 	// are not stored directly within the database.
-	ExtractErrorEncrypter ErrorEncrypterExtracter
+	ExtractErrorEncrypter hop.ErrorEncrypterExtracter
 
 	// FetchLastChannelUpdate retrieves the latest routing policy for a
 	// target channel. This channel will typically be the outgoing channel
@@ -167,10 +163,9 @@ type Config struct {
 	// fails in forwarding packages.
 	AckEventTicker ticker.Ticker
 
-	// NotifyActiveChannel and NotifyInactiveChannel allow the link to tell
-	// the ChannelNotifier when channels become active and inactive.
-	NotifyActiveChannel   func(wire.OutPoint)
-	NotifyInactiveChannel func(wire.OutPoint)
+	// RejectHTLC is a flag that instructs the htlcswitch to reject any
+	// HTLCs that are not from the source hop.
+	RejectHTLC bool
 }
 
 // Switch is the central messaging bus for all incoming/outgoing HTLCs.
@@ -252,10 +247,6 @@ type Switch struct {
 	// resolutionMsgs is the channel that all external contract resolution
 	// messages will be sent over.
 	resolutionMsgs chan *resolutionMsg
-
-	// linkControl is a channel used to propagate add/remove/get htlc
-	// switch handler commands.
-	linkControl chan interface{}
 
 	// pendingFwdingEvents is the set of forwarding events which have been
 	// collected during the current interval, but hasn't yet been written
@@ -350,7 +341,7 @@ func (s *Switch) GetPaymentResult(paymentID uint64, paymentHash lntypes.Hash,
 		nChan  <-chan *networkResult
 		err    error
 		outKey = CircuitKey{
-			ChanID: sourceHop,
+			ChanID: hop.Source,
 			HtlcID: paymentID,
 		}
 	)
@@ -424,7 +415,7 @@ func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, paymentID uint64,
 	// this stage it means that packet haven't left boundaries of our
 	// system and something wrong happened.
 	packet := &htlcPacket{
-		incomingChanID: sourceHop,
+		incomingChanID: hop.Source,
 		incomingHTLCID: paymentID,
 		outgoingChanID: firstHop,
 		htlc:           htlc,
@@ -434,60 +425,35 @@ func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, paymentID uint64,
 }
 
 // UpdateForwardingPolicies sends a message to the switch to update the
-// forwarding policies for the set of target channels. If the set of targeted
-// channels is nil, then the forwarding policies for all active channels with
-// be updated.
+// forwarding policies for the set of target channels, keyed in chanPolicies.
 //
 // NOTE: This function is synchronous and will block until either the
 // forwarding policies for all links have been updated, or the switch shuts
 // down.
-func (s *Switch) UpdateForwardingPolicies(newPolicy ForwardingPolicy,
-	targetChans ...wire.OutPoint) error {
+func (s *Switch) UpdateForwardingPolicies(
+	chanPolicies map[wire.OutPoint]ForwardingPolicy) {
 
-	log.Debugf("Updating link policies: %v", newLogClosure(func() string {
-		return spew.Sdump(newPolicy)
+	log.Tracef("Updating link policies: %v", newLogClosure(func() string {
+		return spew.Sdump(chanPolicies)
 	}))
-
-	var linksToUpdate []ChannelLink
 
 	s.indexMtx.RLock()
 
-	// If no channels have been targeted, then we'll collect all inks to
-	// update their policies.
-	if len(targetChans) == 0 {
-		for _, link := range s.linkIndex {
-			linksToUpdate = append(linksToUpdate, link)
+	// Update each link in chanPolicies.
+	for targetLink, policy := range chanPolicies {
+		cid := lnwire.NewChanIDFromOutPoint(&targetLink)
+
+		link, ok := s.linkIndex[cid]
+		if !ok {
+			log.Debugf("Unable to find ChannelPoint(%v) to update "+
+				"link policy", targetLink)
+			continue
 		}
-	} else {
-		// Otherwise, we'll only attempt to update the forwarding
-		// policies for the set of targeted links.
-		for _, targetLink := range targetChans {
-			cid := lnwire.NewChanIDFromOutPoint(&targetLink)
 
-			// If we can't locate a link by its converted channel
-			// ID, then we'll return an error back to the caller.
-			link, ok := s.linkIndex[cid]
-			if !ok {
-				s.indexMtx.RUnlock()
-
-				return fmt.Errorf("unable to find "+
-					"ChannelPoint(%v) to update link "+
-					"policy", targetLink)
-			}
-
-			linksToUpdate = append(linksToUpdate, link)
-		}
+		link.UpdateForwardingPolicy(policy)
 	}
 
 	s.indexMtx.RUnlock()
-
-	// With all the links we need to update collected, we can release the
-	// mutex then update each link directly.
-	for _, link := range linksToUpdate {
-		link.UpdateForwardingPolicy(newPolicy)
-	}
-
-	return nil
 }
 
 // forward is used in order to find next channel link and apply htlc update.
@@ -509,7 +475,7 @@ func (s *Switch) forward(packet *htlcPacket) error {
 			return ErrDuplicateAdd
 
 		case len(actions.Fails) == 1:
-			if packet.incomingChanID == sourceHop {
+			if packet.incomingChanID == hop.Source {
 				return err
 			}
 
@@ -988,7 +954,7 @@ func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
 	// go on chain.
 	case isResolution && htlc.Reason == nil:
 		userErr := fmt.Sprintf("payment was resolved "+
-			"on-chain, then cancelled back (hash=%v, pid=%d)",
+			"on-chain, then canceled back (hash=%v, pid=%d)",
 			paymentHash, paymentID)
 
 		return &ForwardingError{
@@ -1025,7 +991,16 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 	// payment circuit within our internal state so we can properly forward
 	// the ultimate settle message back latter.
 	case *lnwire.UpdateAddHTLC:
-		if packet.incomingChanID == sourceHop {
+		// Check if the node is set to reject all onward HTLCs and also make
+		// sure that HTLC is not from the source node.
+		if s.cfg.RejectHTLC && packet.incomingChanID != hop.Source {
+			failure := &lnwire.FailChannelDisabled{}
+			addErr := fmt.Errorf("unable to forward any htlcs")
+
+			return s.failAddPacket(packet, failure, addErr)
+		}
+
+		if packet.incomingChanID == hop.Source {
 			// A blank incomingChanID indicates that this is
 			// a pending user-initiated payment.
 			return s.handleLocalDispatch(packet)
@@ -1067,7 +1042,7 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 
 			// If the link doesn't yet have a source chan ID, then
 			// we'll skip it as well.
-			case link.ShortChanID() == sourceHop:
+			case link.ShortChanID() == hop.Source:
 				continue
 			}
 
@@ -1194,11 +1169,7 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 				fail.Reason = circuit.ErrorEncrypter.EncryptMalformedError(
 					fail.Reason,
 				)
-				if err != nil {
-					err = fmt.Errorf("unable to obfuscate "+
-						"error: %v", err)
-					log.Error(err)
-				}
+
 			default:
 				// Otherwise, it's a forwarded error, so we'll perform a
 				// wrapper encryption as normal.
@@ -1213,7 +1184,7 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 			//
 			// TODO(roasbeef): only do this once link actually
 			// fully settles?
-			localHTLC := packet.incomingChanID == sourceHop
+			localHTLC := packet.incomingChanID == hop.Source
 			if !localHTLC {
 				s.fwdEventMtx.Lock()
 				s.pendingFwdingEvents = append(
@@ -1232,7 +1203,7 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 
 		// A blank IncomingChanID in a circuit indicates that it is a pending
 		// user-initiated payment.
-		if packet.incomingChanID == sourceHop {
+		if packet.incomingChanID == hop.Source {
 			return s.handleLocalDispatch(packet)
 		}
 
@@ -1789,7 +1760,7 @@ func (s *Switch) reforwardResponses() error {
 		shortChanID := openChannel.ShortChanID()
 
 		// Locally-initiated payments never need reforwarding.
-		if shortChanID == sourceHop {
+		if shortChanID == hop.Source {
 			continue
 		}
 
@@ -1890,7 +1861,7 @@ func (s *Switch) reforwardSettleFails(fwdPkgs []*channeldb.FwdPkg) {
 			// commitment state, so we'll forward this to the switch so the
 			// backwards undo can continue.
 			case lnwallet.Fail:
-				// Fetch the reason the HTLC was cancelled so we can
+				// Fetch the reason the HTLC was canceled so we can
 				// continue to propagate it.
 				failPacket := &htlcPacket{
 					outgoingChanID: fwdPkg.Source,
@@ -1985,7 +1956,7 @@ func (s *Switch) AddLink(link ChannelLink) error {
 	}
 
 	shortChanID := link.ShortChanID()
-	if shortChanID == sourceHop {
+	if shortChanID == hop.Source {
 		log.Infof("Adding pending link chan_id=%v, short_chan_id=%v",
 			chanID, shortChanID)
 
@@ -2020,11 +1991,6 @@ func (s *Switch) addLiveLink(link ChannelLink) {
 		s.interfaceIndex[peerPub] = make(map[lnwire.ChannelID]ChannelLink)
 	}
 	s.interfaceIndex[peerPub][link.ChanID()] = link
-
-	// Inform the channel notifier if the link has become active.
-	if link.EligibleToForward() {
-		s.cfg.NotifyActiveChannel(*link.ChannelPoint())
-	}
 }
 
 // GetLink is used to initiate the handling of the get link command. The
@@ -2100,9 +2066,6 @@ func (s *Switch) removeLink(chanID lnwire.ChannelID) ChannelLink {
 		return nil
 	}
 
-	// Inform the Channel Notifier about the link becoming inactive.
-	s.cfg.NotifyInactiveChannel(*link.ChannelPoint())
-
 	// Remove the channel from live link indexes.
 	delete(s.pendingLinkIndex, link.ChanID())
 	delete(s.linkIndex, link.ChanID())
@@ -2148,7 +2111,7 @@ func (s *Switch) UpdateShortChanID(chanID lnwire.ChannelID) error {
 	}
 
 	// Reject any blank short channel ids.
-	if shortChanID == sourceHop {
+	if shortChanID == hop.Source {
 		return fmt.Errorf("refusing trivial short_chan_id for chan_id=%v"+
 			"live link", chanID)
 	}
@@ -2222,18 +2185,6 @@ func (s *Switch) openCircuits(keystones ...Keystone) error {
 // from the circuit map.
 func (s *Switch) deleteCircuits(inKeys ...CircuitKey) error {
 	return s.circuits.DeleteCircuits(inKeys...)
-}
-
-// lookupCircuit queries the in memory representation of the circuit map to
-// retrieve a particular circuit.
-func (s *Switch) lookupCircuit(inKey CircuitKey) *PaymentCircuit {
-	return s.circuits.LookupCircuit(inKey)
-}
-
-// lookupOpenCircuit queries the in-memory representation of the circuit map for a
-// circuit whose outgoing circuit key matches outKey.
-func (s *Switch) lookupOpenCircuit(outKey CircuitKey) *PaymentCircuit {
-	return s.circuits.LookupOpenCircuit(outKey)
 }
 
 // FlushForwardingEvents flushes out the set of pending forwarding events to
