@@ -593,6 +593,12 @@ var (
 				"soa.lnd.nodes.directory",
 			},
 		},
+
+		monacoinTestnetGenesis: {
+			{
+				"testlnd.nodes.directory",
+			},
+		},
 	}
 )
 
