@@ -452,7 +452,7 @@ Notice the `[Bitcoin]` section. This section houses the parameters for the
 Bitcoin chain. `lnd` also supports Monacoin testnet4 (but not both BTC and MONA
 at the same time), so when working with Monacoin be sure to set to parameters
 for Monacoin accordingly. See a more detailed sample config file available
-[here](https://github.com/lightningnetwork/lnd/blob/master/sample-lnd.conf)
+[here](https://github.com/monasuite/lnd/blob/master/sample-lnd.conf)
 and explore the other sections for node configuration, including `[Btcd]`,
 `[Bitcoind]`, `[Neutrino]`, `[Monad]`, and `[MOnacoind]` depending on which
 chain and node type you're using.
