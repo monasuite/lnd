@@ -16,6 +16,7 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/davecgh/go-spew/spew"
 	_ "github.com/monaarchives/btcwallet/walletdb/bdb"
+	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/shachain"
@@ -68,6 +69,8 @@ var (
 	privKey, pubKey = btcec.PrivKeyFromBytes(btcec.S256(), key[:])
 
 	wireSig, _ = lnwire.NewSigFromSignature(testSig)
+
+	testClock = clock.NewTestClock(testNow)
 )
 
 // makeTestDB creates a new instance of the ChannelDB for testing purposes. A
@@ -82,7 +85,7 @@ func makeTestDB() (*DB, func(), error) {
 	}
 
 	// Next, create channeldb for the first time.
-	cdb, err := Open(tempDirName)
+	cdb, err := Open(tempDirName, OptionClock(testClock))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -524,8 +527,32 @@ func TestChannelStateTransition(t *testing.T) {
 	// First update the local node's broadcastable state and also add a
 	// CommitDiff remote node's as well in order to simulate a proper state
 	// transition.
-	if err := channel.UpdateCommitment(&commitment); err != nil {
+	unsignedAckedUpdates := []LogUpdate{
+		{
+			LogIndex: 2,
+			UpdateMsg: &lnwire.UpdateAddHTLC{
+				ChanID: lnwire.ChannelID{1, 2, 3},
+			},
+		},
+	}
+
+	err = channel.UpdateCommitment(&commitment, unsignedAckedUpdates)
+	if err != nil {
 		t.Fatalf("unable to update commitment: %v", err)
+	}
+
+	// Assert that update is correctly written to the database.
+	dbUnsignedAckedUpdates, err := channel.UnsignedAckedUpdates()
+	if err != nil {
+		t.Fatalf("unable to fetch dangling remote updates: %v", err)
+	}
+	if len(dbUnsignedAckedUpdates) != 1 {
+		t.Fatalf("unexpected number of dangling remote updates")
+	}
+	if !reflect.DeepEqual(
+		dbUnsignedAckedUpdates[0], unsignedAckedUpdates[0],
+	) {
+		t.Fatalf("unexpected update")
 	}
 
 	// The balances, new update, the HTLCs and the changes to the fake
