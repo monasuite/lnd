@@ -27,7 +27,7 @@ type InvoiceDatabase interface {
 	NotifyExitHopHtlc(payHash lntypes.Hash, paidAmount lnwire.MilliSatoshi,
 		expiry uint32, currentHeight int32,
 		circuitKey channeldb.CircuitKey, hodlChan chan<- interface{},
-		eob []byte) (*invoices.HodlEvent, error)
+		payload invoices.Payload) (*invoices.HtlcResolution, error)
 
 	// CancelInvoice attempts to cancel the invoice corresponding to the
 	// passed payment hash.
@@ -36,7 +36,7 @@ type InvoiceDatabase interface {
 	// SettleHodlInvoice settles a hold invoice.
 	SettleHodlInvoice(preimage lntypes.Preimage) error
 
-	// HodlUnsubscribeAll unsubscribes from all hodl events.
+	// HodlUnsubscribeAll unsubscribes from all htlc resolutions.
 	HodlUnsubscribeAll(subscriber chan<- interface{})
 }
 
@@ -100,23 +100,23 @@ type ChannelLink interface {
 	// policy to govern if it an incoming HTLC should be forwarded or not.
 	UpdateForwardingPolicy(ForwardingPolicy)
 
-	// HtlcSatifiesPolicy should return a nil error if the passed HTLC
-	// details satisfy the current forwarding policy fo the target link.
-	// Otherwise, a valid protocol failure message should be returned in
-	// order to signal to the source of the HTLC, the policy consistency
+	// CheckHtlcForward should return a nil error if the passed HTLC details
+	// satisfy the current forwarding policy fo the target link. Otherwise,
+	// a LinkError with a valid protocol failure message should be returned
+	// in order to signal to the source of the HTLC, the policy consistency
 	// issue.
-	HtlcSatifiesPolicy(payHash [32]byte, incomingAmt lnwire.MilliSatoshi,
+	CheckHtlcForward(payHash [32]byte, incomingAmt lnwire.MilliSatoshi,
 		amtToForward lnwire.MilliSatoshi,
 		incomingTimeout, outgoingTimeout uint32,
-		heightNow uint32) lnwire.FailureMessage
+		heightNow uint32) *LinkError
 
-	// HtlcSatifiesPolicyLocal should return a nil error if the passed HTLC
-	// details satisfy the current channel policy.  Otherwise, a valid
-	// protocol failure message should be returned in order to signal the
-	// violation. This call is intended to be used for locally initiated
+	// CheckHtlcTransit should return a nil error if the passed HTLC details
+	// satisfy the current channel policy.  Otherwise, a LinkError with a
+	// valid protocol failure message should be returned in order to signal
+	// the violation. This call is intended to be used for locally initiated
 	// payments for which there is no corresponding incoming htlc.
-	HtlcSatifiesPolicyLocal(payHash [32]byte, amt lnwire.MilliSatoshi,
-		timeout uint32, heightNow uint32) lnwire.FailureMessage
+	CheckHtlcTransit(payHash [32]byte, amt lnwire.MilliSatoshi,
+		timeout uint32, heightNow uint32) *LinkError
 
 	// Bandwidth returns the amount of milli-satoshis which current link
 	// might pass through channel link. The value returned from this method

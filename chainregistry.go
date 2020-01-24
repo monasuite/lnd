@@ -18,6 +18,8 @@ import (
 	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monaarchives/btcwallet/wallet"
 	"github.com/monaarchives/btcwallet/walletdb"
+	"github.com/monasuite/neutrino"
+	"github.com/monasuite/neutrino/headerfs"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chainntnfs/bitcoindnotify"
 	"github.com/monasuite/lnd/chainntnfs/btcdnotify"
@@ -28,14 +30,28 @@ import (
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwallet/btcwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing/chainview"
-	"github.com/monasuite/neutrino"
-	"github.com/monasuite/neutrino/headerfs"
 )
 
 const (
-	defaultBitcoinMinHTLCMSat = lnwire.MilliSatoshi(1000)
+	// defaultBitcoinMinHTLCMSat is the default smallest value htlc this
+	// node will accept. This value is proposed in the channel open sequence
+	// and cannot be changed during the life of the channel. It is zero by
+	// default to allow maximum flexibility in deciding what size payments
+	// to forward.
+	//
+	// All forwarded payments are subjected to the min htlc constraint of
+	// the routing policy of the outgoing channel. This implicitly controls
+	// the minimum htlc value on the incoming channel too.
+	defaultBitcoinMinHTLCInMSat = lnwire.MilliSatoshi(1)
+
+	// defaultBitcoinMinHTLCOutMSat is the default minimum htlc value that
+	// we require for sending out htlcs. Our channel peer may have a lower
+	// min htlc channel parameter, but we - by default - don't forward
+	// anything under the value defined here.
+	defaultBitcoinMinHTLCOutMSat = lnwire.MilliSatoshi(1000)
 
 	// DefaultBitcoinBaseFeeMSat is the default forwarding base fee.
 	DefaultBitcoinBaseFeeMSat = lnwire.MilliSatoshi(1000)
@@ -47,19 +63,24 @@ const (
 	// delta.
 	DefaultBitcoinTimeLockDelta = 40
 
-	defaultMonacoinMinHTLCMSat   = lnwire.MilliSatoshi(1000)
-	defaultMonacoinBaseFeeMSat   = lnwire.MilliSatoshi(1000)
-	defaultMonacoinFeeRate       = lnwire.MilliSatoshi(1)
-	defaultMonacoinTimeLockDelta = 960
-	defaultMonacoinDustLimit     = btcutil.Amount(54600)
+	defaultMonacoinMinHTLCInMSat  = lnwire.MilliSatoshi(1)
+	defaultMonacoinMinHTLCOutMSat = lnwire.MilliSatoshi(1000)
+	defaultMonacoinBaseFeeMSat    = lnwire.MilliSatoshi(1000)
+	defaultMonacoinFeeRate        = lnwire.MilliSatoshi(1)
+	defaultMonacoinTimeLockDelta  = 960
+	defaultMonacoinDustLimit      = btcutil.Amount(54600)
 
 	// defaultBitcoinStaticFeePerKW is the fee rate of 50 sat/vbyte
 	// expressed in sat/kw.
-	defaultBitcoinStaticFeePerKW = lnwallet.SatPerKWeight(12500)
+	defaultBitcoinStaticFeePerKW = chainfee.SatPerKWeight(12500)
+
+	// defaultBitcoinStaticMinRelayFeeRate is the min relay fee used for
+	// static estimators.
+	defaultBitcoinStaticMinRelayFeeRate = chainfee.FeePerKwFloor
 
 	// defaultMonacoinStaticFeePerKW is the fee rate of 200 sat/vbyte
 	// expressed in sat/kw.
-	defaultMonacoinStaticFeePerKW = lnwallet.SatPerKWeight(50000)
+	defaultMonacoinStaticFeePerKW = chainfee.SatPerKWeight(50000)
 
 	// btcToMonaConversionRate is a fixed ratio used in order to scale up
 	// payments when running on the Monacoin chain.
@@ -75,7 +96,7 @@ var defaultBtcChannelConstraints = channeldb.ChannelConstraints{
 	MaxAcceptedHtlcs: input.MaxHTLCNumber / 2,
 }
 
-// defaultLtcChannelConstraints is the default set of channel constraints that are
+// defaultMonaChannelConstraints is the default set of channel constraints that are
 // meant to be used when initially funding a Monacoin channel.
 var defaultMonaChannelConstraints = channeldb.ChannelConstraints{
 	DustLimit:        defaultMonacoinDustLimit,
@@ -112,7 +133,7 @@ func (c chainCode) String() string {
 type chainControl struct {
 	chainIO lnwallet.BlockChainIO
 
-	feeEstimator lnwallet.FeeEstimator
+	feeEstimator chainfee.Estimator
 
 	signer input.Signer
 
@@ -129,6 +150,8 @@ type chainControl struct {
 	wallet *lnwallet.LightningWallet
 
 	routingPolicy htlcswitch.ForwardingPolicy
+
+	minHtlcIn lnwire.MilliSatoshi
 }
 
 // newChainControlFromConfig attempts to create a chainControl instance
@@ -156,22 +179,25 @@ func newChainControlFromConfig(cfg *config, chanDB *channeldb.DB,
 	switch registeredChains.PrimaryChain() {
 	case bitcoinChain:
 		cc.routingPolicy = htlcswitch.ForwardingPolicy{
-			MinHTLC:       cfg.Bitcoin.MinHTLC,
+			MinHTLCOut:    cfg.Bitcoin.MinHTLCOut,
 			BaseFee:       cfg.Bitcoin.BaseFee,
 			FeeRate:       cfg.Bitcoin.FeeRate,
 			TimeLockDelta: cfg.Bitcoin.TimeLockDelta,
 		}
-		cc.feeEstimator = lnwallet.NewStaticFeeEstimator(
-			defaultBitcoinStaticFeePerKW, 0,
+		cc.minHtlcIn = cfg.Bitcoin.MinHTLCIn
+		cc.feeEstimator = chainfee.NewStaticEstimator(
+			defaultBitcoinStaticFeePerKW,
+			defaultBitcoinStaticMinRelayFeeRate,
 		)
 	case monacoinChain:
 		cc.routingPolicy = htlcswitch.ForwardingPolicy{
-			MinHTLC:       cfg.Monacoin.MinHTLC,
+			MinHTLCOut:    cfg.Monacoin.MinHTLCOut,
 			BaseFee:       cfg.Monacoin.BaseFee,
 			FeeRate:       cfg.Monacoin.FeeRate,
 			TimeLockDelta: cfg.Monacoin.TimeLockDelta,
 		}
-		cc.feeEstimator = lnwallet.NewStaticFeeEstimator(
+		cc.minHtlcIn = cfg.Monacoin.MinHTLCIn
+		cc.feeEstimator = chainfee.NewStaticEstimator(
 			defaultMonacoinStaticFeePerKW, 0,
 		)
 	default:
@@ -219,8 +245,8 @@ func newChainControlFromConfig(cfg *config, chanDB *channeldb.DB,
 		if cfg.NeutrinoMode.FeeURL != "" {
 			ltndLog.Infof("Using API fee estimator!")
 
-			estimator := lnwallet.NewWebAPIFeeEstimator(
-				lnwallet.SparseConfFeeSource{
+			estimator := chainfee.NewWebAPIEstimator(
+				chainfee.SparseConfFeeSource{
 					URL: cfg.NeutrinoMode.FeeURL,
 				},
 				defaultBitcoinStaticFeePerKW,
@@ -322,8 +348,8 @@ func newChainControlFromConfig(cfg *config, chanDB *channeldb.DB,
 			// if we're using bitcoind as a backend, then we can
 			// use live fee estimates, rather than a statically
 			// coded value.
-			fallBackFeeRate := lnwallet.SatPerKVByte(25 * 1000)
-			cc.feeEstimator, err = lnwallet.NewBitcoindFeeEstimator(
+			fallBackFeeRate := chainfee.SatPerKVByte(25 * 1000)
+			cc.feeEstimator, err = chainfee.NewBitcoindEstimator(
 				*rpcConfig, fallBackFeeRate.FeePerKWeight(),
 			)
 			if err != nil {
@@ -339,8 +365,8 @@ func newChainControlFromConfig(cfg *config, chanDB *channeldb.DB,
 			// if we're using monacoind as a backend, then we can
 			// use live fee estimates, rather than a statically
 			// coded value.
-			fallBackFeeRate := lnwallet.SatPerKVByte(25 * 1000)
-			cc.feeEstimator, err = lnwallet.NewBitcoindFeeEstimator(
+			fallBackFeeRate := chainfee.SatPerKVByte(25 * 1000)
+			cc.feeEstimator, err = chainfee.NewBitcoindEstimator(
 				*rpcConfig, fallBackFeeRate.FeePerKWeight(),
 			)
 			if err != nil {
@@ -444,8 +470,8 @@ func newChainControlFromConfig(cfg *config, chanDB *channeldb.DB,
 			// if we're using btcd as a backend, then we can use
 			// live fee estimates, rather than a statically coded
 			// value.
-			fallBackFeeRate := lnwallet.SatPerKVByte(25 * 1000)
-			cc.feeEstimator, err = lnwallet.NewBtcdFeeEstimator(
+			fallBackFeeRate := chainfee.SatPerKVByte(25 * 1000)
+			cc.feeEstimator, err = chainfee.NewBtcdEstimator(
 				*rpcConfig, fallBackFeeRate.FeePerKWeight(),
 			)
 			if err != nil {

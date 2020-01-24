@@ -13,6 +13,7 @@ import (
 	"github.com/coreos/bbolt"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/routing/route"
 )
 
 var (
@@ -145,7 +146,14 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 
 	fetchNode := func(pub *btcec.PublicKey) (*channeldb.LightningNode, error) {
 		if pub != nil {
-			dbNode, err := d.db.FetchLightningNode(pub)
+			vertex, err := route.NewVertexFromBytes(
+				pub.SerializeCompressed(),
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			dbNode, err := d.db.FetchLightningNode(nil, vertex)
 			switch {
 			case err == channeldb.ErrGraphNodeNotFound:
 				fallthrough
@@ -157,8 +165,9 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 							IP: bytes.Repeat([]byte("a"), 16),
 						},
 					},
-					Features: lnwire.NewFeatureVector(nil,
-						lnwire.GlobalFeatures),
+					Features: lnwire.NewFeatureVector(
+						nil, lnwire.Features,
+					),
 					AuthSigBytes: testSig.Serialize(),
 				}
 				graphNode.AddPubKey(pub)
@@ -183,7 +192,9 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 					IP: bytes.Repeat([]byte("a"), 16),
 				},
 			},
-			Features:     lnwire.NewFeatureVector(nil, lnwire.GlobalFeatures),
+			Features: lnwire.NewFeatureVector(
+				nil, lnwire.Features,
+			),
 			AuthSigBytes: testSig.Serialize(),
 		}
 		dbNode.AddPubKey(nodeKey)
@@ -287,7 +298,9 @@ func (d *databaseChannelGraph) addRandNode() (*btcec.PublicKey, error) {
 				IP: bytes.Repeat([]byte("a"), 16),
 			},
 		},
-		Features:     lnwire.NewFeatureVector(nil, lnwire.GlobalFeatures),
+		Features: lnwire.NewFeatureVector(
+			nil, lnwire.Features,
+		),
 		AuthSigBytes: testSig.Serialize(),
 	}
 	dbNode.AddPubKey(nodeKey)
@@ -302,7 +315,7 @@ func (d *databaseChannelGraph) addRandNode() (*btcec.PublicKey, error) {
 // memChannelGraph is an implementation of the autopilot.ChannelGraph backed by
 // an in-memory graph.
 type memChannelGraph struct {
-	graph map[NodeID]memNode
+	graph map[NodeID]*memNode
 }
 
 // A compile time assertion to ensure memChannelGraph meets the
@@ -313,7 +326,7 @@ var _ ChannelGraph = (*memChannelGraph)(nil)
 // implementation.
 func newMemChannelGraph() *memChannelGraph {
 	return &memChannelGraph{
-		graph: make(map[NodeID]memNode),
+		graph: make(map[NodeID]*memNode),
 	}
 }
 
@@ -355,14 +368,14 @@ func (m *memChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	capacity btcutil.Amount) (*ChannelEdge, *ChannelEdge, error) {
 
 	var (
-		vertex1, vertex2 memNode
+		vertex1, vertex2 *memNode
 		ok               bool
 	)
 
 	if node1 != nil {
 		vertex1, ok = m.graph[NewNodeID(node1)]
 		if !ok {
-			vertex1 = memNode{
+			vertex1 = &memNode{
 				pub: node1,
 				addrs: []net.Addr{
 					&net.TCPAddr{
@@ -376,7 +389,7 @@ func (m *memChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 		if err != nil {
 			return nil, nil, err
 		}
-		vertex1 = memNode{
+		vertex1 = &memNode{
 			pub: newPub,
 			addrs: []net.Addr{
 				&net.TCPAddr{
@@ -389,7 +402,7 @@ func (m *memChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	if node2 != nil {
 		vertex2, ok = m.graph[NewNodeID(node2)]
 		if !ok {
-			vertex2 = memNode{
+			vertex2 = &memNode{
 				pub: node2,
 				addrs: []net.Addr{
 					&net.TCPAddr{
@@ -403,7 +416,7 @@ func (m *memChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 		if err != nil {
 			return nil, nil, err
 		}
-		vertex2 = memNode{
+		vertex2 = &memNode{
 			pub: newPub,
 			addrs: []net.Addr{
 				&net.TCPAddr{
@@ -441,7 +454,7 @@ func (m *memChannelGraph) addRandNode() (*btcec.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	vertex := memNode{
+	vertex := &memNode{
 		pub: newPub,
 		addrs: []net.Addr{
 			&net.TCPAddr{

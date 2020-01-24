@@ -19,6 +19,7 @@ import (
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lnrpc/signrpc"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/sweep"
 	"google.golang.org/grpc"
 	"gopkg.in/macaroon-bakery.v2/bakery"
@@ -303,7 +304,7 @@ func (w *WalletKit) SendOutputs(ctx context.Context,
 	// Now that we have the outputs mapped, we can request that the wallet
 	// attempt to create this transaction.
 	tx, err := w.cfg.Wallet.SendOutputs(
-		outputsToCreate, lnwallet.SatPerKWeight(req.SatPerKw),
+		outputsToCreate, chainfee.SatPerKWeight(req.SatPerKw),
 	)
 	if err != nil {
 		return nil, err
@@ -403,6 +404,9 @@ func (w *WalletKit) PendingSweeps(ctx context.Context,
 		broadcastAttempts := uint32(pendingInput.BroadcastAttempts)
 		nextBroadcastHeight := uint32(pendingInput.NextBroadcastHeight)
 
+		requestedFee := pendingInput.Params.Fee
+		requestedFeeRate := uint32(requestedFee.FeeRate.FeePerKVByte() / 1000)
+
 		rpcPendingSweeps = append(rpcPendingSweeps, &PendingSweep{
 			Outpoint:            op,
 			WitnessType:         witnessType,
@@ -410,6 +414,9 @@ func (w *WalletKit) PendingSweeps(ctx context.Context,
 			SatPerByte:          satPerByte,
 			BroadcastAttempts:   broadcastAttempts,
 			NextBroadcastHeight: nextBroadcastHeight,
+			RequestedSatPerByte: requestedFeeRate,
+			RequestedConfTarget: requestedFee.ConfTarget,
+			Force:               pendingInput.Params.Force,
 		})
 	}
 
@@ -468,7 +475,7 @@ func (w *WalletKit) BumpFee(ctx context.Context,
 	}
 
 	// Construct the request's fee preference.
-	satPerKw := lnwallet.SatPerKVByte(in.SatPerByte * 1000).FeePerKWeight()
+	satPerKw := chainfee.SatPerKVByte(in.SatPerByte * 1000).FeePerKWeight()
 	feePreference := sweep.FeePreference{
 		ConfTarget: uint32(in.TargetConf),
 		FeeRate:    satPerKw,
@@ -479,7 +486,12 @@ func (w *WalletKit) BumpFee(ctx context.Context,
 	// bump its fee, which will result in a replacement transaction (RBF)
 	// being broadcast. If it is not aware of the input however,
 	// lnwallet.ErrNotMine is returned.
-	_, err = w.cfg.Sweeper.BumpFee(*op, feePreference)
+	params := sweep.Params{
+		Fee:   feePreference,
+		Force: in.Force,
+	}
+
+	_, err = w.cfg.Sweeper.UpdateParams(*op, params)
 	switch err {
 	case nil:
 		return &BumpFeeResponse{}, nil
@@ -535,7 +547,7 @@ func (w *WalletKit) BumpFee(ctx context.Context,
 	}
 
 	input := input.NewBaseInput(op, witnessType, signDesc, uint32(currentHeight))
-	if _, err = w.cfg.Sweeper.SweepInput(input, feePreference); err != nil {
+	if _, err = w.cfg.Sweeper.SweepInput(input, sweep.Params{Fee: feePreference}); err != nil {
 		return nil, err
 	}
 

@@ -17,6 +17,7 @@ import (
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/shachain"
 )
@@ -370,7 +371,7 @@ func TestCommitmentAndHTLCTransactions(t *testing.T) {
 
 	// Manually construct a new LightningChannel.
 	channelState := channeldb.OpenChannel{
-		ChanType:        channeldb.SingleFunderTweakless,
+		ChanType:        channeldb.SingleFunderTweaklessBit,
 		ChainHash:       *tc.netParams.GenesisHash,
 		FundingOutpoint: tc.fundingOutpoint,
 		ShortChannelID:  tc.shortChanID,
@@ -422,14 +423,12 @@ func TestCommitmentAndHTLCTransactions(t *testing.T) {
 	channel := LightningChannel{
 		channelState:  &channelState,
 		Signer:        signer,
-		localChanCfg:  &channelState.LocalChanCfg,
-		remoteChanCfg: &channelState.RemoteChanCfg,
+		commitBuilder: NewCommitmentBuilder(&channelState),
 	}
 	err = channel.createSignDesc()
 	if err != nil {
 		t.Fatalf("Failed to generate channel sign descriptor: %v", err)
 	}
-	channel.createStateHintObfuscator()
 
 	// The commitmentPoint is technically hidden in the spec, but we need it to
 	// generate the correct tweak.
@@ -440,8 +439,8 @@ func TestCommitmentAndHTLCTransactions(t *testing.T) {
 		LocalHtlcKeyTweak:   tweak,
 		LocalHtlcKey:        tc.localPaymentPubKey,
 		RemoteHtlcKey:       tc.remotePaymentPubKey,
-		DelayKey:            tc.localDelayPubKey,
-		NoDelayKey:          tc.remotePaymentPubKey,
+		ToLocalKey:          tc.localDelayPubKey,
+		ToRemoteKey:         tc.remotePaymentPubKey,
 		RevocationKey:       tc.localRevocationPubKey,
 	}
 
@@ -795,21 +794,30 @@ func TestCommitmentAndHTLCTransactions(t *testing.T) {
 		}
 		theHTLCView := htlcViewFromHTLCs(htlcs)
 
+		feePerKw := chainfee.SatPerKWeight(test.commitment.FeePerKw)
+		isOurs := true
+		height := test.commitment.CommitHeight
+
 		// Create unsigned commitment transaction.
-		commitmentView := &commitment{
-			height:       test.commitment.CommitHeight,
-			ourBalance:   test.commitment.LocalBalance,
-			theirBalance: test.commitment.RemoteBalance,
-			feePerKw:     SatPerKWeight(test.commitment.FeePerKw),
-			dustLimit:    tc.dustLimit,
-			isOurs:       true,
-		}
-		err = channel.createCommitmentTx(
-			commitmentView, theHTLCView, keys,
+		view, err := channel.commitBuilder.createUnsignedCommitmentTx(
+			test.commitment.LocalBalance,
+			test.commitment.RemoteBalance, isOurs, feePerKw,
+			height, theHTLCView, keys,
 		)
 		if err != nil {
 			t.Errorf("Case %d: Failed to create new commitment tx: %v", i, err)
 			continue
+		}
+
+		commitmentView := &commitment{
+			ourBalance:   view.ourBalance,
+			theirBalance: view.theirBalance,
+			txn:          view.txn,
+			fee:          view.fee,
+			height:       height,
+			feePerKw:     feePerKw,
+			dustLimit:    tc.dustLimit,
+			isOurs:       isOurs,
 		}
 
 		// Initialize LocalCommit, which is used in getSignedCommitTx.
@@ -843,9 +851,9 @@ func TestCommitmentAndHTLCTransactions(t *testing.T) {
 		// Generate second-level HTLC transactions for HTLCs in
 		// commitment tx.
 		htlcResolutions, err := extractHtlcResolutions(
-			SatPerKWeight(test.commitment.FeePerKw), true, signer,
-			htlcs, keys, channel.localChanCfg, channel.remoteChanCfg,
-			commitTx.TxHash(),
+			chainfee.SatPerKWeight(test.commitment.FeePerKw), true, signer,
+			htlcs, keys, &channel.channelState.LocalChanCfg,
+			&channel.channelState.RemoteChanCfg, commitTx.TxHash(),
 		)
 		if err != nil {
 			t.Errorf("Case %d: Failed to extract HTLC resolutions: %v", i, err)
@@ -1016,7 +1024,7 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	fakeFundingTxIn := wire.NewTxIn(fundingOut, nil, nil)
 
 	const channelBalance = btcutil.Amount(1 * 10e8)
-	const csvTimeout = uint32(5)
+	const csvTimeout = 5
 
 	// We also set up set some resources for the commitment transaction.
 	// Each side currently has 1 BTC within the channel, with a total
@@ -1040,8 +1048,10 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	// our commitments, if it's tweakless, his key will just be his regular
 	// pubkey.
 	bobPayKey := input.TweakPubKey(bobKeyPub, commitPoint)
+	channelType := channeldb.SingleFunderBit
 	if tweakless {
 		bobPayKey = bobKeyPub
+		channelType = channeldb.SingleFunderTweaklessBit
 	}
 
 	aliceCommitTweak := input.SingleTweakBytes(commitPoint, aliceKeyPub)
@@ -1049,6 +1059,20 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 
 	aliceSelfOutputSigner := &input.MockSigner{
 		Privkeys: []*btcec.PrivateKey{aliceKeyPriv},
+	}
+
+	aliceChanCfg := &channeldb.ChannelConfig{
+		ChannelConstraints: channeldb.ChannelConstraints{
+			DustLimit: DefaultDustLimit(),
+			CsvDelay:  csvTimeout,
+		},
+	}
+
+	bobChanCfg := &channeldb.ChannelConfig{
+		ChannelConstraints: channeldb.ChannelConstraints{
+			DustLimit: DefaultDustLimit(),
+			CsvDelay:  csvTimeout,
+		},
 	}
 
 	// With all the test data set up, we create the commitment transaction.
@@ -1059,13 +1083,13 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	// of 5 blocks before sweeping the output, while bob can spend
 	// immediately with either the revocation key, or his regular key.
 	keyRing := &CommitmentKeyRing{
-		DelayKey:      aliceDelayKey,
+		ToLocalKey:    aliceDelayKey,
 		RevocationKey: revokePubKey,
-		NoDelayKey:    bobPayKey,
+		ToRemoteKey:   bobPayKey,
 	}
 	commitmentTx, err := CreateCommitTx(
-		*fakeFundingTxIn, keyRing, csvTimeout, channelBalance,
-		channelBalance, DefaultDustLimit(),
+		channelType, *fakeFundingTxIn, keyRing, aliceChanCfg,
+		bobChanCfg, channelBalance, channelBalance,
 	)
 	if err != nil {
 		t.Fatalf("unable to create commitment transaction: %v", nil)

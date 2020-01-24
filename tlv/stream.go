@@ -1,8 +1,8 @@
 package tlv
 
 import (
+	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
@@ -21,15 +21,6 @@ var ErrStreamNotCanonical = errors.New("tlv stream is not canonical")
 // ErrRecordTooLarge signals that a decoded record has a length that is too
 // long to parse.
 var ErrRecordTooLarge = errors.New("record is too large")
-
-// ErrUnknownRequiredType is an error returned when decoding an unknown and even
-// type from a Stream.
-type ErrUnknownRequiredType Type
-
-// Error returns a human-readable description of unknown required type.
-func (t ErrUnknownRequiredType) Error() string {
-	return fmt.Sprintf("unknown required type: %d", t)
-}
 
 // Stream defines a TLV stream that can be used for encoding or decoding a set
 // of TLV Records.
@@ -149,16 +140,16 @@ func (s *Stream) Decode(r io.Reader) error {
 }
 
 // DecodeWithParsedTypes is identical to Decode, but if successful, returns a
-// TypeSet containing the types of all records that were decoded or ignored from
+// TypeMap containing the types of all records that were decoded or ignored from
 // the stream.
-func (s *Stream) DecodeWithParsedTypes(r io.Reader) (TypeSet, error) {
-	return s.decode(r, make(TypeSet))
+func (s *Stream) DecodeWithParsedTypes(r io.Reader) (TypeMap, error) {
+	return s.decode(r, make(TypeMap))
 }
 
 // decode is a helper function that performs the basis of stream decoding. If
 // the caller needs the set of parsed types, it must provide an initialized
-// parsedTypes, otherwise the returned TypeSet will be nil.
-func (s *Stream) decode(r io.Reader, parsedTypes TypeSet) (TypeSet, error) {
+// parsedTypes, otherwise the returned TypeMap will be nil.
+func (s *Stream) decode(r io.Reader, parsedTypes TypeMap) (TypeMap, error) {
 	var (
 		typ       Type
 		min       Type
@@ -240,15 +231,25 @@ func (s *Stream) decode(r io.Reader, parsedTypes TypeSet) (TypeSet, error) {
 				return nil, err
 			}
 
-		// This record type is unknown to the stream, fail if the type
-		// is even meaning that we are required to understand it.
-		case typ%2 == 0:
-			return nil, ErrUnknownRequiredType(typ)
+			// Record the successfully decoded type if the caller
+			// provided an initialized TypeMap.
+			if parsedTypes != nil {
+				parsedTypes[typ] = nil
+			}
 
 		// Otherwise, the record type is unknown and is odd, discard the
 		// number of bytes specified by length.
 		default:
-			_, err := io.CopyN(ioutil.Discard, r, int64(length))
+			// If the caller provided an initialized TypeMap, record
+			// the encoded bytes.
+			var b *bytes.Buffer
+			writer := ioutil.Discard
+			if parsedTypes != nil {
+				b = bytes.NewBuffer(make([]byte, 0, length))
+				writer = b
+			}
+
+			_, err := io.CopyN(writer, r, int64(length))
 			switch {
 
 			// We'll convert any EOFs to ErrUnexpectedEOF, since this
@@ -260,12 +261,10 @@ func (s *Stream) decode(r io.Reader, parsedTypes TypeSet) (TypeSet, error) {
 			case err != nil:
 				return nil, err
 			}
-		}
 
-		// Record the successfully decoded or ignored type if the
-		// caller provided an initialized TypeSet.
-		if parsedTypes != nil {
-			parsedTypes[typ] = struct{}{}
+			if parsedTypes != nil {
+				parsedTypes[typ] = b.Bytes()
+			}
 		}
 
 		// Update our record index so that we can begin our next search

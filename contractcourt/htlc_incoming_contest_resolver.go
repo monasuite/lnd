@@ -1,15 +1,17 @@
 package contractcourt
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
 
-	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/invoices"
-
 	"github.com/btcsuite/btcutil"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/htlcswitch/hop"
+	"github.com/monasuite/lnd/invoices"
 	"github.com/monasuite/lnd/lntypes"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 // htlcIncomingContestResolver is a ContractResolver that's able to resolve an
@@ -26,12 +28,24 @@ type htlcIncomingContestResolver struct {
 	// successfully.
 	htlcExpiry uint32
 
-	// circuitKey describes the incoming htlc that is being resolved.
-	circuitKey channeldb.CircuitKey
-
 	// htlcSuccessResolver is the inner resolver that may be utilized if we
 	// learn of the preimage.
 	htlcSuccessResolver
+}
+
+// newIncomingContestResolver instantiates a new incoming htlc contest resolver.
+func newIncomingContestResolver(
+	res lnwallet.IncomingHtlcResolution, broadcastHeight uint32,
+	htlc channeldb.HTLC, resCfg ResolverConfig) *htlcIncomingContestResolver {
+
+	success := newSuccessResolver(
+		res, broadcastHeight, htlc, resCfg,
+	)
+
+	return &htlcIncomingContestResolver{
+		htlcExpiry:          htlc.RefundTimeout,
+		htlcSuccessResolver: *success,
+	}
 }
 
 // Resolve attempts to resolve this contract. As we don't yet know of the
@@ -53,6 +67,22 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 		return nil, nil
 	}
 
+	// First try to parse the payload. If that fails, we can stop resolution
+	// now.
+	payload, err := h.decodePayload()
+	if err != nil {
+		log.Debugf("ChannelArbitrator(%v): cannot decode payload of "+
+			"htlc %v", h.ChanPoint, h.HtlcPoint())
+
+		// If we've locked in an htlc with an invalid payload on our
+		// commitment tx, we don't need to resolve it. The other party
+		// will time it out and get their funds back. This situation can
+		// present itself when we crash before processRemoteAdds in the
+		// link has ran.
+		h.resolved = true
+		return nil, nil
+	}
+
 	// Register for block epochs. After registration, the current height
 	// will be sent on the channel immediately.
 	blockEpochs, err := h.Notifier.RegisterBlockEpochNtfn(nil)
@@ -68,7 +98,7 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 			return nil, errResolverShuttingDown
 		}
 		currentHeight = newBlock.Height
-	case <-h.Quit:
+	case <-h.quit:
 		return nil, errResolverShuttingDown
 	}
 
@@ -100,7 +130,7 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 	applyPreimage := func(preimage lntypes.Preimage) error {
 		// Sanity check to see if this preimage matches our htlc. At
 		// this point it should never happen that it does not match.
-		if !preimage.Matches(h.payHash) {
+		if !preimage.Matches(h.htlc.RHash) {
 			return errors.New("preimage does not match hash")
 		}
 
@@ -137,10 +167,10 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 	preimageSubscription := h.PreimageDB.SubscribeUpdates()
 	defer preimageSubscription.CancelSubscription()
 
-	// Define closure to process hodl events either direct or triggered by
-	// later notifcation.
-	processHodlEvent := func(e invoices.HodlEvent) (ContractResolver,
-		error) {
+	// Define closure to process htlc resolutions either direct or triggered by
+	// later notification.
+	processHtlcResolution := func(e invoices.HtlcResolution) (
+		ContractResolver, error) {
 
 		if e.Preimage == nil {
 			log.Infof("%T(%v): Exit hop HTLC canceled "+
@@ -166,26 +196,34 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 	// on-chain. If this HTLC indeed pays to an existing invoice, the
 	// invoice registry will tell us what to do with the HTLC. This is
 	// identical to HTLC resolution in the link.
-	event, err := h.Registry.NotifyExitHopHtlc(
-		h.payHash, h.htlcAmt, h.htlcExpiry, currentHeight,
-		h.circuitKey, hodlChan, nil,
-	)
-	switch err {
-	case channeldb.ErrInvoiceNotFound:
-	case nil:
-		defer h.Registry.HodlUnsubscribeAll(hodlChan)
+	circuitKey := channeldb.CircuitKey{
+		ChanID: h.ShortChanID,
+		HtlcID: h.htlc.HtlcIndex,
+	}
 
-		// Resolve the htlc directly if possible.
-		if event != nil {
-			return processHodlEvent(*event)
-		}
-	default:
+	resolution, err := h.Registry.NotifyExitHopHtlc(
+		h.htlc.RHash, h.htlc.Amt, h.htlcExpiry, currentHeight,
+		circuitKey, hodlChan, payload,
+	)
+	if err != nil {
 		return nil, err
+	}
+
+	defer h.Registry.HodlUnsubscribeAll(hodlChan)
+
+	// If the resolution is non-nil (indicating that a settle or cancel has
+	// occurred), and the invoice is known to the registry (indicating that
+	// the htlc is paying one of our invoices and is not a forward), try to
+	// resolve it directly.
+	if resolution != nil &&
+		resolution.Outcome != invoices.ResultInvoiceNotFound {
+
+		return processHtlcResolution(*resolution)
 	}
 
 	// With the epochs and preimage subscriptions initialized, we'll query
 	// to see if we already know the preimage.
-	preimage, ok := h.PreimageDB.LookupPreimage(h.payHash)
+	preimage, ok := h.PreimageDB.LookupPreimage(h.htlc.RHash)
 	if ok {
 		// If we do, then this means we can claim the HTLC!  However,
 		// we don't know how to ourselves, so we'll return our inner
@@ -203,7 +241,7 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 		case preimage := <-preimageSubscription.WitnessUpdates:
 			// We receive all new preimages, so we need to ignore
 			// all except the preimage we are waiting for.
-			if !preimage.Matches(h.payHash) {
+			if !preimage.Matches(h.htlc.RHash) {
 				continue
 			}
 
@@ -217,9 +255,9 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 			return &h.htlcSuccessResolver, nil
 
 		case hodlItem := <-hodlChan:
-			hodlEvent := hodlItem.(invoices.HodlEvent)
+			htlcResolution := hodlItem.(invoices.HtlcResolution)
 
-			return processHodlEvent(hodlEvent)
+			return processHtlcResolution(htlcResolution)
 
 		case newBlock, ok := <-blockEpochs.Epochs:
 			if !ok {
@@ -239,7 +277,7 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 				return nil, h.Checkpoint(h)
 			}
 
-		case <-h.Quit:
+		case <-h.quit:
 			return nil, errResolverShuttingDown
 		}
 	}
@@ -249,7 +287,7 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 func (h *htlcIncomingContestResolver) report() *ContractReport {
 	// No locking needed as these values are read-only.
 
-	finalAmt := h.htlcAmt.ToSatoshis()
+	finalAmt := h.htlc.Amt.ToSatoshis()
 	if h.htlcResolution.SignedSuccessTx != nil {
 		finalAmt = btcutil.Amount(
 			h.htlcResolution.SignedSuccessTx.TxOut[0].Value,
@@ -258,7 +296,7 @@ func (h *htlcIncomingContestResolver) report() *ContractReport {
 
 	return &ContractReport{
 		Outpoint:       h.htlcResolution.ClaimOutpoint,
-		Incoming:       true,
+		Type:           ReportOutputIncomingHtlc,
 		Amount:         finalAmt,
 		MaturityHeight: h.htlcExpiry,
 		LimboBalance:   finalAmt,
@@ -271,7 +309,7 @@ func (h *htlcIncomingContestResolver) report() *ContractReport {
 //
 // NOTE: Part of the ContractResolver interface.
 func (h *htlcIncomingContestResolver) Stop() {
-	close(h.Quit)
+	close(h.quit)
 }
 
 // IsResolved returns true if the stored state in the resolve is fully
@@ -296,29 +334,51 @@ func (h *htlcIncomingContestResolver) Encode(w io.Writer) error {
 	return h.htlcSuccessResolver.Encode(w)
 }
 
-// Decode attempts to decode an encoded ContractResolver from the passed Reader
-// instance, returning an active ContractResolver instance.
-//
-// NOTE: Part of the ContractResolver interface.
-func (h *htlcIncomingContestResolver) Decode(r io.Reader) error {
+// newIncomingContestResolverFromReader attempts to decode an encoded ContractResolver
+// from the passed Reader instance, returning an active ContractResolver
+// instance.
+func newIncomingContestResolverFromReader(r io.Reader, resCfg ResolverConfig) (
+	*htlcIncomingContestResolver, error) {
+
+	h := &htlcIncomingContestResolver{}
+
 	// We'll first read the one field unique to this resolver.
 	if err := binary.Read(r, endian, &h.htlcExpiry); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Then we'll decode our internal resolver.
-	return h.htlcSuccessResolver.Decode(r)
+	successResolver, err := newSuccessResolverFromReader(r, resCfg)
+	if err != nil {
+		return nil, err
+	}
+	h.htlcSuccessResolver = *successResolver
+
+	return h, nil
 }
 
-// AttachResolverKit should be called once a resolved is successfully decoded
-// from its stored format. This struct delivers a generic tool kit that
-// resolvers need to complete their duty.
+// Supplement adds additional information to the resolver that is required
+// before Resolve() is called.
 //
-// NOTE: Part of the ContractResolver interface.
-func (h *htlcIncomingContestResolver) AttachResolverKit(r ResolverKit) {
-	h.ResolverKit = r
+// NOTE: Part of the htlcContractResolver interface.
+func (h *htlcIncomingContestResolver) Supplement(htlc channeldb.HTLC) {
+	h.htlc = htlc
+}
+
+// decodePayload (re)decodes the hop payload of a received htlc.
+func (h *htlcIncomingContestResolver) decodePayload() (*hop.Payload, error) {
+
+	onionReader := bytes.NewReader(h.htlc.OnionBlob)
+	iterator, err := h.OnionProcessor.ReconstructHopIterator(
+		onionReader, h.htlc.RHash[:],
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return iterator.HopPayload()
 }
 
 // A compile time assertion to ensure htlcIncomingContestResolver meets the
 // ContractResolver interface.
-var _ ContractResolver = (*htlcIncomingContestResolver)(nil)
+var _ htlcContractResolver = (*htlcIncomingContestResolver)(nil)

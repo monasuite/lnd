@@ -18,6 +18,7 @@ import (
 	"github.com/monasuite/lnd/lnrpc/walletrpc"
 	"github.com/monasuite/lnd/lnrpc/watchtowerrpc"
 	"github.com/monasuite/lnd/lnrpc/wtclientrpc"
+	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/macaroons"
 	"github.com/monasuite/lnd/netann"
 	"github.com/monasuite/lnd/routing"
@@ -92,7 +93,8 @@ func (s *subRPCServerConfigs) PopulateDependencies(cc *chainControl,
 	sweeper *sweep.UtxoSweeper,
 	tower *watchtower.Standalone,
 	towerClient wtclient.Client,
-	tcpResolver lncfg.TCPResolver) error {
+	tcpResolver lncfg.TCPResolver,
+	genInvoiceFeatures func() *lnwire.FeatureVector) error {
 
 	// First, we'll use reflect to obtain a version of the config struct
 	// that allows us to programmatically inspect its fields.
@@ -129,6 +131,9 @@ func (s *subRPCServerConfigs) PopulateDependencies(cc *chainControl,
 			)
 			subCfgValue.FieldByName("Signer").Set(
 				reflect.ValueOf(cc.signer),
+			)
+			subCfgValue.FieldByName("KeyRing").Set(
+				reflect.ValueOf(cc.keyRing),
 			)
 
 		case *walletrpc.Config:
@@ -209,6 +214,9 @@ func (s *subRPCServerConfigs) PopulateDependencies(cc *chainControl,
 			)
 			subCfgValue.FieldByName("ChanDB").Set(
 				reflect.ValueOf(chanDB),
+			)
+			subCfgValue.FieldByName("GenInvoiceFeatures").Set(
+				reflect.ValueOf(genInvoiceFeatures),
 			)
 
 		case *routerrpc.Config:

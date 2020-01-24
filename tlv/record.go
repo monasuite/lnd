@@ -12,8 +12,10 @@ import (
 // Type is an 64-bit identifier for a TLV Record.
 type Type uint64
 
-// TypeSet is an unordered set of Types.
-type TypeSet map[Type]struct{}
+// TypeMap is a map of parsed Types. The map values are byte slices. If the byte
+// slice is nil, the type was successfully parsed. Otherwise the value is byte
+// slice containing the encoded data.
+type TypeMap map[Type][]byte
 
 // Encoder is a signature for methods that can encode TLV values. An error
 // should be returned if the Encoder cannot support the underlying type of val.
@@ -41,6 +43,14 @@ func SizeVarBytes(e *[]byte) SizeFunc {
 	return func() uint64 {
 		return uint64(len(*e))
 	}
+}
+
+// RecorderProducer is an interface for objects that can produce a Record object
+// capable of encoding and/or decoding the RecordProducer as a Record.
+type RecordProducer interface {
+	// Record returns a Record that can be used to encode or decode the
+	// backing object.
+	Record() Record
 }
 
 // Record holds the required information to encode or decode a TLV record.
@@ -75,6 +85,14 @@ func (f *Record) Encode(w io.Writer) error {
 	var b [8]byte
 
 	return f.encoder(w, f.value, &b)
+}
+
+// Decode read in the TLV record from the passed reader. This is useful when a
+// caller wants decode a *single* TLV record, outside the context of the Stream
+// struct.
+func (f *Record) Decode(r io.Reader, l uint64) error {
+	var b [8]byte
+	return f.decoder(r, f.value, &b, l)
 }
 
 // MakePrimitiveRecord creates a record for common types.
@@ -202,7 +220,7 @@ func StubEncoder(v []byte) Encoder {
 // MapToRecords encodes the passed TLV map as a series of regular tlv.Record
 // instances. The resulting set of records will be returned in sorted order by
 // their type.
-func MapToRecords(tlvMap map[uint64][]byte) ([]Record, error) {
+func MapToRecords(tlvMap map[uint64][]byte) []Record {
 	records := make([]Record, 0, len(tlvMap))
 	for k, v := range tlvMap {
 		// We don't pass in a decoder here since we don't actually know
@@ -217,7 +235,7 @@ func MapToRecords(tlvMap map[uint64][]byte) ([]Record, error) {
 
 	SortRecords(records)
 
-	return records, nil
+	return records
 }
 
 // SortRecords is a helper function that will sort a slice of records in place

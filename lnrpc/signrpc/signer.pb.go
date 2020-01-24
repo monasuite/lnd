@@ -472,6 +472,287 @@ func (m *InputScriptResp) GetInputScripts() []*InputScript {
 	return nil
 }
 
+type SignMessageReq struct {
+	/// The message to be signed.
+	Msg []byte `protobuf:"bytes,1,opt,name=msg,proto3" json:"msg,omitempty"`
+	/// The key locator that identifies which key to use for signing.
+	KeyLoc               *KeyLocator `protobuf:"bytes,2,opt,name=key_loc,json=keyLoc,proto3" json:"key_loc,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}    `json:"-"`
+	XXX_unrecognized     []byte      `json:"-"`
+	XXX_sizecache        int32       `json:"-"`
+}
+
+func (m *SignMessageReq) Reset()         { *m = SignMessageReq{} }
+func (m *SignMessageReq) String() string { return proto.CompactTextString(m) }
+func (*SignMessageReq) ProtoMessage()    {}
+func (*SignMessageReq) Descriptor() ([]byte, []int) {
+	return fileDescriptor_4ecd772f6c7ffacf, []int{8}
+}
+
+func (m *SignMessageReq) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_SignMessageReq.Unmarshal(m, b)
+}
+func (m *SignMessageReq) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_SignMessageReq.Marshal(b, m, deterministic)
+}
+func (m *SignMessageReq) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_SignMessageReq.Merge(m, src)
+}
+func (m *SignMessageReq) XXX_Size() int {
+	return xxx_messageInfo_SignMessageReq.Size(m)
+}
+func (m *SignMessageReq) XXX_DiscardUnknown() {
+	xxx_messageInfo_SignMessageReq.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_SignMessageReq proto.InternalMessageInfo
+
+func (m *SignMessageReq) GetMsg() []byte {
+	if m != nil {
+		return m.Msg
+	}
+	return nil
+}
+
+func (m *SignMessageReq) GetKeyLoc() *KeyLocator {
+	if m != nil {
+		return m.KeyLoc
+	}
+	return nil
+}
+
+type SignMessageResp struct {
+	//*
+	//The signature for the given message in the fixed-size LN wire format.
+	Signature            []byte   `protobuf:"bytes,1,opt,name=signature,proto3" json:"signature,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *SignMessageResp) Reset()         { *m = SignMessageResp{} }
+func (m *SignMessageResp) String() string { return proto.CompactTextString(m) }
+func (*SignMessageResp) ProtoMessage()    {}
+func (*SignMessageResp) Descriptor() ([]byte, []int) {
+	return fileDescriptor_4ecd772f6c7ffacf, []int{9}
+}
+
+func (m *SignMessageResp) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_SignMessageResp.Unmarshal(m, b)
+}
+func (m *SignMessageResp) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_SignMessageResp.Marshal(b, m, deterministic)
+}
+func (m *SignMessageResp) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_SignMessageResp.Merge(m, src)
+}
+func (m *SignMessageResp) XXX_Size() int {
+	return xxx_messageInfo_SignMessageResp.Size(m)
+}
+func (m *SignMessageResp) XXX_DiscardUnknown() {
+	xxx_messageInfo_SignMessageResp.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_SignMessageResp proto.InternalMessageInfo
+
+func (m *SignMessageResp) GetSignature() []byte {
+	if m != nil {
+		return m.Signature
+	}
+	return nil
+}
+
+type VerifyMessageReq struct {
+	/// The message over which the signature is to be verified.
+	Msg []byte `protobuf:"bytes,1,opt,name=msg,proto3" json:"msg,omitempty"`
+	//*
+	//The fixed-size LN wire encoded signature to be verified over the given
+	//message.
+	Signature []byte `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
+	/// The public key the signature has to be valid for.
+	Pubkey               []byte   `protobuf:"bytes,3,opt,name=pubkey,proto3" json:"pubkey,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *VerifyMessageReq) Reset()         { *m = VerifyMessageReq{} }
+func (m *VerifyMessageReq) String() string { return proto.CompactTextString(m) }
+func (*VerifyMessageReq) ProtoMessage()    {}
+func (*VerifyMessageReq) Descriptor() ([]byte, []int) {
+	return fileDescriptor_4ecd772f6c7ffacf, []int{10}
+}
+
+func (m *VerifyMessageReq) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_VerifyMessageReq.Unmarshal(m, b)
+}
+func (m *VerifyMessageReq) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_VerifyMessageReq.Marshal(b, m, deterministic)
+}
+func (m *VerifyMessageReq) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_VerifyMessageReq.Merge(m, src)
+}
+func (m *VerifyMessageReq) XXX_Size() int {
+	return xxx_messageInfo_VerifyMessageReq.Size(m)
+}
+func (m *VerifyMessageReq) XXX_DiscardUnknown() {
+	xxx_messageInfo_VerifyMessageReq.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_VerifyMessageReq proto.InternalMessageInfo
+
+func (m *VerifyMessageReq) GetMsg() []byte {
+	if m != nil {
+		return m.Msg
+	}
+	return nil
+}
+
+func (m *VerifyMessageReq) GetSignature() []byte {
+	if m != nil {
+		return m.Signature
+	}
+	return nil
+}
+
+func (m *VerifyMessageReq) GetPubkey() []byte {
+	if m != nil {
+		return m.Pubkey
+	}
+	return nil
+}
+
+type VerifyMessageResp struct {
+	/// Whether the signature was valid over the given message.
+	Valid                bool     `protobuf:"varint,1,opt,name=valid,proto3" json:"valid,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *VerifyMessageResp) Reset()         { *m = VerifyMessageResp{} }
+func (m *VerifyMessageResp) String() string { return proto.CompactTextString(m) }
+func (*VerifyMessageResp) ProtoMessage()    {}
+func (*VerifyMessageResp) Descriptor() ([]byte, []int) {
+	return fileDescriptor_4ecd772f6c7ffacf, []int{11}
+}
+
+func (m *VerifyMessageResp) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_VerifyMessageResp.Unmarshal(m, b)
+}
+func (m *VerifyMessageResp) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_VerifyMessageResp.Marshal(b, m, deterministic)
+}
+func (m *VerifyMessageResp) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_VerifyMessageResp.Merge(m, src)
+}
+func (m *VerifyMessageResp) XXX_Size() int {
+	return xxx_messageInfo_VerifyMessageResp.Size(m)
+}
+func (m *VerifyMessageResp) XXX_DiscardUnknown() {
+	xxx_messageInfo_VerifyMessageResp.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_VerifyMessageResp proto.InternalMessageInfo
+
+func (m *VerifyMessageResp) GetValid() bool {
+	if m != nil {
+		return m.Valid
+	}
+	return false
+}
+
+type SharedKeyRequest struct {
+	// The ephemeral public key to use for the DH key derivation.
+	EphemeralPubkey []byte `protobuf:"bytes,1,opt,name=ephemeral_pubkey,json=ephemeralPubkey,proto3" json:"ephemeral_pubkey,omitempty"`
+	//*
+	//The optional key locator of the local key that should be used. If this
+	//parameter is not set then the node's identity private key will be used.
+	KeyLoc               *KeyLocator `protobuf:"bytes,2,opt,name=key_loc,json=keyLoc,proto3" json:"key_loc,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}    `json:"-"`
+	XXX_unrecognized     []byte      `json:"-"`
+	XXX_sizecache        int32       `json:"-"`
+}
+
+func (m *SharedKeyRequest) Reset()         { *m = SharedKeyRequest{} }
+func (m *SharedKeyRequest) String() string { return proto.CompactTextString(m) }
+func (*SharedKeyRequest) ProtoMessage()    {}
+func (*SharedKeyRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_4ecd772f6c7ffacf, []int{12}
+}
+
+func (m *SharedKeyRequest) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_SharedKeyRequest.Unmarshal(m, b)
+}
+func (m *SharedKeyRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_SharedKeyRequest.Marshal(b, m, deterministic)
+}
+func (m *SharedKeyRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_SharedKeyRequest.Merge(m, src)
+}
+func (m *SharedKeyRequest) XXX_Size() int {
+	return xxx_messageInfo_SharedKeyRequest.Size(m)
+}
+func (m *SharedKeyRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_SharedKeyRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_SharedKeyRequest proto.InternalMessageInfo
+
+func (m *SharedKeyRequest) GetEphemeralPubkey() []byte {
+	if m != nil {
+		return m.EphemeralPubkey
+	}
+	return nil
+}
+
+func (m *SharedKeyRequest) GetKeyLoc() *KeyLocator {
+	if m != nil {
+		return m.KeyLoc
+	}
+	return nil
+}
+
+type SharedKeyResponse struct {
+	// The shared public key, hashed with sha256.
+	SharedKey            []byte   `protobuf:"bytes,1,opt,name=shared_key,json=sharedKey,proto3" json:"shared_key,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *SharedKeyResponse) Reset()         { *m = SharedKeyResponse{} }
+func (m *SharedKeyResponse) String() string { return proto.CompactTextString(m) }
+func (*SharedKeyResponse) ProtoMessage()    {}
+func (*SharedKeyResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_4ecd772f6c7ffacf, []int{13}
+}
+
+func (m *SharedKeyResponse) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_SharedKeyResponse.Unmarshal(m, b)
+}
+func (m *SharedKeyResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_SharedKeyResponse.Marshal(b, m, deterministic)
+}
+func (m *SharedKeyResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_SharedKeyResponse.Merge(m, src)
+}
+func (m *SharedKeyResponse) XXX_Size() int {
+	return xxx_messageInfo_SharedKeyResponse.Size(m)
+}
+func (m *SharedKeyResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_SharedKeyResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_SharedKeyResponse proto.InternalMessageInfo
+
+func (m *SharedKeyResponse) GetSharedKey() []byte {
+	if m != nil {
+		return m.SharedKey
+	}
+	return nil
+}
+
 func init() {
 	proto.RegisterType((*KeyLocator)(nil), "signrpc.KeyLocator")
 	proto.RegisterType((*KeyDescriptor)(nil), "signrpc.KeyDescriptor")
@@ -481,48 +762,66 @@ func init() {
 	proto.RegisterType((*SignResp)(nil), "signrpc.SignResp")
 	proto.RegisterType((*InputScript)(nil), "signrpc.InputScript")
 	proto.RegisterType((*InputScriptResp)(nil), "signrpc.InputScriptResp")
+	proto.RegisterType((*SignMessageReq)(nil), "signrpc.SignMessageReq")
+	proto.RegisterType((*SignMessageResp)(nil), "signrpc.SignMessageResp")
+	proto.RegisterType((*VerifyMessageReq)(nil), "signrpc.VerifyMessageReq")
+	proto.RegisterType((*VerifyMessageResp)(nil), "signrpc.VerifyMessageResp")
+	proto.RegisterType((*SharedKeyRequest)(nil), "signrpc.SharedKeyRequest")
+	proto.RegisterType((*SharedKeyResponse)(nil), "signrpc.SharedKeyResponse")
 }
 
 func init() { proto.RegisterFile("signrpc/signer.proto", fileDescriptor_4ecd772f6c7ffacf) }
 
 var fileDescriptor_4ecd772f6c7ffacf = []byte{
-	// 562 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x6c, 0x53, 0x4f, 0x8f, 0xd3, 0x3e,
-	0x10, 0x55, 0xb7, 0xbf, 0x36, 0xdd, 0x49, 0xd2, 0x1f, 0x98, 0x0a, 0x02, 0x08, 0x51, 0x22, 0x2d,
-	0xea, 0x01, 0x5a, 0x51, 0x10, 0x12, 0x9c, 0xd0, 0x82, 0x56, 0xac, 0xba, 0xd2, 0x4a, 0x6e, 0x4f,
-	0x5c, 0xa2, 0x34, 0x35, 0xa9, 0x95, 0x34, 0xf1, 0xc6, 0x0e, 0x69, 0x6e, 0x7c, 0x07, 0xbe, 0x30,
-	0x1a, 0x3b, 0xfd, 0x07, 0x9c, 0x9a, 0xf7, 0x3c, 0x33, 0xef, 0x79, 0x5e, 0x0d, 0x03, 0xc9, 0xe3,
-	0xac, 0x10, 0xd1, 0x04, 0x7f, 0x59, 0x31, 0x16, 0x45, 0xae, 0x72, 0x62, 0x35, 0xac, 0xff, 0x15,
-	0x60, 0xc6, 0xea, 0x9b, 0x3c, 0x0a, 0x55, 0x5e, 0x90, 0x67, 0x00, 0x09, 0xab, 0x83, 0xef, 0xe1,
-	0x86, 0xa7, 0xb5, 0xd7, 0x1a, 0xb6, 0x46, 0x1d, 0x7a, 0x9e, 0xb0, 0xfa, 0x4a, 0x13, 0xe4, 0x29,
-	0x20, 0x08, 0x78, 0xb6, 0x62, 0x5b, 0xef, 0x4c, 0x9f, 0xf6, 0x12, 0x56, 0x5f, 0x23, 0xf6, 0x43,
-	0x70, 0x67, 0xac, 0xfe, 0xc2, 0x64, 0x54, 0x70, 0x81, 0xc3, 0x7c, 0x70, 0x8b, 0xb0, 0x0a, 0xb0,
-	0x63, 0x59, 0x2b, 0x26, 0xf5, 0x3c, 0x87, 0xda, 0x45, 0x58, 0xcd, 0x58, 0x7d, 0x89, 0x14, 0x79,
-	0x05, 0x16, 0x9e, 0xa7, 0x79, 0xa4, 0xe7, 0xd9, 0xd3, 0x07, 0xe3, 0xc6, 0xd9, 0xf8, 0x60, 0x8b,
-	0x76, 0x13, 0xfd, 0xed, 0x7f, 0x84, 0xce, 0x62, 0x7b, 0x5b, 0x2a, 0x32, 0x80, 0xce, 0x8f, 0x30,
-	0x2d, 0x99, 0x1e, 0xd9, 0xa6, 0x06, 0xa0, 0x3d, 0x91, 0x04, 0x46, 0x5f, 0x8f, 0x73, 0x68, 0x4f,
-	0x24, 0x73, 0x8d, 0xfd, 0x5f, 0x67, 0xd0, 0x9f, 0xf3, 0x38, 0x3b, 0x32, 0xf8, 0x06, 0xd0, 0x7d,
-	0xb0, 0x62, 0x32, 0xd2, 0x83, 0xec, 0xe9, 0xc3, 0x63, 0xf5, 0x43, 0x25, 0x45, 0x93, 0x08, 0xc9,
-	0x0b, 0x70, 0x24, 0xcf, 0xe2, 0x94, 0x05, 0xaa, 0x62, 0x61, 0xd2, 0xa8, 0xd8, 0x86, 0x5b, 0x20,
-	0x85, 0x25, 0xab, 0xbc, 0x5c, 0xee, 0x4b, 0xda, 0xa6, 0xc4, 0x70, 0xa6, 0xe4, 0x02, 0xfa, 0x15,
-	0x57, 0x19, 0x93, 0x72, 0xe7, 0xf6, 0x3f, 0x5d, 0xe4, 0x36, 0xac, 0xb1, 0x4c, 0x5e, 0x42, 0x37,
-	0x2f, 0x95, 0x28, 0x95, 0xd7, 0xd1, 0xee, 0xfa, 0x7b, 0x77, 0x7a, 0x0b, 0xb4, 0x39, 0x25, 0x1e,
-	0x60, 0x9c, 0xeb, 0x50, 0xae, 0x3d, 0x6b, 0xd8, 0x1a, 0xb9, 0x74, 0x07, 0xc9, 0x73, 0xb0, 0x79,
-	0x26, 0x4a, 0xd5, 0x44, 0xd6, 0xd3, 0x91, 0x81, 0xa6, 0x4c, 0x68, 0x11, 0x58, 0xb8, 0x14, 0xca,
-	0xee, 0xc8, 0x10, 0x1c, 0x8c, 0x4b, 0x6d, 0x4f, 0xd2, 0x82, 0x22, 0xac, 0x16, 0x5b, 0x13, 0xd6,
-	0x7b, 0x00, 0x34, 0xa0, 0x17, 0x26, 0xbd, 0xb3, 0x61, 0x7b, 0x64, 0x4f, 0x1f, 0xed, 0x3d, 0x9d,
-	0x2e, 0x97, 0x9e, 0xcb, 0x06, 0x4b, 0xff, 0x02, 0x7a, 0x46, 0x44, 0x0a, 0xf2, 0x18, 0x7a, 0xa8,
-	0x22, 0x79, 0x8c, 0x0a, 0xed, 0x91, 0x43, 0xad, 0x22, 0xac, 0xe6, 0x3c, 0x96, 0xfe, 0x15, 0xd8,
-	0xd7, 0xe8, 0xac, 0xb9, 0xbd, 0x07, 0x56, 0xb3, 0x8e, 0x5d, 0x61, 0x03, 0xf1, 0x5f, 0x2a, 0x79,
-	0x7c, 0x1a, 0x34, 0xca, 0x35, 0x49, 0xdf, 0xc0, 0xff, 0x47, 0x73, 0xb4, 0xea, 0x07, 0x70, 0xcd,
-	0x1e, 0x4c, 0x8f, 0x99, 0x68, 0x4f, 0x07, 0x7b, 0xf3, 0xc7, 0x0d, 0x0e, 0x3f, 0x00, 0x39, 0xfd,
-	0xd9, 0x82, 0xee, 0x5c, 0x3f, 0x1d, 0xf2, 0x0e, 0x5c, 0xfc, 0xba, 0xd5, 0x5b, 0xa7, 0x61, 0x45,
-	0xee, 0x9d, 0x5c, 0x9e, 0xb2, 0xbb, 0x27, 0xf7, 0xff, 0x60, 0xa4, 0x20, 0x9f, 0x80, 0x7c, 0xce,
-	0x37, 0xa2, 0x54, 0xec, 0xf8, 0x76, 0x7f, 0xb7, 0x7a, 0xff, 0x34, 0xc3, 0xa4, 0xb8, 0x9c, 0x7c,
-	0x7b, 0x1d, 0x73, 0xb5, 0x2e, 0x97, 0xe3, 0x28, 0xdf, 0x4c, 0x52, 0x1e, 0xaf, 0x55, 0xc6, 0xb3,
-	0x38, 0x63, 0xaa, 0xca, 0x8b, 0x64, 0x92, 0x66, 0xab, 0x49, 0xba, 0x7f, 0xe2, 0x85, 0x88, 0x96,
-	0x5d, 0xfd, 0xc8, 0xdf, 0xfe, 0x0e, 0x00, 0x00, 0xff, 0xff, 0x80, 0x01, 0xce, 0xe1, 0xfc, 0x03,
-	0x00, 0x00,
+	// 756 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x55, 0x5d, 0x8f, 0xdb, 0x44,
+	0x14, 0xd5, 0x26, 0x6c, 0x92, 0xbd, 0x4e, 0x76, 0xb3, 0xc3, 0xaa, 0xb8, 0x0b, 0x88, 0x60, 0xa9,
+	0x28, 0x95, 0x20, 0x11, 0x01, 0x21, 0xc1, 0x13, 0x2a, 0xd5, 0xaa, 0x55, 0x8a, 0x5a, 0x39, 0x2b,
+	0x1e, 0xfa, 0x62, 0x39, 0xce, 0xad, 0x33, 0xb2, 0x63, 0xcf, 0xce, 0x8c, 0xeb, 0xf8, 0x77, 0xf0,
+	0xd7, 0xf8, 0x41, 0x68, 0x3e, 0xe2, 0xd8, 0x29, 0x54, 0xea, 0xd3, 0xfa, 0x9e, 0xb9, 0x73, 0xee,
+	0xd9, 0x73, 0xae, 0x63, 0xb8, 0x11, 0x34, 0xce, 0x38, 0x8b, 0xe6, 0xea, 0x2f, 0xf2, 0x19, 0xe3,
+	0xb9, 0xcc, 0x49, 0xdf, 0xa2, 0xde, 0x0b, 0x80, 0x25, 0x56, 0xaf, 0xf2, 0x28, 0x94, 0x39, 0x27,
+	0x5f, 0x03, 0x24, 0x58, 0x05, 0xef, 0xc2, 0x1d, 0x4d, 0x2b, 0xf7, 0x6c, 0x72, 0x36, 0x3d, 0xf7,
+	0x2f, 0x12, 0xac, 0xee, 0x34, 0x40, 0xbe, 0x04, 0x55, 0x04, 0x34, 0xdb, 0xe0, 0xde, 0xed, 0xe8,
+	0xd3, 0x41, 0x82, 0xd5, 0x4b, 0x55, 0x7b, 0x21, 0x8c, 0x96, 0x58, 0x3d, 0x47, 0x11, 0x71, 0xca,
+	0x14, 0x99, 0x07, 0x23, 0x1e, 0x96, 0x81, 0xba, 0xb1, 0xae, 0x24, 0x0a, 0xcd, 0x37, 0xf4, 0x1d,
+	0x1e, 0x96, 0x4b, 0xac, 0x9e, 0x29, 0x88, 0x7c, 0x0f, 0x7d, 0x75, 0x9e, 0xe6, 0x91, 0xe6, 0x73,
+	0x16, 0x9f, 0xcf, 0xac, 0xb2, 0xd9, 0x51, 0x96, 0xdf, 0x4b, 0xf4, 0xb3, 0xf7, 0x1b, 0x9c, 0xdf,
+	0xef, 0x5f, 0x17, 0x92, 0xdc, 0xc0, 0xf9, 0xfb, 0x30, 0x2d, 0x50, 0x53, 0x76, 0x7d, 0x53, 0x28,
+	0x79, 0x2c, 0x09, 0xcc, 0x7c, 0x4d, 0x37, 0xf4, 0x07, 0x2c, 0x59, 0xe9, 0xda, 0xfb, 0xbb, 0x03,
+	0x97, 0x2b, 0x1a, 0x67, 0x0d, 0x81, 0x3f, 0x82, 0x52, 0x1f, 0x6c, 0x50, 0x44, 0x9a, 0xc8, 0x59,
+	0x3c, 0x6a, 0x4e, 0x3f, 0x76, 0xfa, 0x4a, 0xa4, 0x2a, 0xc9, 0xb7, 0x30, 0x14, 0x34, 0x8b, 0x53,
+	0x0c, 0x64, 0x89, 0x61, 0x62, 0xa7, 0x38, 0x06, 0xbb, 0x57, 0x90, 0x6a, 0xd9, 0xe4, 0xc5, 0xba,
+	0x6e, 0xe9, 0x9a, 0x16, 0x83, 0x99, 0x96, 0x27, 0x70, 0x59, 0x52, 0x99, 0xa1, 0x10, 0x07, 0xb5,
+	0x9f, 0xe9, 0xa6, 0x91, 0x45, 0x8d, 0x64, 0xf2, 0x1d, 0xf4, 0xf2, 0x42, 0xb2, 0x42, 0xba, 0xe7,
+	0x5a, 0xdd, 0x65, 0xad, 0x4e, 0xbb, 0xe0, 0xdb, 0x53, 0xe2, 0x82, 0x8a, 0x73, 0x1b, 0x8a, 0xad,
+	0xdb, 0x9f, 0x9c, 0x4d, 0x47, 0xfe, 0xa1, 0x24, 0xdf, 0x80, 0x43, 0x33, 0x56, 0x48, 0x1b, 0xd9,
+	0x40, 0x47, 0x06, 0x1a, 0x32, 0xa1, 0x45, 0xd0, 0x57, 0xa6, 0xf8, 0xf8, 0x40, 0x26, 0x30, 0x54,
+	0x71, 0xc9, 0x7d, 0x2b, 0x2d, 0xe0, 0x61, 0x79, 0xbf, 0x37, 0x61, 0xfd, 0x02, 0xa0, 0x04, 0x68,
+	0xc3, 0x84, 0xdb, 0x99, 0x74, 0xa7, 0xce, 0xe2, 0x8b, 0x5a, 0x53, 0xdb, 0x5c, 0xff, 0x42, 0xd8,
+	0x5a, 0x78, 0x4f, 0x60, 0x60, 0x86, 0x08, 0x46, 0x1e, 0xc3, 0x40, 0x4d, 0x11, 0x34, 0x56, 0x13,
+	0xba, 0xd3, 0xa1, 0xdf, 0xe7, 0x61, 0xb9, 0xa2, 0xb1, 0xf0, 0xee, 0xc0, 0x79, 0xa9, 0x94, 0xd9,
+	0xff, 0xde, 0x85, 0xbe, 0xb5, 0xe3, 0xd0, 0x68, 0x4b, 0xb5, 0xa5, 0x82, 0xc6, 0xed, 0xa0, 0xd5,
+	0x38, 0x9b, 0xf4, 0x2b, 0xb8, 0x6a, 0xf0, 0xe8, 0xa9, 0xbf, 0xc2, 0xc8, 0xf8, 0x60, 0xee, 0x18,
+	0x46, 0x67, 0x71, 0x53, 0x8b, 0x6f, 0x5e, 0x18, 0xd2, 0x63, 0x21, 0xbc, 0x37, 0x66, 0x6d, 0xfe,
+	0x44, 0x21, 0xc2, 0x18, 0x95, 0x51, 0x63, 0xe8, 0xee, 0x44, 0x6c, 0xfd, 0x51, 0x8f, 0x9f, 0xb8,
+	0xc5, 0x73, 0xb8, 0x6a, 0x31, 0x0a, 0x46, 0xbe, 0x02, 0x6d, 0x57, 0x28, 0x0b, 0x8e, 0x96, 0xf8,
+	0x08, 0x78, 0x6f, 0x61, 0xfc, 0x17, 0x72, 0xfa, 0xae, 0xfa, 0xa8, 0x88, 0x16, 0x47, 0xe7, 0x84,
+	0x83, 0x3c, 0x82, 0x1e, 0x2b, 0xd6, 0x09, 0x56, 0x76, 0x1f, 0x6d, 0xe5, 0x3d, 0x85, 0xeb, 0x13,
+	0x6e, 0xc1, 0xec, 0xeb, 0x45, 0x37, 0x9a, 0x7e, 0xe0, 0x9b, 0xc2, 0x4b, 0x60, 0xbc, 0xda, 0x86,
+	0x1c, 0x37, 0x4b, 0xac, 0x7c, 0x7c, 0x28, 0x50, 0x48, 0xf2, 0x14, 0xc6, 0xc8, 0xb6, 0xb8, 0x43,
+	0x1e, 0xa6, 0x81, 0x1d, 0x60, 0x34, 0x5d, 0xd5, 0xf8, 0x1b, 0x0d, 0x7f, 0xa2, 0x49, 0x0b, 0xb8,
+	0x6e, 0x0c, 0x13, 0x2c, 0xcf, 0x04, 0xea, 0xe0, 0x35, 0x18, 0x1c, 0xe7, 0x5c, 0x88, 0x43, 0xdb,
+	0xe2, 0x9f, 0x0e, 0xf4, 0x56, 0xfa, 0x57, 0x8e, 0xfc, 0x0c, 0x23, 0xf5, 0xf4, 0x5a, 0xbf, 0x20,
+	0x7e, 0x58, 0x92, 0x71, 0x6b, 0x4f, 0x7d, 0x7c, 0xb8, 0xbd, 0x3e, 0x41, 0x04, 0x23, 0xbf, 0x03,
+	0xf9, 0x23, 0xdf, 0xb1, 0x42, 0x62, 0x73, 0x11, 0x3f, 0xbc, 0xea, 0xfe, 0xe7, 0xde, 0x18, 0x06,
+	0xa7, 0x91, 0x2d, 0x69, 0xbf, 0x1d, 0xc7, 0xf8, 0x1a, 0x0c, 0xa7, 0xab, 0x70, 0x07, 0xa3, 0x56,
+	0x20, 0xe4, 0x71, 0xdd, 0x7a, 0xba, 0x04, 0xb7, 0xb7, 0xff, 0x77, 0x24, 0x18, 0x79, 0x01, 0x57,
+	0xcf, 0x91, 0xd3, 0xf7, 0x58, 0xdb, 0xd8, 0x60, 0x3a, 0xcd, 0xb1, 0xc1, 0xf4, 0x81, 0xeb, 0xcf,
+	0xe6, 0x6f, 0x7f, 0x88, 0xa9, 0xdc, 0x16, 0xeb, 0x59, 0x94, 0xef, 0xe6, 0x29, 0x8d, 0xb7, 0x32,
+	0xa3, 0x59, 0x9c, 0xa1, 0x2c, 0x73, 0x9e, 0xcc, 0xd3, 0x6c, 0x33, 0x4f, 0xeb, 0x2f, 0x0c, 0x67,
+	0xd1, 0xba, 0xa7, 0xbf, 0x31, 0x3f, 0xfd, 0x1b, 0x00, 0x00, 0xff, 0xff, 0x73, 0xb0, 0xe9, 0x51,
+	0x7b, 0x06, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -559,6 +858,29 @@ type SignerClient interface {
 	//in the TxOut field, the value in that same field, and finally the input
 	//index.
 	ComputeInputScript(ctx context.Context, in *SignReq, opts ...grpc.CallOption) (*InputScriptResp, error)
+	//*
+	//SignMessage signs a message with the key specified in the key locator. The
+	//returned signature is fixed-size LN wire format encoded.
+	//
+	//The main difference to SignMessage in the main RPC is that a specific key is
+	//used to sign the message instead of the node identity private key.
+	SignMessage(ctx context.Context, in *SignMessageReq, opts ...grpc.CallOption) (*SignMessageResp, error)
+	//*
+	//VerifyMessage verifies a signature over a message using the public key
+	//provided. The signature must be fixed-size LN wire format encoded.
+	//
+	//The main difference to VerifyMessage in the main RPC is that the public key
+	//used to sign the message does not have to be a node known to the network.
+	VerifyMessage(ctx context.Context, in *VerifyMessageReq, opts ...grpc.CallOption) (*VerifyMessageResp, error)
+	//
+	//DeriveSharedKey returns a shared secret key by performing Diffie-Hellman key
+	//derivation between the ephemeral public key in the request and the node's
+	//key specified in the key_loc parameter (or the node's identity private key
+	//if no key locator is specified):
+	//P_shared = privKeyNode * ephemeralPubkey
+	//The resulting shared public key is serialized in the compressed format and
+	//hashed with sha256, resulting in the final key length of 256bit.
+	DeriveSharedKey(ctx context.Context, in *SharedKeyRequest, opts ...grpc.CallOption) (*SharedKeyResponse, error)
 }
 
 type signerClient struct {
@@ -581,6 +903,33 @@ func (c *signerClient) SignOutputRaw(ctx context.Context, in *SignReq, opts ...g
 func (c *signerClient) ComputeInputScript(ctx context.Context, in *SignReq, opts ...grpc.CallOption) (*InputScriptResp, error) {
 	out := new(InputScriptResp)
 	err := c.cc.Invoke(ctx, "/signrpc.Signer/ComputeInputScript", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *signerClient) SignMessage(ctx context.Context, in *SignMessageReq, opts ...grpc.CallOption) (*SignMessageResp, error) {
+	out := new(SignMessageResp)
+	err := c.cc.Invoke(ctx, "/signrpc.Signer/SignMessage", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *signerClient) VerifyMessage(ctx context.Context, in *VerifyMessageReq, opts ...grpc.CallOption) (*VerifyMessageResp, error) {
+	out := new(VerifyMessageResp)
+	err := c.cc.Invoke(ctx, "/signrpc.Signer/VerifyMessage", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *signerClient) DeriveSharedKey(ctx context.Context, in *SharedKeyRequest, opts ...grpc.CallOption) (*SharedKeyResponse, error) {
+	out := new(SharedKeyResponse)
+	err := c.cc.Invoke(ctx, "/signrpc.Signer/DeriveSharedKey", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -611,6 +960,29 @@ type SignerServer interface {
 	//in the TxOut field, the value in that same field, and finally the input
 	//index.
 	ComputeInputScript(context.Context, *SignReq) (*InputScriptResp, error)
+	//*
+	//SignMessage signs a message with the key specified in the key locator. The
+	//returned signature is fixed-size LN wire format encoded.
+	//
+	//The main difference to SignMessage in the main RPC is that a specific key is
+	//used to sign the message instead of the node identity private key.
+	SignMessage(context.Context, *SignMessageReq) (*SignMessageResp, error)
+	//*
+	//VerifyMessage verifies a signature over a message using the public key
+	//provided. The signature must be fixed-size LN wire format encoded.
+	//
+	//The main difference to VerifyMessage in the main RPC is that the public key
+	//used to sign the message does not have to be a node known to the network.
+	VerifyMessage(context.Context, *VerifyMessageReq) (*VerifyMessageResp, error)
+	//
+	//DeriveSharedKey returns a shared secret key by performing Diffie-Hellman key
+	//derivation between the ephemeral public key in the request and the node's
+	//key specified in the key_loc parameter (or the node's identity private key
+	//if no key locator is specified):
+	//P_shared = privKeyNode * ephemeralPubkey
+	//The resulting shared public key is serialized in the compressed format and
+	//hashed with sha256, resulting in the final key length of 256bit.
+	DeriveSharedKey(context.Context, *SharedKeyRequest) (*SharedKeyResponse, error)
 }
 
 func RegisterSignerServer(s *grpc.Server, srv SignerServer) {
@@ -653,6 +1025,60 @@ func _Signer_ComputeInputScript_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Signer_SignMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SignMessageReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SignerServer).SignMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/signrpc.Signer/SignMessage",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SignerServer).SignMessage(ctx, req.(*SignMessageReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Signer_VerifyMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VerifyMessageReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SignerServer).VerifyMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/signrpc.Signer/VerifyMessage",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SignerServer).VerifyMessage(ctx, req.(*VerifyMessageReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Signer_DeriveSharedKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SharedKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SignerServer).DeriveSharedKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/signrpc.Signer/DeriveSharedKey",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SignerServer).DeriveSharedKey(ctx, req.(*SharedKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Signer_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "signrpc.Signer",
 	HandlerType: (*SignerServer)(nil),
@@ -664,6 +1090,18 @@ var _Signer_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ComputeInputScript",
 			Handler:    _Signer_ComputeInputScript_Handler,
+		},
+		{
+			MethodName: "SignMessage",
+			Handler:    _Signer_SignMessage_Handler,
+		},
+		{
+			MethodName: "VerifyMessage",
+			Handler:    _Signer_VerifyMessage_Handler,
+		},
+		{
+			MethodName: "DeriveSharedKey",
+			Handler:    _Signer_DeriveSharedKey_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

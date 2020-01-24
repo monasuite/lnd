@@ -23,13 +23,14 @@ import (
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/invoices"
 	"github.com/monasuite/lnd/lnpeer"
 	"github.com/monasuite/lnd/lntypes"
-	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwire"
 )
 
@@ -70,13 +71,13 @@ func (m *mockPreimageCache) SubscribeUpdates() *contractcourt.WitnessSubscriptio
 }
 
 type mockFeeEstimator struct {
-	byteFeeIn chan lnwallet.SatPerKWeight
+	byteFeeIn chan chainfee.SatPerKWeight
 
 	quit chan struct{}
 }
 
 func (m *mockFeeEstimator) EstimateFeePerKW(
-	numBlocks uint32) (lnwallet.SatPerKWeight, error) {
+	numBlocks uint32) (chainfee.SatPerKWeight, error) {
 
 	select {
 	case feeRate := <-m.byteFeeIn:
@@ -86,7 +87,7 @@ func (m *mockFeeEstimator) EstimateFeePerKW(
 	}
 }
 
-func (m *mockFeeEstimator) RelayFeePerKW() lnwallet.SatPerKWeight {
+func (m *mockFeeEstimator) RelayFeePerKW() chainfee.SatPerKWeight {
 	return 1e3
 }
 
@@ -98,7 +99,7 @@ func (m *mockFeeEstimator) Stop() error {
 	return nil
 }
 
-var _ lnwallet.FeeEstimator = (*mockFeeEstimator)(nil)
+var _ chainfee.Estimator = (*mockFeeEstimator)(nil)
 
 type mockForwardingLog struct {
 	sync.Mutex
@@ -265,16 +266,14 @@ func (s *mockServer) QuitSignal() <-chan struct{} {
 // mockHopIterator represents the test version of hop iterator which instead
 // of encrypting the path in onion blob just stores the path as a list of hops.
 type mockHopIterator struct {
-	hops []hop.ForwardingInfo
+	hops []*hop.Payload
 }
 
-func newMockHopIterator(hops ...hop.ForwardingInfo) hop.Iterator {
+func newMockHopIterator(hops ...*hop.Payload) hop.Iterator {
 	return &mockHopIterator{hops: hops}
 }
 
-func (r *mockHopIterator) ForwardingInstructions() (
-	hop.ForwardingInfo, error) {
-
+func (r *mockHopIterator) HopPayload() (*hop.Payload, error) {
 	h := r.hops[0]
 	r.hops = r.hops[1:]
 	return h, nil
@@ -300,7 +299,8 @@ func (r *mockHopIterator) EncodeNextHop(w io.Writer) error {
 	}
 
 	for _, hop := range r.hops {
-		if err := encodeFwdInfo(w, &hop); err != nil {
+		fwdInfo := hop.ForwardingInfo()
+		if err := encodeFwdInfo(w, &fwdInfo); err != nil {
 			return err
 		}
 	}
@@ -334,6 +334,7 @@ var _ hop.Iterator = (*mockHopIterator)(nil)
 // encodes the failure and do not makes any onion obfuscation.
 type mockObfuscator struct {
 	ogPacket *sphinx.OnionPacket
+	failure  lnwire.FailureMessage
 }
 
 // NewMockObfuscator initializes a dummy mockObfuscator used for testing.
@@ -366,6 +367,8 @@ func (o *mockObfuscator) Reextract(
 func (o *mockObfuscator) EncryptFirstHop(failure lnwire.FailureMessage) (
 	lnwire.OpaqueReason, error) {
 
+	o.failure = failure
+
 	var b bytes.Buffer
 	if err := lnwire.EncodeFailure(&b, failure, 0); err != nil {
 		return nil, err
@@ -397,10 +400,7 @@ func (o *mockDeobfuscator) DecryptError(reason lnwire.OpaqueReason) (*Forwarding
 		return nil, err
 	}
 
-	return &ForwardingError{
-		FailureSourceIdx: 1,
-		FailureMessage:   failure,
-	}, nil
+	return NewForwardingError(failure, 1), nil
 }
 
 var _ ErrorDecrypter = (*mockDeobfuscator)(nil)
@@ -431,14 +431,22 @@ func (p *mockIteratorDecoder) DecodeHopIterator(r io.Reader, rHash []byte,
 	}
 	hopLength := binary.BigEndian.Uint32(b[:])
 
-	hops := make([]hop.ForwardingInfo, hopLength)
+	hops := make([]*hop.Payload, hopLength)
 	for i := uint32(0); i < hopLength; i++ {
-		f := &hop.ForwardingInfo{}
-		if err := decodeFwdInfo(r, f); err != nil {
+		var f hop.ForwardingInfo
+		if err := decodeFwdInfo(r, &f); err != nil {
 			return nil, lnwire.CodeTemporaryChannelFailure
 		}
 
-		hops[i] = *f
+		var nextHopBytes [8]byte
+		binary.BigEndian.PutUint64(nextHopBytes[:], f.NextHop.ToUint64())
+
+		hops[i] = hop.NewLegacyPayload(&sphinx.HopData{
+			Realm:         [1]byte{}, // hop.BitcoinNetwork
+			NextAddress:   nextHopBytes,
+			ForwardAmount: uint64(f.AmountToForward),
+			OutgoingCltv:  f.OutgoingCTLV,
+		})
 	}
 
 	return newMockHopIterator(hops...), lnwire.CodeNone
@@ -597,11 +605,11 @@ func (s *mockServer) WipeChannel(*wire.OutPoint) error {
 	return nil
 }
 
-func (s *mockServer) LocalGlobalFeatures() *lnwire.FeatureVector {
+func (s *mockServer) LocalFeatures() *lnwire.FeatureVector {
 	return nil
 }
 
-func (s *mockServer) RemoteGlobalFeatures() *lnwire.FeatureVector {
+func (s *mockServer) RemoteFeatures() *lnwire.FeatureVector {
 	return nil
 }
 
@@ -637,7 +645,9 @@ type mockChannelLink struct {
 
 	htlcID uint64
 
-	htlcSatifiesPolicyLocalResult lnwire.FailureMessage
+	checkHtlcTransitResult *LinkError
+
+	checkHtlcForwardResult *LinkError
 }
 
 // completeCircuit is a helper method for adding the finalized payment circuit
@@ -696,16 +706,17 @@ func (f *mockChannelLink) HandleChannelUpdate(lnwire.Message) {
 
 func (f *mockChannelLink) UpdateForwardingPolicy(_ ForwardingPolicy) {
 }
-func (f *mockChannelLink) HtlcSatifiesPolicy([32]byte, lnwire.MilliSatoshi,
-	lnwire.MilliSatoshi, uint32, uint32, uint32) lnwire.FailureMessage {
-	return nil
+func (f *mockChannelLink) CheckHtlcForward([32]byte, lnwire.MilliSatoshi,
+	lnwire.MilliSatoshi, uint32, uint32, uint32) *LinkError {
+
+	return f.checkHtlcForwardResult
 }
 
-func (f *mockChannelLink) HtlcSatifiesPolicyLocal(payHash [32]byte,
+func (f *mockChannelLink) CheckHtlcTransit(payHash [32]byte,
 	amt lnwire.MilliSatoshi, timeout uint32,
-	heightNow uint32) lnwire.FailureMessage {
+	heightNow uint32) *LinkError {
 
-	return f.htlcSatifiesPolicyLocalResult
+	return f.checkHtlcTransitResult
 }
 
 func (f *mockChannelLink) Stats() (uint64, lnwire.MilliSatoshi, lnwire.MilliSatoshi) {
@@ -777,9 +788,13 @@ func newMockRegistry(minDelta uint32) *mockInvoiceRegistry {
 		panic(err)
 	}
 
-	finalCltvRejectDelta := int32(5)
-
-	registry := invoices.NewRegistry(cdb, finalCltvRejectDelta)
+	registry := invoices.NewRegistry(
+		cdb,
+		invoices.NewInvoiceExpiryWatcher(clock.NewDefaultClock()),
+		&invoices.RegistryConfig{
+			FinalCltvRejectDelta: 5,
+		},
+	)
 	registry.Start()
 
 	return &mockInvoiceRegistry{
@@ -801,10 +816,11 @@ func (i *mockInvoiceRegistry) SettleHodlInvoice(preimage lntypes.Preimage) error
 func (i *mockInvoiceRegistry) NotifyExitHopHtlc(rhash lntypes.Hash,
 	amt lnwire.MilliSatoshi, expiry uint32, currentHeight int32,
 	circuitKey channeldb.CircuitKey, hodlChan chan<- interface{},
-	eob []byte) (*invoices.HodlEvent, error) {
+	payload invoices.Payload) (*invoices.HtlcResolution, error) {
 
 	event, err := i.registry.NotifyExitHopHtlc(
-		rhash, amt, expiry, currentHeight, circuitKey, hodlChan, eob,
+		rhash, amt, expiry, currentHeight, circuitKey, hodlChan,
+		payload,
 	)
 	if err != nil {
 		return nil, err

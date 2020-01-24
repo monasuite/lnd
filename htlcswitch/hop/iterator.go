@@ -16,15 +16,13 @@ import (
 // interpret the forwarding information encoded within the HTLC packet, and hop
 // to encode the forwarding information for the _next_ hop.
 type Iterator interface {
-	// ForwardingInstructions returns the set of fields that detail exactly
-	// _how_ this hop should forward the HTLC to the next hop.
-	// Additionally, the information encoded within the returned
-	// ForwardingInfo is to be used by each hop to authenticate the
-	// information given to it by the prior hop.
-	ForwardingInstructions() (ForwardingInfo, error)
-
-	// ExtraOnionBlob returns the additional EOB data (if available).
-	ExtraOnionBlob() []byte
+	// HopPayload returns the set of fields that detail exactly _how_ this
+	// hop should forward the HTLC to the next hop.  Additionally, the
+	// information encoded within the returned ForwardingInfo is to be used
+	// by each hop to authenticate the information given to it by the prior
+	// hop. The payload will also contain any additional TLV fields provided
+	// by the sender.
+	HopPayload() (*Payload, error)
 
 	// EncodeNextHop encodes the onion packet destined for the next hop
 	// into the passed io.Writer.
@@ -72,48 +70,33 @@ func (r *sphinxHopIterator) EncodeNextHop(w io.Writer) error {
 	return r.processedPacket.NextPacket.Encode(w)
 }
 
-// ForwardingInstructions returns the set of fields that detail exactly _how_
-// this hop should forward the HTLC to the next hop.  Additionally, the
-// information encoded within the returned ForwardingInfo is to be used by each
-// hop to authenticate the information given to it by the prior hop.
+// HopPayload returns the set of fields that detail exactly _how_ this hop
+// should forward the HTLC to the next hop.  Additionally, the information
+// encoded within the returned ForwardingInfo is to be used by each hop to
+// authenticate the information given to it by the prior hop. The payload will
+// also contain any additional TLV fields provided by the sender.
 //
 // NOTE: Part of the HopIterator interface.
-func (r *sphinxHopIterator) ForwardingInstructions() (ForwardingInfo, error) {
+func (r *sphinxHopIterator) HopPayload() (*Payload, error) {
 	switch r.processedPacket.Payload.Type {
+
 	// If this is the legacy payload, then we'll extract the information
 	// directly from the pre-populated ForwardingInstructions field.
 	case sphinx.PayloadLegacy:
 		fwdInst := r.processedPacket.ForwardingInstructions
-		p := NewLegacyPayload(fwdInst)
-
-		return p.ForwardingInfo(), nil
+		return NewLegacyPayload(fwdInst), nil
 
 	// Otherwise, if this is the TLV payload, then we'll make a new stream
 	// to decode only what we need to make routing decisions.
 	case sphinx.PayloadTLV:
-		p, err := NewPayloadFromReader(bytes.NewReader(
+		return NewPayloadFromReader(bytes.NewReader(
 			r.processedPacket.Payload.Payload,
 		))
-		if err != nil {
-			return ForwardingInfo{}, err
-		}
-
-		return p.ForwardingInfo(), nil
 
 	default:
-		return ForwardingInfo{}, fmt.Errorf("unknown "+
-			"sphinx payload type: %v",
+		return nil, fmt.Errorf("unknown sphinx payload type: %v",
 			r.processedPacket.Payload.Type)
 	}
-}
-
-// ExtraOnionBlob returns the additional EOB data (if available).
-func (r *sphinxHopIterator) ExtraOnionBlob() []byte {
-	if r.processedPacket.Payload.Type == sphinx.PayloadLegacy {
-		return nil
-	}
-
-	return r.processedPacket.Payload.Payload
 }
 
 // ExtractErrorEncrypter decodes and returns the ErrorEncrypter for this hop,
@@ -199,6 +182,30 @@ func (p *OnionProcessor) DecodeHopIterator(r io.Reader, rHash []byte,
 	}
 
 	return makeSphinxHopIterator(onionPkt, sphinxPacket), lnwire.CodeNone
+}
+
+// ReconstructHopIterator attempts to decode a valid sphinx packet from the passed io.Reader
+// instance using the rHash as the associated data when checking the relevant
+// MACs during the decoding process.
+func (p *OnionProcessor) ReconstructHopIterator(r io.Reader, rHash []byte) (
+	Iterator, error) {
+
+	onionPkt := &sphinx.OnionPacket{}
+	if err := onionPkt.Decode(r); err != nil {
+		return nil, err
+	}
+
+	// Attempt to process the Sphinx packet. We include the payment hash of
+	// the HTLC as it's authenticated within the Sphinx packet itself as
+	// associated data in order to thwart attempts a replay attacks. In the
+	// case of a replay, an attacker is *forced* to use the same payment
+	// hash twice, thereby losing their money entirely.
+	sphinxPacket, err := p.router.ReconstructOnionPacket(onionPkt, rHash)
+	if err != nil {
+		return nil, err
+	}
+
+	return makeSphinxHopIterator(onionPkt, sphinxPacket), nil
 }
 
 // DecodeHopIteratorRequest encapsulates all date necessary to process an onion

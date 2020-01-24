@@ -3,7 +3,13 @@ package contractcourt
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
+
+	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btclog"
+	"github.com/monasuite/lnd/build"
+	"github.com/monasuite/lnd/channeldb"
 )
 
 var (
@@ -46,19 +52,21 @@ type ContractResolver interface {
 	// passed Writer.
 	Encode(w io.Writer) error
 
-	// Decode attempts to decode an encoded ContractResolver from the
-	// passed Reader instance, returning an active ContractResolver
-	// instance.
-	Decode(r io.Reader) error
-
-	// AttachResolverKit should be called once a resolved is successfully
-	// decoded from its stored format. This struct delivers a generic tool
-	// kit that resolvers need to complete their duty.
-	AttachResolverKit(ResolverKit)
-
 	// Stop signals the resolver to cancel any current resolution
 	// processes, and suspend.
 	Stop()
+}
+
+// htlcContractResolver is the required interface for htlc resolvers.
+type htlcContractResolver interface {
+	ContractResolver
+
+	// HtlcPoint returns the htlc's outpoint on the commitment tx.
+	HtlcPoint() wire.OutPoint
+
+	// Supplement adds additional information to the resolver that is
+	// required before Resolve() is called.
+	Supplement(htlc channeldb.HTLC)
 }
 
 // reportingContractResolver is a ContractResolver that also exposes a report on
@@ -69,10 +77,9 @@ type reportingContractResolver interface {
 	report() *ContractReport
 }
 
-// ResolverKit is meant to be used as a mix-in struct to be embedded within a
-// given ContractResolver implementation. It contains all the items that a
-// resolver requires to carry out its duties.
-type ResolverKit struct {
+// ResolverConfig contains the externally supplied configuration items that are
+// required by a ContractResolver implementation.
+type ResolverConfig struct {
 	// ChannelArbitratorConfig contains all the interfaces and closures
 	// required for the resolver to interact with outside sub-systems.
 	ChannelArbitratorConfig
@@ -81,8 +88,31 @@ type ResolverKit struct {
 	// should write the state of the resolver to persistent storage, and
 	// return a non-nil error upon success.
 	Checkpoint func(ContractResolver) error
+}
 
-	Quit chan struct{}
+// contractResolverKit is meant to be used as a mix-in struct to be embedded within a
+// given ContractResolver implementation. It contains all the common items that
+// a resolver requires to carry out its duties.
+type contractResolverKit struct {
+	ResolverConfig
+
+	log btclog.Logger
+
+	quit chan struct{}
+}
+
+// newContractResolverKit instantiates the mix-in struct.
+func newContractResolverKit(cfg ResolverConfig) *contractResolverKit {
+	return &contractResolverKit{
+		ResolverConfig: cfg,
+		quit:           make(chan struct{}),
+	}
+}
+
+// initLogger initializes the resolver-specific logger.
+func (r *contractResolverKit) initLogger(resolver ContractResolver) {
+	logPrefix := fmt.Sprintf("%T(%v):", resolver, r.ChanPoint)
+	r.log = build.NewPrefixLog(logPrefix, log)
 }
 
 var (

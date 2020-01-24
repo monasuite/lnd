@@ -5,18 +5,20 @@ package signrpc
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 
 	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnrpc"
-
+	"github.com/monasuite/lnd/lnwire"
 	"google.golang.org/grpc"
 	"gopkg.in/macaroon-bakery.v2/bakery"
 )
@@ -37,6 +39,10 @@ var (
 			Entity: "signer",
 			Action: "generate",
 		},
+		{
+			Entity: "signer",
+			Action: "read",
+		},
 	}
 
 	// macPermissions maps RPC calls to the permissions they require.
@@ -46,6 +52,18 @@ var (
 			Action: "generate",
 		}},
 		"/signrpc.Signer/ComputeInputScript": {{
+			Entity: "signer",
+			Action: "generate",
+		}},
+		"/signrpc.Signer/SignMessage": {{
+			Entity: "signer",
+			Action: "generate",
+		}},
+		"/signrpc.Signer/VerifyMessage": {{
+			Entity: "signer",
+			Action: "read",
+		}},
+		"/signrpc.Signer/DeriveSharedKey": {{
 			Entity: "signer",
 			Action: "generate",
 		}},
@@ -382,4 +400,145 @@ func (s *Server) ComputeInputScript(ctx context.Context,
 	}
 
 	return resp, nil
+}
+
+// SignMessage signs a message with the key specified in the key locator. The
+// returned signature is fixed-size LN wire format encoded.
+func (s *Server) SignMessage(ctx context.Context,
+	in *SignMessageReq) (*SignMessageResp, error) {
+
+	if in.Msg == nil {
+		return nil, fmt.Errorf("a message to sign MUST be passed in")
+	}
+	if in.KeyLoc == nil {
+		return nil, fmt.Errorf("a key locator MUST be passed in")
+	}
+
+	// Derive the private key we'll be using for signing.
+	keyLocator := keychain.KeyLocator{
+		Family: keychain.KeyFamily(in.KeyLoc.KeyFamily),
+		Index:  uint32(in.KeyLoc.KeyIndex),
+	}
+	privKey, err := s.cfg.KeyRing.DerivePrivKey(keychain.KeyDescriptor{
+		KeyLocator: keyLocator,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("can't derive private key: %v", err)
+	}
+
+	// The signature is over the sha256 hash of the message.
+	digest := chainhash.HashB(in.Msg)
+
+	// Create the raw ECDSA signature first and convert it to the final wire
+	// format after.
+	sig, err := privKey.Sign(digest)
+	if err != nil {
+		return nil, fmt.Errorf("can't sign the hash: %v", err)
+	}
+	wireSig, err := lnwire.NewSigFromSignature(sig)
+	if err != nil {
+		return nil, fmt.Errorf("can't convert to wire format: %v", err)
+	}
+	return &SignMessageResp{
+		Signature: wireSig.ToSignatureBytes(),
+	}, nil
+}
+
+// VerifyMessage verifies a signature over a message using the public key
+// provided. The signature must be fixed-size LN wire format encoded.
+func (s *Server) VerifyMessage(ctx context.Context,
+	in *VerifyMessageReq) (*VerifyMessageResp, error) {
+
+	if in.Msg == nil {
+		return nil, fmt.Errorf("a message to verify MUST be passed in")
+	}
+	if in.Signature == nil {
+		return nil, fmt.Errorf("a signature to verify MUST be passed " +
+			"in")
+	}
+	if in.Pubkey == nil {
+		return nil, fmt.Errorf("a pubkey to verify MUST be passed in")
+	}
+	pubkey, err := btcec.ParsePubKey(in.Pubkey, btcec.S256())
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse pubkey: %v", err)
+	}
+
+	// The signature must be fixed-size LN wire format encoded.
+	wireSig, err := lnwire.NewSigFromRawSignature(in.Signature)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode signature: %v", err)
+	}
+	sig, err := wireSig.ToSignature()
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert from wire format: %v",
+			err)
+	}
+
+	// The signature is over the sha256 hash of the message.
+	digest := chainhash.HashB(in.Msg)
+	valid := sig.Verify(digest, pubkey)
+	return &VerifyMessageResp{
+		Valid: valid,
+	}, nil
+}
+
+// DeriveSharedKey returns a shared secret key by performing Diffie-Hellman key
+// derivation between the ephemeral public key in the request and the node's
+// key specified in the key_loc parameter (or the node's identity private key
+// if no key locator is specified):
+//     P_shared = privKeyNode * ephemeralPubkey
+// The resulting shared public key is serialized in the compressed format and
+// hashed with sha256, resulting in the final key length of 256bit.
+func (s *Server) DeriveSharedKey(_ context.Context, in *SharedKeyRequest) (
+	*SharedKeyResponse, error) {
+
+	if len(in.EphemeralPubkey) != 33 {
+		return nil, fmt.Errorf("ephemeral pubkey must be " +
+			"serialized in compressed format")
+	}
+	ephemeralPubkey, err := btcec.ParsePubKey(
+		in.EphemeralPubkey, btcec.S256(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse pubkey: %v", err)
+	}
+
+	// By default, use the node identity private key.
+	locator := keychain.KeyLocator{
+		Family: keychain.KeyFamilyNodeKey,
+		Index:  0,
+	}
+	if in.KeyLoc != nil {
+		locator.Family = keychain.KeyFamily(in.KeyLoc.KeyFamily)
+		locator.Index = uint32(in.KeyLoc.KeyIndex)
+	}
+
+	// Derive our node's private key from the key ring.
+	idPrivKey, err := s.cfg.KeyRing.DerivePrivKey(keychain.KeyDescriptor{
+		KeyLocator: locator,
+	})
+	if err != nil {
+		err := fmt.Errorf("unable to derive node private key: %v", err)
+		log.Error(err)
+		return nil, err
+	}
+	idPrivKey.Curve = btcec.S256()
+
+	// Derive the shared key using ECDH and hashing the serialized
+	// compressed shared point.
+	sharedKeyHash := ecdh(ephemeralPubkey, idPrivKey)
+	return &SharedKeyResponse{SharedKey: sharedKeyHash}, nil
+}
+
+// ecdh performs an ECDH operation between pub and priv. The returned value is
+// the sha256 of the compressed shared point.
+func ecdh(pub *btcec.PublicKey, priv *btcec.PrivateKey) []byte {
+	s := &btcec.PublicKey{}
+	x, y := btcec.S256().ScalarMult(pub.X, pub.Y, priv.D.Bytes())
+	s.X = x
+	s.Y = y
+
+	h := sha256.Sum256(s.SerializeCompressed())
+	return h[:]
 }

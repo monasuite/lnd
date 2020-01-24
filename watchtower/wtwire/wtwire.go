@@ -8,7 +8,7 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/watchtower/blob"
 )
@@ -74,7 +74,7 @@ func WriteElement(w io.Writer, element interface{}) error {
 			return err
 		}
 
-	case lnwallet.SatPerKWeight:
+	case chainfee.SatPerKWeight:
 		var b [8]byte
 		binary.BigEndian.PutUint64(b[:], uint64(e))
 		if _, err := w.Write(b[:]); err != nil {
@@ -194,12 +194,12 @@ func ReadElement(r io.Reader, element interface{}) error {
 		}
 		*e = bytes
 
-	case *lnwallet.SatPerKWeight:
+	case *chainfee.SatPerKWeight:
 		var b [8]byte
 		if _, err := io.ReadFull(r, b[:]); err != nil {
 			return err
 		}
-		*e = lnwallet.SatPerKWeight(binary.BigEndian.Uint64(b[:]))
+		*e = chainfee.SatPerKWeight(binary.BigEndian.Uint64(b[:]))
 
 	case *ErrorCode:
 		var b [2]byte

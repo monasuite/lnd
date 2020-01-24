@@ -1287,10 +1287,74 @@ func TestSwitchForwardCircuitPersistence(t *testing.T) {
 	}
 }
 
+type multiHopFwdTest struct {
+	name                 string
+	eligible1, eligible2 bool
+	failure1, failure2   *LinkError
+	expectedReply        lnwire.FailCode
+}
+
 // TestSkipIneligibleLinksMultiHopForward tests that if a multi-hop HTLC comes
 // along, then we won't attempt to froward it down al ink that isn't yet able
 // to forward any HTLC's.
 func TestSkipIneligibleLinksMultiHopForward(t *testing.T) {
+	tests := []multiHopFwdTest{
+		// None of the channels is eligible.
+		{
+			name:          "not eligible",
+			expectedReply: lnwire.CodeUnknownNextPeer,
+		},
+
+		// Channel one has a policy failure and the other channel isn't
+		// available.
+		{
+			name:      "policy fail",
+			eligible1: true,
+			failure1: NewLinkError(
+				lnwire.NewFinalIncorrectCltvExpiry(0),
+			),
+			expectedReply: lnwire.CodeFinalIncorrectCltvExpiry,
+		},
+
+		// The requested channel is not eligible, but the packet is
+		// forwarded through the other channel.
+		{
+			name:          "non-strict success",
+			eligible2:     true,
+			expectedReply: lnwire.CodeNone,
+		},
+
+		// The requested channel has insufficient bandwidth and the
+		// other channel's policy isn't satisfied.
+		{
+			name:      "non-strict policy fail",
+			eligible1: true,
+			failure1: NewDetailedLinkError(
+				lnwire.NewTemporaryChannelFailure(nil),
+				FailureDetailInsufficientBalance,
+			),
+			eligible2: true,
+			failure2: NewLinkError(
+				lnwire.NewFinalIncorrectCltvExpiry(0),
+			),
+			expectedReply: lnwire.CodeTemporaryChannelFailure,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			testSkipIneligibleLinksMultiHopForward(t, &test)
+		})
+	}
+}
+
+// testSkipIneligibleLinksMultiHopForward tests that if a multi-hop HTLC comes
+// along, then we won't attempt to froward it down al ink that isn't yet able
+// to forward any HTLC's.
+func testSkipIneligibleLinksMultiHopForward(t *testing.T,
+	testCase *multiHopFwdTest) {
+
 	t.Parallel()
 
 	var packet *htlcPacket
@@ -1313,22 +1377,32 @@ func TestSkipIneligibleLinksMultiHopForward(t *testing.T) {
 	}
 	defer s.Stop()
 
-	chanID1, chanID2, aliceChanID, bobChanID := genIDs()
-
+	chanID1, aliceChanID := genID()
 	aliceChannelLink := newMockChannelLink(
 		s, chanID1, aliceChanID, alicePeer, true,
 	)
 
 	// We'll create a link for Bob, but mark the link as unable to forward
 	// any new outgoing HTLC's.
-	bobChannelLink := newMockChannelLink(
-		s, chanID2, bobChanID, bobPeer, false,
+	chanID2, bobChanID2 := genID()
+	bobChannelLink1 := newMockChannelLink(
+		s, chanID2, bobChanID2, bobPeer, testCase.eligible1,
 	)
+	bobChannelLink1.checkHtlcForwardResult = testCase.failure1
+
+	chanID3, bobChanID3 := genID()
+	bobChannelLink2 := newMockChannelLink(
+		s, chanID3, bobChanID3, bobPeer, testCase.eligible2,
+	)
+	bobChannelLink2.checkHtlcForwardResult = testCase.failure2
 
 	if err := s.AddLink(aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(bobChannelLink1); err != nil {
+		t.Fatalf("unable to add bob link: %v", err)
+	}
+	if err := s.AddLink(bobChannelLink2); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1336,21 +1410,37 @@ func TestSkipIneligibleLinksMultiHopForward(t *testing.T) {
 	// Alice.
 	preimage := [sha256.Size]byte{1}
 	rhash := fastsha256.Sum256(preimage[:])
+	obfuscator := NewMockObfuscator()
 	packet = &htlcPacket{
 		incomingChanID: aliceChannelLink.ShortChanID(),
 		incomingHTLCID: 0,
-		outgoingChanID: bobChannelLink.ShortChanID(),
+		outgoingChanID: bobChannelLink1.ShortChanID(),
 		htlc: &lnwire.UpdateAddHTLC{
 			PaymentHash: rhash,
 			Amount:      1,
 		},
-		obfuscator: NewMockObfuscator(),
+		obfuscator: obfuscator,
 	}
 
 	// The request to forward should fail as
 	err = s.forward(packet)
-	if err == nil {
-		t.Fatalf("forwarding should have failed due to inactive link")
+
+	failure := obfuscator.(*mockObfuscator).failure
+	if testCase.expectedReply == lnwire.CodeNone {
+		if err != nil {
+			t.Fatalf("forwarding should have succeeded")
+		}
+		if failure != nil {
+			t.Fatalf("unexpected failure %T", failure)
+		}
+	} else {
+		if err == nil {
+			t.Fatalf("forwarding should have failed due to " +
+				"inactive link")
+		}
+		if failure.Code() != testCase.expectedReply {
+			t.Fatalf("unexpected failure %T", failure)
+		}
 	}
 
 	if s.circuits.NumOpen() != 0 {
@@ -1399,7 +1489,9 @@ func testSkipLinkLocalForward(t *testing.T, eligible bool,
 	aliceChannelLink := newMockChannelLink(
 		s, chanID1, aliceChanID, alicePeer, eligible,
 	)
-	aliceChannelLink.htlcSatifiesPolicyLocalResult = policyResult
+	aliceChannelLink.checkHtlcTransitResult = NewLinkError(
+		policyResult,
+	)
 	if err := s.AddLink(aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
@@ -2095,11 +2187,11 @@ func TestUpdateFailMalformedHTLCErrorConversion(t *testing.T) {
 			t.Fatalf("unable to send payment: %v", err)
 		}
 
-		fwdingErr := err.(*ForwardingError)
-		failureMsg := fwdingErr.FailureMessage
+		routingErr := err.(ClearTextError)
+		failureMsg := routingErr.WireMessage()
 		if _, ok := failureMsg.(*lnwire.FailInvalidOnionKey); !ok {
 			t.Fatalf("expected onion failure instead got: %v",
-				fwdingErr.FailureMessage)
+				routingErr.WireMessage())
 		}
 	}
 
@@ -2358,14 +2450,18 @@ func TestInvalidFailure(t *testing.T) {
 
 	select {
 	case result := <-resultChan:
-		fErr, ok := result.Error.(*ForwardingError)
+		rtErr, ok := result.Error.(ClearTextError)
 		if !ok {
-			t.Fatal("expected ForwardingError")
+			t.Fatal("expected ClearTextError")
 		}
-		if fErr.FailureSourceIdx != 2 {
+		source, ok := rtErr.(*ForwardingError)
+		if !ok {
+			t.Fatalf("expected forwarding error, got: %T", rtErr)
+		}
+		if source.FailureSourceIdx != 2 {
 			t.Fatal("unexpected error source index")
 		}
-		if fErr.FailureMessage != nil {
+		if rtErr.WireMessage() != nil {
 			t.Fatal("expected empty failure message")
 		}
 

@@ -23,6 +23,7 @@ import (
 	"github.com/btcsuite/fastsha256"
 	"github.com/coreos/bbolt"
 	"github.com/go-errors/errors"
+	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/contractcourt"
@@ -33,6 +34,7 @@ import (
 	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/shachain"
 )
@@ -92,27 +94,28 @@ var (
 
 var idSeqNum uint64
 
-func genIDs() (lnwire.ChannelID, lnwire.ChannelID, lnwire.ShortChannelID,
-	lnwire.ShortChannelID) {
-
-	id := atomic.AddUint64(&idSeqNum, 2)
+// genID generates a unique tuple to identify a test channel.
+func genID() (lnwire.ChannelID, lnwire.ShortChannelID) {
+	id := atomic.AddUint64(&idSeqNum, 1)
 
 	var scratch [8]byte
 
 	binary.BigEndian.PutUint64(scratch[:], id)
 	hash1, _ := chainhash.NewHash(bytes.Repeat(scratch[:], 4))
 
-	binary.BigEndian.PutUint64(scratch[:], id+1)
-	hash2, _ := chainhash.NewHash(bytes.Repeat(scratch[:], 4))
-
 	chanPoint1 := wire.NewOutPoint(hash1, uint32(id))
-	chanPoint2 := wire.NewOutPoint(hash2, uint32(id+1))
-
 	chanID1 := lnwire.NewChanIDFromOutPoint(chanPoint1)
-	chanID2 := lnwire.NewChanIDFromOutPoint(chanPoint2)
-
 	aliceChanID := lnwire.NewShortChanIDFromInt(id)
-	bobChanID := lnwire.NewShortChanIDFromInt(id + 1)
+
+	return chanID1, aliceChanID
+}
+
+// genIDs generates ids for two test channels.
+func genIDs() (lnwire.ChannelID, lnwire.ChannelID, lnwire.ShortChannelID,
+	lnwire.ShortChannelID) {
+
+	chanID1, aliceChanID := genID()
+	chanID2, bobChanID := genID()
 
 	return chanID1, chanID2, aliceChanID, bobChanID
 }
@@ -259,7 +262,7 @@ func createTestChannel(alicePrivKey, bobPrivKey []byte,
 
 	aliceCommitTx, bobCommitTx, err := lnwallet.CreateCommitmentTxns(
 		aliceAmount, bobAmount, &aliceCfg, &bobCfg, aliceCommitPoint,
-		bobCommitPoint, *fundingTxIn, true,
+		bobCommitPoint, *fundingTxIn, channeldb.SingleFunderTweaklessBit,
 	)
 	if err != nil {
 		return nil, nil, nil, err
@@ -285,7 +288,7 @@ func createTestChannel(alicePrivKey, bobPrivKey []byte,
 		return nil, nil, nil, err
 	}
 
-	estimator := lnwallet.NewStaticFeeEstimator(6000, 0)
+	estimator := chainfee.NewStaticEstimator(6000, 0)
 	feePerKw, err := estimator.EstimateFeePerKW(1)
 	if err != nil {
 		return nil, nil, nil, err
@@ -327,7 +330,7 @@ func createTestChannel(alicePrivKey, bobPrivKey []byte,
 		RemoteChanCfg:           bobCfg,
 		IdentityPub:             aliceKeyPub,
 		FundingOutpoint:         *prevOut,
-		ChanType:                channeldb.SingleFunderTweakless,
+		ChanType:                channeldb.SingleFunderTweaklessBit,
 		IsInitiator:             true,
 		Capacity:                channelCapacity,
 		RemoteCurrentRevocation: bobCommitPoint,
@@ -346,7 +349,7 @@ func createTestChannel(alicePrivKey, bobPrivKey []byte,
 		RemoteChanCfg:           aliceCfg,
 		IdentityPub:             bobKeyPub,
 		FundingOutpoint:         *prevOut,
-		ChanType:                channeldb.SingleFunderTweakless,
+		ChanType:                channeldb.SingleFunderTweaklessBit,
 		IsInitiator:             false,
 		Capacity:                channelCapacity,
 		RemoteCurrentRevocation: aliceCommitPoint,
@@ -557,10 +560,13 @@ func generatePaymentWithPreimage(invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	invoice := &channeldb.Invoice{
 		CreationDate: time.Now(),
 		Terms: channeldb.ContractTerm{
+			FinalCltvDelta:  testInvoiceCltvExpiry,
 			Value:           invoiceAmt,
 			PaymentPreimage: preimage,
+			Features: lnwire.NewFeatureVector(
+				nil, lnwire.Features,
+			),
 		},
-		FinalCltvDelta: testInvoiceCltvExpiry,
 	}
 
 	htlc := &lnwire.UpdateAddHTLC{
@@ -599,7 +605,7 @@ func generatePayment(invoiceAmt, htlcAmt lnwire.MilliSatoshi, timelock uint32,
 }
 
 // generateRoute generates the path blob by given array of peers.
-func generateRoute(hops ...hop.ForwardingInfo) (
+func generateRoute(hops ...*hop.Payload) (
 	[lnwire.OnionPacketSize]byte, error) {
 
 	var blob [lnwire.OnionPacketSize]byte
@@ -640,13 +646,12 @@ type threeHopNetwork struct {
 // also the time lock value needed to route an HTLC with the target amount over
 // the specified path.
 func generateHops(payAmt lnwire.MilliSatoshi, startingHeight uint32,
-	path ...*channelLink) (lnwire.MilliSatoshi, uint32,
-	[]hop.ForwardingInfo) {
+	path ...*channelLink) (lnwire.MilliSatoshi, uint32, []*hop.Payload) {
 
 	totalTimelock := startingHeight
 	runningAmt := payAmt
 
-	hops := make([]hop.ForwardingInfo, len(path))
+	hops := make([]*hop.Payload, len(path))
 	for i := len(path) - 1; i >= 0; i-- {
 		// If this is the last hop, then the next hop is the special
 		// "exit node". Otherwise, we look to the "prior" hop.
@@ -674,7 +679,7 @@ func generateHops(payAmt lnwire.MilliSatoshi, startingHeight uint32,
 		amount := payAmt
 		if i != len(path)-1 {
 			prevHop := hops[i+1]
-			prevAmount := prevHop.AmountToForward
+			prevAmount := prevHop.ForwardingInfo().AmountToForward
 
 			fee := ExpectedFee(path[i].cfg.FwrdingPolicy, prevAmount)
 			runningAmt += fee
@@ -685,12 +690,15 @@ func generateHops(payAmt lnwire.MilliSatoshi, startingHeight uint32,
 			amount = runningAmt - fee
 		}
 
-		hops[i] = hop.ForwardingInfo{
-			Network:         hop.BitcoinNetwork,
-			NextHop:         nextHop,
-			AmountToForward: amount,
-			OutgoingCTLV:    timeLock,
-		}
+		var nextHopBytes [8]byte
+		binary.BigEndian.PutUint64(nextHopBytes[:], nextHop.ToUint64())
+
+		hops[i] = hop.NewLegacyPayload(&sphinx.HopData{
+			Realm:         [1]byte{}, // hop.BitcoinNetwork
+			NextAddress:   nextHopBytes,
+			ForwardAmount: uint64(amount),
+			OutgoingCltv:  timeLock,
+		})
 	}
 
 	return runningAmt, totalTimelock, hops
@@ -737,7 +745,7 @@ func waitForPayFuncResult(payFunc func() error, d time.Duration) error {
 // * from Alice to Carol through the Bob
 // * from Alice to some another peer through the Bob
 func makePayment(sendingPeer, receivingPeer lnpeer.Peer,
-	firstHop lnwire.ShortChannelID, hops []hop.ForwardingInfo,
+	firstHop lnwire.ShortChannelID, hops []*hop.Payload,
 	invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	timelock uint32) *paymentResponse {
 
@@ -771,7 +779,7 @@ func makePayment(sendingPeer, receivingPeer lnpeer.Peer,
 // preparePayment creates an invoice at the receivingPeer and returns a function
 // that, when called, launches the payment from the sendingPeer.
 func preparePayment(sendingPeer, receivingPeer lnpeer.Peer,
-	firstHop lnwire.ShortChannelID, hops []hop.ForwardingInfo,
+	firstHop lnwire.ShortChannelID, hops []*hop.Payload,
 	invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	timelock uint32) (*channeldb.Invoice, func() error, error) {
 
@@ -1070,14 +1078,14 @@ func newHopNetwork() *hopNetwork {
 	defaultDelta := uint32(6)
 
 	globalPolicy := ForwardingPolicy{
-		MinHTLC:       lnwire.NewMSatFromSatoshis(5),
+		MinHTLCOut:    lnwire.NewMSatFromSatoshis(5),
 		BaseFee:       lnwire.NewMSatFromSatoshis(1),
 		TimeLockDelta: defaultDelta,
 	}
 	obfuscator := NewMockObfuscator()
 
 	feeEstimator := &mockFeeEstimator{
-		byteFeeIn: make(chan lnwallet.SatPerKWeight),
+		byteFeeIn: make(chan chainfee.SatPerKWeight),
 		quit:      make(chan struct{}),
 	}
 
@@ -1263,7 +1271,7 @@ func (n *twoHopNetwork) stop() {
 }
 
 func (n *twoHopNetwork) makeHoldPayment(sendingPeer, receivingPeer lnpeer.Peer,
-	firstHop lnwire.ShortChannelID, hops []hop.ForwardingInfo,
+	firstHop lnwire.ShortChannelID, hops []*hop.Payload,
 	invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	timelock uint32, preimage lntypes.Preimage) chan error {
 

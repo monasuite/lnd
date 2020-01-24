@@ -16,6 +16,8 @@ var (
 	testAmount        = MilliSatoshi(1)
 	testCtlvExpiry    = uint32(2)
 	testFlags         = uint16(2)
+	testType          = uint64(3)
+	testOffset        = uint16(24)
 	sig, _            = NewSigFromSignature(testSig)
 	testChannelUpdate = ChannelUpdate{
 		Signature:      sig,
@@ -36,6 +38,7 @@ var onionFailures = []FailureMessage{
 	&FailUnknownNextPeer{},
 	&FailIncorrectPaymentAmount{},
 	&FailFinalExpiryTooSoon{},
+	&FailMPPTimeout{},
 
 	NewFailIncorrectDetails(99, 100),
 	NewInvalidOnionVersion(testOnionHash),
@@ -50,6 +53,7 @@ var onionFailures = []FailureMessage{
 	NewChannelDisabled(testFlags, testChannelUpdate),
 	NewFinalIncorrectCltvExpiry(testCtlvExpiry),
 	NewFinalIncorrectHtlcAmount(testAmount),
+	NewInvalidOnionPayload(testType, testOffset),
 }
 
 // TestEncodeDecodeCode tests the ability of onion errors to be properly encoded

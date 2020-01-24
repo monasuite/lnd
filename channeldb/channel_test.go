@@ -187,7 +187,7 @@ func createTestChannelState(cdb *DB) (*OpenChannel, error) {
 	chanID := lnwire.NewShortChanIDFromInt(uint64(rand.Int63()))
 
 	return &OpenChannel{
-		ChanType:          SingleFunder,
+		ChanType:          SingleFunderBit,
 		ChainHash:         key,
 		FundingOutpoint:   wire.OutPoint{Hash: key, Index: rand.Uint32()},
 		ShortChannelID:    chanID,
@@ -342,6 +342,101 @@ func TestOpenChannelPutGetDelete(t *testing.T) {
 	}
 	if len(openChans) != 0 {
 		t.Fatalf("all channels not deleted, found %v", len(openChans))
+	}
+}
+
+// TestOptionalShutdown tests the reading and writing of channels with and
+// without optional shutdown script fields.
+func TestOptionalShutdown(t *testing.T) {
+	local := lnwire.DeliveryAddress([]byte("local shutdown script"))
+	remote := lnwire.DeliveryAddress([]byte("remote shutdown script"))
+
+	if _, err := rand.Read(remote); err != nil {
+		t.Fatalf("Could not create random script: %v", err)
+	}
+
+	tests := []struct {
+		name           string
+		modifyChannel  func(channel *OpenChannel)
+		expectedLocal  lnwire.DeliveryAddress
+		expectedRemote lnwire.DeliveryAddress
+	}{
+		{
+			name:          "no shutdown scripts",
+			modifyChannel: func(channel *OpenChannel) {},
+		},
+		{
+			name: "local shutdown script",
+			modifyChannel: func(channel *OpenChannel) {
+				channel.LocalShutdownScript = local
+			},
+			expectedLocal: local,
+		},
+		{
+			name: "remote shutdown script",
+			modifyChannel: func(channel *OpenChannel) {
+				channel.RemoteShutdownScript = remote
+			},
+			expectedRemote: remote,
+		},
+		{
+			name: "both scripts set",
+			modifyChannel: func(channel *OpenChannel) {
+				channel.LocalShutdownScript = local
+				channel.RemoteShutdownScript = remote
+			},
+			expectedLocal:  local,
+			expectedRemote: remote,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+
+		t.Run(test.name, func(t *testing.T) {
+			cdb, cleanUp, err := makeTestDB()
+			if err != nil {
+				t.Fatalf("unable to make test database: %v", err)
+			}
+			defer cleanUp()
+
+			// Create the test channel state, then add an additional fake HTLC
+			// before syncing to disk.
+			state, err := createTestChannelState(cdb)
+			if err != nil {
+				t.Fatalf("unable to create channel state: %v", err)
+			}
+
+			test.modifyChannel(state)
+
+			// Write channels to Db.
+			addr := &net.TCPAddr{
+				IP:   net.ParseIP("127.0.0.1"),
+				Port: 18556,
+			}
+			if err := state.SyncPending(addr, 101); err != nil {
+				t.Fatalf("unable to save and serialize channel state: %v", err)
+			}
+
+			openChannels, err := cdb.FetchOpenChannels(state.IdentityPub)
+			if err != nil {
+				t.Fatalf("unable to fetch open channel: %v", err)
+			}
+
+			if len(openChannels) != 1 {
+				t.Fatalf("Expected one channel open, got: %v", len(openChannels))
+			}
+
+			if !bytes.Equal(openChannels[0].LocalShutdownScript, test.expectedLocal) {
+				t.Fatalf("Expected local: %x, got: %x", test.expectedLocal,
+					openChannels[0].LocalShutdownScript)
+			}
+
+			if !bytes.Equal(openChannels[0].RemoteShutdownScript, test.expectedRemote) {
+				t.Fatalf("Expected remote: %x, got: %x", test.expectedRemote,
+					openChannels[0].RemoteShutdownScript)
+			}
+		})
 	}
 }
 
@@ -897,8 +992,27 @@ func TestFetchWaitingCloseChannels(t *testing.T) {
 				PreviousOutPoint: channel.FundingOutpoint,
 			},
 		)
+
 		if err := channel.MarkCommitmentBroadcasted(closeTx); err != nil {
 			t.Fatalf("unable to mark commitment broadcast: %v", err)
+		}
+
+		// Now try to marking a coop close with a nil tx. This should
+		// succeed, but it shouldn't exit when queried.
+		if err = channel.MarkCoopBroadcasted(nil); err != nil {
+			t.Fatalf("unable to mark nil coop broadcast: %v", err)
+		}
+		_, err := channel.BroadcastedCooperative()
+		if err != ErrNoCloseTx {
+			t.Fatalf("expected no closing tx error, got: %v", err)
+		}
+
+		// Finally, modify the close tx deterministically  and also mark
+		// it as coop closed. Later we will test that distinct
+		// transactions are returned for both coop and force closes.
+		closeTx.TxIn[0].PreviousOutPoint.Index ^= 1
+		if err := channel.MarkCoopBroadcasted(closeTx); err != nil {
+			t.Fatalf("unable to mark coop broadcast: %v", err)
 		}
 	}
 
@@ -909,7 +1023,7 @@ func TestFetchWaitingCloseChannels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to fetch all waiting close channels: %v", err)
 	}
-	if len(waitingCloseChannels) != 2 {
+	if len(waitingCloseChannels) != numChannels {
 		t.Fatalf("expected %d channels waiting to be closed, got %d", 2,
 			len(waitingCloseChannels))
 	}
@@ -923,24 +1037,38 @@ func TestFetchWaitingCloseChannels(t *testing.T) {
 				channel.FundingOutpoint)
 		}
 
-		// Finally, make sure we can retrieve the closing tx for the
-		// channel.
-		closeTx, err := channel.BroadcastedCommitment()
+		chanPoint := channel.FundingOutpoint
+
+		// Assert that the force close transaction is retrievable.
+		forceCloseTx, err := channel.BroadcastedCommitment()
 		if err != nil {
 			t.Fatalf("Unable to retrieve commitment: %v", err)
 		}
 
-		if closeTx.TxIn[0].PreviousOutPoint != channel.FundingOutpoint {
+		if forceCloseTx.TxIn[0].PreviousOutPoint != chanPoint {
 			t.Fatalf("expected outpoint %v, got %v",
-				channel.FundingOutpoint,
-				closeTx.TxIn[0].PreviousOutPoint)
+				chanPoint,
+				forceCloseTx.TxIn[0].PreviousOutPoint)
+		}
+
+		// Assert that the coop close transaction is retrievable.
+		coopCloseTx, err := channel.BroadcastedCooperative()
+		if err != nil {
+			t.Fatalf("unable to retrieve coop close: %v", err)
+		}
+
+		chanPoint.Index ^= 1
+		if coopCloseTx.TxIn[0].PreviousOutPoint != chanPoint {
+			t.Fatalf("expected outpoint %v, got %v",
+				chanPoint,
+				coopCloseTx.TxIn[0].PreviousOutPoint)
 		}
 	}
 }
 
 // TestRefreshShortChanID asserts that RefreshShortChanID updates the in-memory
-// short channel ID of another OpenChannel to reflect a preceding call to
-// MarkOpen on a different OpenChannel.
+// state of another OpenChannel to reflect a preceding call to MarkOpen on a
+// different OpenChannel.
 func TestRefreshShortChanID(t *testing.T) {
 	t.Parallel()
 
@@ -1037,5 +1165,11 @@ func TestRefreshShortChanID(t *testing.T) {
 		t.Fatalf("channel packager source was not updated: want %v, "+
 			"got %v", chanOpenLoc,
 			pendingChannel.Packager.(*ChannelPackager).source)
+	}
+
+	// Check to ensure that this channel is no longer pending and this field
+	// is up to date.
+	if pendingChannel.IsPending {
+		t.Fatalf("channel pending state wasn't updated: want false got true")
 	}
 }

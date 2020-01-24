@@ -16,6 +16,42 @@ if [[ $1x = x ]]; then
     TAG=$DATE-$VERSION
 else
     TAG=$1
+
+    # If a tag is specified, ensure that that tag is present and checked out.
+    if [[ $TAG != $(git describe) ]]; then
+        echo "tag $TAG not checked out"
+        exit 1
+    fi
+
+    # Build lnd to extract version.
+    go build github.com/monasuite/lnd/cmd/lnd
+
+    # Extract version command output.
+    LND_VERSION_OUTPUT=`./lnd --version`
+
+    # Use a regex to isolate the version string.
+    LND_VERSION_REGEX="lnd version (.+) commit"
+    if [[ $LND_VERSION_OUTPUT =~ $LND_VERSION_REGEX ]]; then
+        # Prepend 'v' to match git tag naming scheme.
+        LND_VERSION="v${BASH_REMATCH[1]}"
+        echo "version: $LND_VERSION"
+
+        # If tag contains a release candidate suffix, append this suffix to the
+        # lnd reported version before we compare.
+        RC_REGEX="-rc[0-9]+$"
+        if [[ $TAG =~ $RC_REGEX ]]; then 
+            LND_VERSION+=${BASH_REMATCH[0]}
+        fi
+
+        # Match git tag with lnd version.
+        if [[ $TAG != $LND_VERSION ]]; then
+            echo "lnd version $LND_VERSION does not match tag $TAG"
+            exit 1
+        fi
+    else
+        echo "malformed lnd version output"
+        exit 1
+    fi
 fi
 
 go mod vendor

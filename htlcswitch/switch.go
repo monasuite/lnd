@@ -19,6 +19,7 @@ import (
 	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwire"
 )
 
@@ -102,7 +103,10 @@ type ChanClose struct {
 	// This value is only utilized if the closure type is CloseRegular.
 	// This will be the starting offered fee when the fee negotiation
 	// process for the cooperative closure transaction kicks off.
-	TargetFeePerKw lnwallet.SatPerKWeight
+	TargetFeePerKw chainfee.SatPerKWeight
+
+	// DeliveryScript is an optional delivery script to pay funds out to.
+	DeliveryScript lnwire.DeliveryAddress
 
 	// Updates is used by request creator to receive the notifications about
 	// execution of the close channel request.
@@ -752,30 +756,24 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 		s.indexMtx.RUnlock()
 		if err != nil {
 			log.Errorf("Link %v not found", pkt.outgoingChanID)
-			return &ForwardingError{
-				FailureSourceIdx: 0,
-				FailureMessage:   &lnwire.FailUnknownNextPeer{},
-			}
+			return NewLinkError(&lnwire.FailUnknownNextPeer{})
 		}
 
 		if !link.EligibleToForward() {
-			err := fmt.Errorf("Link %v is not available to forward",
+			log.Errorf("Link %v is not available to forward",
 				pkt.outgoingChanID)
-			log.Error(err)
 
 			// The update does not need to be populated as the error
 			// will be returned back to the router.
-			htlcErr := lnwire.NewTemporaryChannelFailure(nil)
-			return &ForwardingError{
-				FailureSourceIdx: 0,
-				ExtraMsg:         err.Error(),
-				FailureMessage:   htlcErr,
-			}
+			return NewDetailedLinkError(
+				lnwire.NewTemporaryChannelFailure(nil),
+				FailureDetailLinkNotEligible,
+			)
 		}
 
 		// Ensure that the htlc satisfies the outgoing channel policy.
 		currentHeight := atomic.LoadUint32(&s.bestHeight)
-		htlcErr := link.HtlcSatifiesPolicyLocal(
+		htlcErr := link.CheckHtlcTransit(
 			htlc.PaymentHash,
 			htlc.Amount,
 			htlc.Expiry, currentHeight,
@@ -783,27 +781,7 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 		if htlcErr != nil {
 			log.Errorf("Link %v policy for local forward not "+
 				"satisfied", pkt.outgoingChanID)
-
-			return &ForwardingError{
-				FailureSourceIdx: 0,
-				FailureMessage:   htlcErr,
-			}
-		}
-
-		if link.Bandwidth() < htlc.Amount {
-			err := fmt.Errorf("Link %v has insufficient capacity: "+
-				"need %v, has %v", pkt.outgoingChanID,
-				htlc.Amount, link.Bandwidth())
-			log.Error(err)
-
-			// The update does not need to be populated as the error
-			// will be returned back to the router.
-			htlcErr := lnwire.NewTemporaryChannelFailure(nil)
-			return &ForwardingError{
-				FailureSourceIdx: 0,
-				ExtraMsg:         err.Error(),
-				FailureMessage:   htlcErr,
-			}
+			return htlcErr
 		}
 
 		return link.HandleSwitchPacket(pkt)
@@ -927,41 +905,43 @@ func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
 	// decrypt the error, simply decode it them report back to the
 	// user.
 	case unencrypted:
-		var userErr string
 		r := bytes.NewReader(htlc.Reason)
 		failureMsg, err := lnwire.DecodeFailure(r, 0)
 		if err != nil {
-			userErr = fmt.Sprintf("unable to decode onion "+
-				"failure (hash=%v, pid=%d): %v",
-				paymentHash, paymentID, err)
-			log.Error(userErr)
+			// If we could not decode the failure reason, return a link
+			// error indicating that we failed to decode the onion.
+			linkError := NewDetailedLinkError(
+				// As this didn't even clear the link, we don't
+				// need to apply an update here since it goes
+				// directly to the router.
+				lnwire.NewTemporaryChannelFailure(nil),
+				FailureDetailOnionDecode,
+			)
 
-			// As this didn't even clear the link, we don't need to
-			// apply an update here since it goes directly to the
-			// router.
-			failureMsg = lnwire.NewTemporaryChannelFailure(nil)
+			log.Errorf("%v: (hash=%v, pid=%d): %v",
+				linkError.FailureDetail, paymentHash, paymentID,
+				err)
+
+			return linkError
 		}
 
-		return &ForwardingError{
-			FailureSourceIdx: 0,
-			ExtraMsg:         userErr,
-			FailureMessage:   failureMsg,
-		}
+		// If we successfully decoded the failure reason, return it.
+		return NewLinkError(failureMsg)
 
 	// A payment had to be timed out on chain before it got past
 	// the first hop. In this case, we'll report a permanent
 	// channel failure as this means us, or the remote party had to
 	// go on chain.
 	case isResolution && htlc.Reason == nil:
-		userErr := fmt.Sprintf("payment was resolved "+
-			"on-chain, then canceled back (hash=%v, pid=%d)",
+		linkError := NewDetailedLinkError(
+			&lnwire.FailPermanentChannelFailure{},
+			FailureDetailOnChainTimeout,
+		)
+
+		log.Info("%v: hash=%v, pid=%d", linkError.FailureDetail,
 			paymentHash, paymentID)
 
-		return &ForwardingError{
-			FailureSourceIdx: 0,
-			ExtraMsg:         userErr,
-			FailureMessage:   &lnwire.FailPermanentChannelFailure{},
-		}
+		return linkError
 
 	// A regular multi-hop payment error that we'll need to
 	// decrypt.
@@ -1028,75 +1008,47 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 		// selection process. This way we can return the error for
 		// precise link that the sender selected, while optimistically
 		// trying all links to utilize our available bandwidth.
-		linkErrs := make(map[lnwire.ShortChannelID]lnwire.FailureMessage)
+		linkErrs := make(map[lnwire.ShortChannelID]*LinkError)
 
 		// Try to find destination channel link with appropriate
 		// bandwidth.
 		var destination ChannelLink
 		for _, link := range interfaceLinks {
+			var failure *LinkError
+
 			// We'll skip any links that aren't yet eligible for
 			// forwarding.
-			switch {
-			case !link.EligibleToForward():
-				continue
-
-			// If the link doesn't yet have a source chan ID, then
-			// we'll skip it as well.
-			case link.ShortChanID() == hop.Source:
-				continue
+			if !link.EligibleToForward() {
+				failure = NewDetailedLinkError(
+					&lnwire.FailUnknownNextPeer{},
+					FailureDetailLinkNotEligible,
+				)
+			} else {
+				// We'll ensure that the HTLC satisfies the
+				// current forwarding conditions of this target
+				// link.
+				currentHeight := atomic.LoadUint32(&s.bestHeight)
+				failure = link.CheckHtlcForward(
+					htlc.PaymentHash, packet.incomingAmount,
+					packet.amount, packet.incomingTimeout,
+					packet.outgoingTimeout, currentHeight,
+				)
 			}
 
-			// Before we check the link's bandwidth, we'll ensure
-			// that the HTLC satisfies the current forwarding
-			// policy of this target link.
-			currentHeight := atomic.LoadUint32(&s.bestHeight)
-			err := link.HtlcSatifiesPolicy(
-				htlc.PaymentHash, packet.incomingAmount,
-				packet.amount, packet.incomingTimeout,
-				packet.outgoingTimeout, currentHeight,
-			)
-			if err != nil {
-				linkErrs[link.ShortChanID()] = err
-				continue
-			}
-
-			if link.Bandwidth() >= htlc.Amount {
+			// Stop searching if this link can forward the htlc.
+			if failure == nil {
 				destination = link
-
 				break
 			}
+
+			linkErrs[link.ShortChanID()] = failure
 		}
-
-		switch {
-		// If the channel link we're attempting to forward the update
-		// over has insufficient capacity, and didn't violate any
-		// forwarding policies, then we'll cancel the htlc as the
-		// payment cannot succeed.
-		case destination == nil && len(linkErrs) == 0:
-			// If packet was forwarded from another channel link
-			// than we should notify this link that some error
-			// occurred.
-			var failure lnwire.FailureMessage
-			update, err := s.cfg.FetchLastChannelUpdate(
-				packet.outgoingChanID,
-			)
-			if err != nil {
-				failure = &lnwire.FailTemporaryNodeFailure{}
-			} else {
-				failure = lnwire.NewTemporaryChannelFailure(update)
-			}
-
-			addErr := fmt.Errorf("unable to find appropriate "+
-				"channel link insufficient capacity, need "+
-				"%v towards node=%x", htlc.Amount, targetPeerKey)
-
-			return s.failAddPacket(packet, failure, addErr)
 
 		// If we had a forwarding failure due to the HTLC not
 		// satisfying the current policy, then we'll send back an
 		// error, but ensure we send back the error sourced at the
 		// *target* link.
-		case destination == nil && len(linkErrs) != 0:
+		if destination == nil {
 			// At this point, some or all of the links rejected the
 			// HTLC so we couldn't forward it. So we'll try to look
 			// up the error that came from the source.
@@ -1105,7 +1057,9 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 				// If we can't find the error of the source,
 				// then we'll return an unknown next peer,
 				// though this should never happen.
-				linkErr = &lnwire.FailUnknownNextPeer{}
+				linkErr = NewLinkError(
+					&lnwire.FailUnknownNextPeer{},
+				)
 				log.Warnf("unable to find err source for "+
 					"outgoing_link=%v, errors=%v",
 					packet.outgoingChanID, newLogClosure(func() string {
@@ -1118,7 +1072,7 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 				htlc.PaymentHash[:], packet.outgoingChanID,
 				linkErr)
 
-			return s.failAddPacket(packet, linkErr, addErr)
+			return s.failAddPacket(packet, linkErr.WireMessage(), addErr)
 		}
 
 		// Send the packet to the destination channel link which
@@ -1411,12 +1365,13 @@ func (s *Switch) teardownCircuit(pkt *htlcPacket) error {
 }
 
 // CloseLink creates and sends the close channel command to the target link
-// directing the specified closure type. If the closure type if CloseRegular,
-// then the last parameter should be the ideal fee-per-kw that will be used as
-// a starting point for close negotiation.
-func (s *Switch) CloseLink(chanPoint *wire.OutPoint, closeType ChannelCloseType,
-	targetFeePerKw lnwallet.SatPerKWeight) (chan interface{},
-	chan error) {
+// directing the specified closure type. If the closure type is CloseRegular,
+// targetFeePerKw parameter should be the ideal fee-per-kw that will be used as
+// a starting point for close negotiation. The deliveryScript parameter is an
+// optional parameter which sets a user specified script to close out to.
+func (s *Switch) CloseLink(chanPoint *wire.OutPoint,
+	closeType ChannelCloseType, targetFeePerKw chainfee.SatPerKWeight,
+	deliveryScript lnwire.DeliveryAddress) (chan interface{}, chan error) {
 
 	// TODO(roasbeef) abstract out the close updates.
 	updateChan := make(chan interface{}, 2)
@@ -1427,6 +1382,7 @@ func (s *Switch) CloseLink(chanPoint *wire.OutPoint, closeType ChannelCloseType,
 		ChanPoint:      chanPoint,
 		Updates:        updateChan,
 		TargetFeePerKw: targetFeePerKw,
+		DeliveryScript: deliveryScript,
 		Err:            errChan,
 	}
 

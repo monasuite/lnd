@@ -1,9 +1,9 @@
 ## Lightning Network Daemon
 
 [![Build Status](http://img.shields.io/travis/monasuite/lnd.svg)](https://travis-ci.org/monasuite/lnd) 
-[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/lightningnetwork/lnd/blob/master/LICENSE) 
+[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/monasuite/lnd/blob/master/LICENSE) 
 [![Irc](https://img.shields.io/badge/chat-on%20freenode-brightgreen.svg)](https://webchat.freenode.net/?channels=lnd) 
-[![Godoc](https://godoc.org/github.com/lightningnetwork/lnd?status.svg)](https://godoc.org/github.com/lightningnetwork/lnd)
+[![Godoc](https://godoc.org/github.com/monasuite/lnd?status.svg)](https://godoc.org/github.com/monasuite/lnd)
 
 <img src="logo.png">
 
@@ -59,7 +59,7 @@ resources including talks, articles, and example applications can be found at:
 [dev.lightning.community](https://dev.lightning.community).
 
 Finally, we also have an active
-[Slack](https://join.slack.com/t/lightningcommunity/shared_invite/enQtMzQ0OTQyNjE5NjU1LThmOGJkZDIzY2U2ODI5ODhmOWMzM2FkOTY5ZTdkYTc5NDYyN2U1YTJkZTE1MWU2OTZlZTAyOWY4NGY2M2M1NTM) where protocol developers, application developers, testers and users gather to
+[Slack](https://join.slack.com/t/lightningcommunity/shared_invite/enQtODY1NTI2MjY5MjAzLTQxYjBmNTcxNTA1YzZkZDQ1ZDNlYzJmZWMwYjg4MTI3OTkyZTU4ZDYzNTFjYzgyMWM0ZmZlYzVlZWI1YzhkNDI) where protocol developers, application developers, testers and users gather to
 discuss various aspects of `lnd` and also Lightning in general.
 
 ## Installation

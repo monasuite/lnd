@@ -1,9 +1,6 @@
 FROM golang:1.13-alpine as builder
 
-MAINTAINER Olaoluwa Osuntokun <lightning.engineering>
-
-# Copy in the local repository to build from.
-COPY . /go/src/github.com/monasuite/lnd
+LABEL maintainer="Olaoluwa Osuntokun <laolu@lightning.engineering>"
 
 # Force Go to use the cgo based DNS resolver. This is required to ensure DNS
 # queries required to connect to linked containers succeed.
@@ -12,8 +9,12 @@ ENV GODEBUG netdns=cgo
 # Install dependencies and install/build lnd.
 RUN apk add --no-cache --update alpine-sdk \
     git \
-    make \
-&&  cd /go/src/github.com/monasuite/lnd \
+    make 
+
+# Copy in the local repository to build from.
+COPY . /go/src/github.com/monasuite/lnd
+
+RUN cd /go/src/github.com/monasuite/lnd \
 &&  make \
 &&  make install tags="signrpc walletrpc chainrpc invoicesrpc routerrpc"
 

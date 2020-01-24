@@ -3,14 +3,14 @@ package sweep
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/monaarchives/btcwallet/wallet/txrules"
 	"github.com/monasuite/lnd/input"
-	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 )
 
 var (
@@ -19,6 +19,13 @@ var (
 	// are created and published.
 	DefaultMaxInputsPerTx = 100
 )
+
+// txInput is an interface that provides the input data required for tx
+// generation.
+type txInput interface {
+	input.Input
+	parameters() Params
+}
 
 // inputSet is a set of inputs that can be used as the basis to generate a tx
 // on.
@@ -29,16 +36,9 @@ type inputSet []input.Input
 // contains up to the configured maximum number of inputs. Negative yield
 // inputs are skipped. No input sets with a total value after fees below the
 // dust limit are returned.
-func generateInputPartitionings(sweepableInputs []input.Input,
-	relayFeePerKW, feePerKW lnwallet.SatPerKWeight,
-	maxInputsPerTx int) ([]inputSet, error) {
-
-	// Calculate dust limit based on the P2WPKH output script of the sweep
-	// txes.
-	dustLimit := txrules.GetDustThreshold(
-		input.P2WPKHSize,
-		btcutil.Amount(relayFeePerKW.FeePerKVByte()),
-	)
+func generateInputPartitionings(sweepableInputs []txInput,
+	relayFeePerKW, feePerKW chainfee.SatPerKWeight,
+	maxInputsPerTx int, wallet Wallet) ([]inputSet, error) {
 
 	// Sort input by yield. We will start constructing input sets starting
 	// with the highest yield inputs. This is to prevent the construction
@@ -56,7 +56,7 @@ func generateInputPartitionings(sweepableInputs []input.Input,
 	// on the signature length, which is not known yet at this point.
 	yields := make(map[wire.OutPoint]int64)
 	for _, input := range sweepableInputs {
-		size, _, err := getInputWitnessSizeUpperBound(input)
+		size, _, err := input.WitnessType().SizeUpperBound()
 		if err != nil {
 			return nil, fmt.Errorf(
 				"failed adding input weight: %v", err)
@@ -67,6 +67,14 @@ func generateInputPartitionings(sweepableInputs []input.Input,
 	}
 
 	sort.Slice(sweepableInputs, func(i, j int) bool {
+		// Because of the specific ordering and termination condition
+		// that is described above, we place force sweeps at the start
+		// of the list. Otherwise we can't be sure that they will be
+		// included in an input set.
+		if sweepableInputs[i].parameters().Force {
+			return true
+		}
+
 		return yields[*sweepableInputs[i].OutPoint()] >
 			yields[*sweepableInputs[j].OutPoint()]
 	})
@@ -74,110 +82,65 @@ func generateInputPartitionings(sweepableInputs []input.Input,
 	// Select blocks of inputs up to the configured maximum number.
 	var sets []inputSet
 	for len(sweepableInputs) > 0 {
-		// Get the maximum number of inputs from sweepableInputs that
-		// we can use to create a positive yielding set from.
-		count, outputValue := getPositiveYieldInputs(
-			sweepableInputs, maxInputsPerTx, feePerKW,
+		// Start building a set of positive-yield tx inputs under the
+		// condition that the tx will be published with the specified
+		// fee rate.
+		txInputs := newTxInputSet(
+			wallet, feePerKW, relayFeePerKW, maxInputsPerTx,
 		)
 
-		// If there are no positive yield inputs left, we can stop
-		// here.
-		if count == 0 {
+		// From the set of sweepable inputs, keep adding inputs to the
+		// input set until the tx output value no longer goes up or the
+		// maximum number of inputs is reached.
+		txInputs.addPositiveYieldInputs(sweepableInputs)
+
+		// If there are no positive yield inputs, we can stop here.
+		inputCount := len(txInputs.inputs)
+		if inputCount == 0 {
 			return sets, nil
+		}
+
+		// Check the current output value and add wallet utxos if
+		// needed to push the output value to the lower limit.
+		if err := txInputs.tryAddWalletInputsIfNeeded(); err != nil {
+			return nil, err
 		}
 
 		// If the output value of this block of inputs does not reach
 		// the dust limit, stop sweeping. Because of the sorting,
 		// continuing with the remaining inputs will only lead to sets
-		// with a even lower output value.
-		if outputValue < dustLimit {
+		// with an even lower output value.
+		if !txInputs.dustLimitReached() {
 			log.Debugf("Set value %v below dust limit of %v",
-				outputValue, dustLimit)
+				txInputs.outputValue, txInputs.dustLimit)
 			return sets, nil
 		}
 
-		log.Infof("Candidate sweep set of size=%v, has yield=%v",
-			count, outputValue)
+		log.Infof("Candidate sweep set of size=%v (+%v wallet inputs), "+
+			"has yield=%v, weight=%v",
+			inputCount, len(txInputs.inputs)-inputCount,
+			txInputs.outputValue-txInputs.walletInputTotal,
+			txInputs.weightEstimate.Weight())
 
-		sets = append(sets, sweepableInputs[:count])
-		sweepableInputs = sweepableInputs[count:]
+		sets = append(sets, txInputs.inputs)
+		sweepableInputs = sweepableInputs[inputCount:]
 	}
 
 	return sets, nil
 }
 
-// getPositiveYieldInputs returns the maximum of a number n for which holds
-// that the inputs [0,n) of sweepableInputs have a positive yield.
-// Additionally, the total values of these inputs minus the fee is returned.
-//
-// TODO(roasbeef): Consider including some negative yield inputs too to clean
-// up the utxo set even if it costs us some fees up front.  In the spirit of
-// minimizing any negative externalities we cause for the Bitcoin system as a
-// whole.
-func getPositiveYieldInputs(sweepableInputs []input.Input, maxInputs int,
-	feePerKW lnwallet.SatPerKWeight) (int, btcutil.Amount) {
-
-	var weightEstimate input.TxWeightEstimator
-
-	// Add the sweep tx output to the weight estimate.
-	weightEstimate.AddP2WKHOutput()
-
-	var total, outputValue btcutil.Amount
-	for idx, input := range sweepableInputs {
-		// Can ignore error, because it has already been checked when
-		// calculating the yields.
-		size, isNestedP2SH, _ := getInputWitnessSizeUpperBound(input)
-
-		// Keep a running weight estimate of the input set.
-		if isNestedP2SH {
-			weightEstimate.AddNestedP2WSHInput(size)
-		} else {
-			weightEstimate.AddWitnessInput(size)
-		}
-
-		newTotal := total + btcutil.Amount(input.SignDesc().Output.Value)
-
-		weight := weightEstimate.Weight()
-		fee := feePerKW.FeeForWeight(int64(weight))
-
-		// Calculate the output value if the current input would be
-		// added to the set.
-		newOutputValue := newTotal - fee
-
-		// If adding this input makes the total output value of the set
-		// decrease, this is a negative yield input. It shouldn't be
-		// added to the set. We return the current index as the number
-		// of inputs, so the current input is being excluded.
-		if newOutputValue <= outputValue {
-			return idx, outputValue
-		}
-
-		// Update running values.
-		total = newTotal
-		outputValue = newOutputValue
-
-		// Stop if max inputs is reached.
-		if idx == maxInputs-1 {
-			return maxInputs, outputValue
-		}
-	}
-
-	// We could add all inputs to the set, so return them all.
-	return len(sweepableInputs), outputValue
-}
-
 // createSweepTx builds a signed tx spending the inputs to a the output script.
 func createSweepTx(inputs []input.Input, outputPkScript []byte,
-	currentBlockHeight uint32, feePerKw lnwallet.SatPerKWeight,
+	currentBlockHeight uint32, feePerKw chainfee.SatPerKWeight,
 	signer input.Signer) (*wire.MsgTx, error) {
 
-	inputs, txWeight, csvCount, cltvCount := getWeightEstimate(inputs)
-
-	log.Infof("Creating sweep transaction for %v inputs (%v CSV, %v CLTV) "+
-		"using %v sat/kw", len(inputs), csvCount, cltvCount,
-		int64(feePerKw))
+	inputs, txWeight := getWeightEstimate(inputs)
 
 	txFee := feePerKw.FeeForWeight(txWeight)
+
+	log.Infof("Creating sweep transaction for %v inputs (%s) "+
+		"using %v sat/kw, tx_fee=%v", len(inputs),
+		inputTypeSummary(inputs), int64(feePerKw), txFee)
 
 	// Sum up the total value contained in the inputs.
 	var totalSum btcutil.Amount
@@ -251,62 +214,9 @@ func createSweepTx(inputs []input.Input, outputPkScript []byte,
 	return sweepTx, nil
 }
 
-// getInputWitnessSizeUpperBound returns the maximum length of the witness for
-// the given input if it would be included in a tx. We also return if the
-// output itself is a nested p2sh output, if so then we need to take into
-// account the extra sigScript data size.
-func getInputWitnessSizeUpperBound(inp input.Input) (int, bool, error) {
-	switch inp.WitnessType() {
-
-	// Outputs on a remote commitment transaction that pay directly to us.
-	case input.CommitSpendNoDelayTweakless:
-		fallthrough
-	case input.WitnessKeyHash:
-		fallthrough
-	case input.CommitmentNoDelay:
-		return input.P2WKHWitnessSize, false, nil
-
-	// Outputs on a past commitment transaction that pay directly
-	// to us.
-	case input.CommitmentTimeLock:
-		return input.ToLocalTimeoutWitnessSize, false, nil
-
-	// Outgoing second layer HTLC's that have confirmed within the
-	// chain, and the output they produced is now mature enough to
-	// sweep.
-	case input.HtlcOfferedTimeoutSecondLevel:
-		return input.ToLocalTimeoutWitnessSize, false, nil
-
-	// Incoming second layer HTLC's that have confirmed within the
-	// chain, and the output they produced is now mature enough to
-	// sweep.
-	case input.HtlcAcceptedSuccessSecondLevel:
-		return input.ToLocalTimeoutWitnessSize, false, nil
-
-	// An HTLC on the commitment transaction of the remote party,
-	// that has had its absolute timelock expire.
-	case input.HtlcOfferedRemoteTimeout:
-		return input.AcceptedHtlcTimeoutWitnessSize, false, nil
-
-	// An HTLC on the commitment transaction of the remote party,
-	// that can be swept with the preimage.
-	case input.HtlcAcceptedRemoteSuccess:
-		return input.OfferedHtlcSuccessWitnessSize, false, nil
-
-	// A nested P2SH input that has a p2wkh witness script. We'll mark this
-	// as nested P2SH so the caller can estimate the weight properly
-	// including the sigScript.
-	case input.NestedWitnessKeyHash:
-		return input.P2WKHWitnessSize, true, nil
-	}
-
-	return 0, false, fmt.Errorf("unexpected witness type: %v",
-		inp.WitnessType())
-}
-
 // getWeightEstimate returns a weight estimate for the given inputs.
 // Additionally, it returns counts for the number of csv and cltv inputs.
-func getWeightEstimate(inputs []input.Input) ([]input.Input, int64, int, int) {
+func getWeightEstimate(inputs []input.Input) ([]input.Input, int64) {
 	// We initialize a weight estimator so we can accurately asses the
 	// amount of fees we need to pay for this sweep transaction.
 	//
@@ -321,17 +231,12 @@ func getWeightEstimate(inputs []input.Input) ([]input.Input, int64, int, int) {
 	// For each output, use its witness type to determine the estimate
 	// weight of its witness, and add it to the proper set of spendable
 	// outputs.
-	var (
-		sweepInputs         []input.Input
-		csvCount, cltvCount int
-	)
+	var sweepInputs []input.Input
 	for i := range inputs {
 		inp := inputs[i]
 
-		// For fee estimation purposes, we'll now attempt to obtain an
-		// upper bound on the weight this input will add when fully
-		// populated.
-		size, isNestedP2SH, err := getInputWitnessSizeUpperBound(inp)
+		wt := inp.WitnessType()
+		err := wt.AddWeightEstimation(&weightEstimate)
 		if err != nil {
 			log.Warn(err)
 
@@ -340,26 +245,37 @@ func getWeightEstimate(inputs []input.Input) ([]input.Input, int64, int, int) {
 			continue
 		}
 
-		// If this is a nested P2SH input, then we'll need to factor in
-		// the additional data push within the sigScript.
-		if isNestedP2SH {
-			weightEstimate.AddNestedP2WSHInput(size)
-		} else {
-			weightEstimate.AddWitnessInput(size)
-		}
-
-		switch inp.WitnessType() {
-		case input.CommitmentTimeLock,
-			input.HtlcOfferedTimeoutSecondLevel,
-			input.HtlcAcceptedSuccessSecondLevel:
-			csvCount++
-		case input.HtlcOfferedRemoteTimeout:
-			cltvCount++
-		}
 		sweepInputs = append(sweepInputs, inp)
 	}
 
-	txWeight := int64(weightEstimate.Weight())
+	return sweepInputs, int64(weightEstimate.Weight())
+}
 
-	return sweepInputs, txWeight, csvCount, cltvCount
+// inputSummary returns a string containing a human readable summary about the
+// witness types of a list of inputs.
+func inputTypeSummary(inputs []input.Input) string {
+	// Count each input by the string representation of its witness type.
+	// We also keep track of the keys so we can later sort by them to get
+	// a stable output.
+	counts := make(map[string]uint32)
+	keys := make([]string, 0, len(inputs))
+	for _, i := range inputs {
+		key := i.WitnessType().String()
+		_, ok := counts[key]
+		if !ok {
+			counts[key] = 0
+			keys = append(keys, key)
+		}
+		counts[key]++
+	}
+	sort.Strings(keys)
+
+	// Return a nice string representation of the counts by comma joining a
+	// slice.
+	var parts []string
+	for _, witnessType := range keys {
+		part := fmt.Sprintf("%d %s", counts[witnessType], witnessType)
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
 }

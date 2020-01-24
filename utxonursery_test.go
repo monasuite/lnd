@@ -650,7 +650,6 @@ func incubateTestOutput(t *testing.T, nursery *utxoNursery,
 	// Hand off to nursery.
 	err := nursery.IncubateOutputs(
 		testChanPoint,
-		nil,
 		[]lnwallet.OutgoingHtlcResolution{*outgoingRes},
 		nil, 0,
 	)
@@ -839,59 +838,6 @@ func testNurseryOutgoingHtlcSuccessOnRemote(t *testing.T,
 	ctx.finish()
 }
 
-func TestNurseryCommitSuccessOnLocal(t *testing.T) {
-	testRestartLoop(t, testNurseryCommitSuccessOnLocal)
-}
-
-func testNurseryCommitSuccessOnLocal(t *testing.T,
-	checkStartStop func(func()) bool) {
-
-	ctx := createNurseryTestContext(t, checkStartStop)
-
-	commitRes := createCommitmentRes()
-
-	// Hand off to nursery.
-	err := ctx.nursery.IncubateOutputs(
-		testChanPoint,
-		commitRes, nil, nil, 0,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify that commitment output is showing up in nursery report as
-	// limbo balance.
-	assertNurseryReport(t, ctx.nursery, 0, 0, 10000)
-
-	ctx.restart()
-
-	// Notify confirmation of the commitment tx.
-	err = ctx.notifier.ConfirmTx(&commitRes.SelfOutPoint.Hash, 124)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Wait for output to be promoted from PSCL to KNDR.
-	select {
-	case <-ctx.store.preschoolToKinderChan:
-	case <-time.After(defaultTestTimeout):
-		t.Fatalf("output not promoted to KNDR")
-	}
-
-	ctx.restart()
-
-	// Notify arrival of block where commit output CSV expires.
-	ctx.notifyEpoch(126)
-
-	// Check final sweep into wallet.
-	testSweep(t, ctx, func() {
-		// Check limbo balance after sweep publication
-		assertNurseryReport(t, ctx.nursery, 0, 0, 10000)
-	})
-
-	ctx.finish()
-}
-
 func testSweepHtlc(t *testing.T, ctx *nurseryTestContext) {
 	testSweep(t, ctx, func() {
 		// Verify stage in nursery report. HTLCs should now both still
@@ -1037,7 +983,7 @@ func newMockSweeper(t *testing.T) *mockSweeper {
 }
 
 func (s *mockSweeper) sweepInput(input input.Input,
-	_ sweep.FeePreference) (chan sweep.Result, error) {
+	_ sweep.Params) (chan sweep.Result, error) {
 
 	utxnLog.Debugf("mockSweeper sweepInput called for %v", *input.OutPoint())
 

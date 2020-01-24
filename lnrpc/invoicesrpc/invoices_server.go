@@ -11,7 +11,6 @@ import (
 	"google.golang.org/grpc"
 	"gopkg.in/macaroon-bakery.v2/bakery"
 
-	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lntypes"
@@ -247,13 +246,14 @@ func (s *Server) AddHoldInvoice(ctx context.Context,
 	invoice *AddHoldInvoiceRequest) (*AddHoldInvoiceResp, error) {
 
 	addInvoiceCfg := &AddInvoiceConfig{
-		AddInvoice:        s.cfg.InvoiceRegistry.AddInvoice,
-		IsChannelActive:   s.cfg.IsChannelActive,
-		ChainParams:       s.cfg.ChainParams,
-		NodeSigner:        s.cfg.NodeSigner,
-		MaxPaymentMSat:    s.cfg.MaxPaymentMSat,
-		DefaultCLTVExpiry: s.cfg.DefaultCLTVExpiry,
-		ChanDB:            s.cfg.ChanDB,
+		AddInvoice:         s.cfg.InvoiceRegistry.AddInvoice,
+		IsChannelActive:    s.cfg.IsChannelActive,
+		ChainParams:        s.cfg.ChainParams,
+		NodeSigner:         s.cfg.NodeSigner,
+		MaxPaymentMSat:     s.cfg.MaxPaymentMSat,
+		DefaultCLTVExpiry:  s.cfg.DefaultCLTVExpiry,
+		ChanDB:             s.cfg.ChanDB,
+		GenInvoiceFeatures: s.cfg.GenInvoiceFeatures,
 	}
 
 	hash, err := lntypes.MakeHash(invoice.Hash)
@@ -261,10 +261,15 @@ func (s *Server) AddHoldInvoice(ctx context.Context,
 		return nil, err
 	}
 
+	value, err := lnrpc.UnmarshallAmt(invoice.Value, invoice.ValueMsat)
+	if err != nil {
+		return nil, err
+	}
+
 	addInvoiceData := &AddInvoiceData{
 		Memo:            invoice.Memo,
 		Hash:            &hash,
-		Value:           btcutil.Amount(invoice.Value),
+		Value:           value,
 		DescriptionHash: invoice.DescriptionHash,
 		Expiry:          invoice.Expiry,
 		FallbackAddr:    invoice.FallbackAddr,

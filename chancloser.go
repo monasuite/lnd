@@ -1,6 +1,7 @@
 package lnd
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/btcsuite/btcd/txscript"
@@ -9,6 +10,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwire"
 )
 
@@ -25,6 +27,12 @@ var (
 	// ErrInvalidState is returned when the closing state machine receives
 	// a message while it is in an unknown state.
 	ErrInvalidState = fmt.Errorf("invalid state")
+
+	// errUpfrontShutdownScriptMismatch is returned when a peer or end user
+	// provides a script to cooperatively close out to which does not match
+	// the upfront shutdown script previously set for that party.
+	errUpfrontShutdownScriptMismatch = fmt.Errorf("shutdown " +
+		"script does not match upfront shutdown script")
 )
 
 // closeState represents all the possible states the channel closer state
@@ -81,6 +89,9 @@ type chanCloseCfg struct {
 	// disableChannel disables a channel, resulting in it not being able to
 	// forward payments.
 	disableChannel func(wire.OutPoint) error
+
+	// disconnect will disconnect from the remote peer in this close.
+	disconnect func() error
 
 	// quit is a channel that should be sent upon in the occasion the state
 	// machine should cease all progress and shutdown.
@@ -150,7 +161,7 @@ type channelCloser struct {
 // passed configuration, and delivery+fee preference. The final argument should
 // only be populated iff, we're the initiator of this closing request.
 func newChannelCloser(cfg chanCloseCfg, deliveryScript []byte,
-	idealFeePerKw lnwallet.SatPerKWeight, negotiationHeight uint32,
+	idealFeePerKw chainfee.SatPerKWeight, negotiationHeight uint32,
 	closeReq *htlcswitch.ChanClose) *channelCloser {
 
 	// Given the target fee-per-kw, we'll compute what our ideal _total_
@@ -199,6 +210,24 @@ func (c *channelCloser) initChanShutdown() (*lnwire.Shutdown, error) {
 	shutdown := lnwire.NewShutdown(c.cid, c.localDeliveryScript)
 
 	// TODO(roasbeef): err if channel has htlc's?
+
+	// Before closing, we'll attempt to send a disable update for the
+	// channel. We do so before closing the channel as otherwise the current
+	// edge policy won't be retrievable from the graph.
+	if err := c.cfg.disableChannel(c.chanPoint); err != nil {
+		peerLog.Warnf("Unable to disable channel %v on "+
+			"close: %v", c.chanPoint, err)
+	}
+
+	// Before continuing, mark the channel as cooperatively closed with a
+	// nil txn. Even though we haven't negotiated the final txn, this
+	// guarantees that our listchannels rpc will be externally consistent,
+	// and reflect that the channel is being shutdown by the time the
+	// closing request returns.
+	err := c.cfg.channel.MarkCoopBroadcasted(nil)
+	if err != nil {
+		return nil, err
+	}
 
 	// Before returning the shutdown message, we'll unregister the channel
 	// to ensure that it isn't seen as usable within the system.
@@ -262,6 +291,40 @@ func (c *channelCloser) CloseRequest() *htlcswitch.ChanClose {
 	return c.closeReq
 }
 
+// maybeMatchScript attempts to match the script provided in our peer's
+// shutdown message with the upfront shutdown script we have on record.
+// If no upfront shutdown script was set, we do not need to enforce option
+// upfront shutdown, so the function returns early. If an upfront script is
+// set, we check whether it matches the script provided by our peer. If they
+// do not match, we use the disconnect function provided to disconnect from
+// the peer.
+func maybeMatchScript(disconnect func() error,
+	upfrontScript, peerScript lnwire.DeliveryAddress) error {
+
+	// If no upfront shutdown script was set, return early because we do not
+	// need to enforce closure to a specific script.
+	if len(upfrontScript) == 0 {
+		return nil
+	}
+
+	// If an upfront shutdown script was provided, disconnect from the peer, as
+	// per BOLT 2, and return an error.
+	if !bytes.Equal(upfrontScript, peerScript) {
+		peerLog.Warnf("peer's script: %x does not match upfront "+
+			"shutdown script: %x", peerScript, upfrontScript)
+
+		// Disconnect from the peer because they have violated option upfront
+		// shutdown.
+		if err := disconnect(); err != nil {
+			return err
+		}
+
+		return errUpfrontShutdownScriptMismatch
+	}
+
+	return nil
+}
+
 // ProcessCloseMsg attempts to process the next message in the closing series.
 // This method will update the state accordingly and return two primary values:
 // the next set of messages to be sent, and a bool indicating if the fee
@@ -282,9 +345,18 @@ func (c *channelCloser) ProcessCloseMsg(msg lnwire.Message) ([]lnwire.Message, b
 				"instead have %v", spew.Sdump(msg))
 		}
 
-		// Next, we'll note the other party's preference for their
-		// delivery address. We'll use this when we craft the closure
-		// transaction.
+		// If the remote node opened the channel with option upfront shutdown
+		// script, check that the script they provided matches.
+		if err := maybeMatchScript(
+			c.cfg.disconnect, c.cfg.channel.RemoteUpfrontShutdownScript(),
+			shutDownMsg.Address,
+		); err != nil {
+			return nil, false, err
+		}
+
+		// Once we have checked that the other party has not violated option
+		// upfront shutdown we set their preference for delivery address. We'll
+		// use this when we craft the closure transaction.
 		c.remoteDeliveryScript = shutDownMsg.Address
 
 		// We'll generate a shutdown message of our own to send across
@@ -332,7 +404,16 @@ func (c *channelCloser) ProcessCloseMsg(msg lnwire.Message) ([]lnwire.Message, b
 				"instead have %v", spew.Sdump(msg))
 		}
 
-		// Now that we know this is a valid shutdown message, we'll
+		// If the remote node opened the channel with option upfront shutdown
+		// script, check that the script they provided matches.
+		if err := maybeMatchScript(
+			c.cfg.disconnect, c.cfg.channel.RemoteUpfrontShutdownScript(),
+			shutDownMsg.Address,
+		); err != nil {
+			return nil, false, err
+		}
+
+		// Now that we know this is a valid shutdown message and address, we'll
 		// record their preferred delivery closing script.
 		c.remoteDeliveryScript = shutDownMsg.Address
 
@@ -427,18 +508,10 @@ func (c *channelCloser) ProcessCloseMsg(msg lnwire.Message) ([]lnwire.Message, b
 		}
 		c.closingTx = closeTx
 
-		// Before closing, we'll attempt to send a disable update for
-		// the channel. We do so before closing the channel as otherwise
-		// the current edge policy won't be retrievable from the graph.
-		if err := c.cfg.disableChannel(c.chanPoint); err != nil {
-			peerLog.Warnf("Unable to disable channel %v on "+
-				"close: %v", c.chanPoint, err)
-		}
-
 		// Before publishing the closing tx, we persist it to the
 		// database, such that it can be republished if something goes
 		// wrong.
-		err = c.cfg.channel.MarkCommitmentBroadcasted(closeTx)
+		err = c.cfg.channel.MarkCoopBroadcasted(closeTx)
 		if err != nil {
 			return nil, false, err
 		}
@@ -486,7 +559,6 @@ func (c *channelCloser) ProcessCloseMsg(msg lnwire.Message) ([]lnwire.Message, b
 // transaction for a channel based on the prior fee negotiations and our
 // current compromise fee.
 func (c *channelCloser) proposeCloseSigned(fee btcutil.Amount) (*lnwire.ClosingSigned, error) {
-
 	rawSig, _, _, err := c.cfg.channel.CreateCloseProposal(
 		fee, c.localDeliveryScript, c.remoteDeliveryScript,
 	)

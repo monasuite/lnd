@@ -68,6 +68,10 @@ var (
 			Entity: "offchain",
 			Action: "read",
 		}},
+		"/routerrpc.Router/QueryProbability": {{
+			Entity: "offchain",
+			Action: "read",
+		}},
 		"/routerrpc.Router/ResetMissionControl": {{
 			Entity: "offchain",
 			Action: "write",
@@ -256,7 +260,7 @@ func (s *Server) EstimateRouteFee(ctx context.Context,
 		&routing.RestrictParams{
 			FeeLimit:  feeLimit,
 			CltvLimit: s.cfg.RouterBackend.MaxTotalTimelock,
-		}, nil,
+		}, nil, nil, s.cfg.RouterBackend.DefaultFinalCltvDelta,
 	)
 	if err != nil {
 		return nil, err
@@ -322,12 +326,12 @@ func marshallError(sendError error) (*Failure, error) {
 		return response, nil
 	}
 
-	fErr, ok := sendError.(*htlcswitch.ForwardingError)
+	rtErr, ok := sendError.(htlcswitch.ClearTextError)
 	if !ok {
 		return nil, sendError
 	}
 
-	switch onionErr := fErr.FailureMessage.(type) {
+	switch onionErr := rtErr.WireMessage().(type) {
 
 	case *lnwire.FailIncorrectDetails:
 		response.Code = Failure_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS
@@ -411,6 +415,9 @@ func marshallError(sendError error) (*Failure, error) {
 	case *lnwire.FailPermanentChannelFailure:
 		response.Code = Failure_PERMANENT_CHANNEL_FAILURE
 
+	case *lnwire.FailMPPTimeout:
+		response.Code = Failure_MPP_TIMEOUT
+
 	case nil:
 		response.Code = Failure_UNKNOWN_FAILURE
 
@@ -418,7 +425,16 @@ func marshallError(sendError error) (*Failure, error) {
 		return nil, fmt.Errorf("cannot marshall failure %T", onionErr)
 	}
 
-	response.FailureSourceIndex = uint32(fErr.FailureSourceIdx)
+	// If the ClearTextError received is a ForwardingError, the error
+	// originated from a node along the route, not locally on our outgoing
+	// link. We set failureSourceIdx to the index of the node where the
+	// failure occurred. If the error is not a ForwardingError, the failure
+	// occurred at our node, so we leave the index as 0 to indicate that
+	// we failed locally.
+	fErr, ok := rtErr.(*htlcswitch.ForwardingError)
+	if ok {
+		response.FailureSourceIndex = uint32(fErr.FailureSourceIdx)
+	}
 
 	return response, nil
 }
@@ -466,47 +482,72 @@ func (s *Server) QueryMissionControl(ctx context.Context,
 
 	snapshot := s.cfg.RouterBackend.MissionControl.GetHistorySnapshot()
 
-	rpcNodes := make([]*NodeHistory, 0, len(snapshot.Nodes))
-	for _, n := range snapshot.Nodes {
-		// Copy node struct to prevent loop variable binding bugs.
-		node := n
-
-		rpcNode := NodeHistory{
-			Pubkey:       node.Node[:],
-			LastFailTime: node.LastFail.Unix(),
-			OtherSuccessProb: float32(
-				node.OtherSuccessProb,
-			),
-		}
-
-		rpcNodes = append(rpcNodes, &rpcNode)
-	}
-
 	rpcPairs := make([]*PairHistory, 0, len(snapshot.Pairs))
 	for _, p := range snapshot.Pairs {
 		// Prevent binding to loop variable.
 		pair := p
 
 		rpcPair := PairHistory{
-			NodeFrom:  pair.Pair.From[:],
-			NodeTo:    pair.Pair.To[:],
-			Timestamp: pair.Timestamp.Unix(),
-			MinPenalizeAmtSat: int64(
-				pair.MinPenalizeAmt.ToSatoshis(),
-			),
-			SuccessProb:           float32(pair.SuccessProb),
-			LastAttemptSuccessful: pair.LastAttemptSuccessful,
+			NodeFrom: pair.Pair.From[:],
+			NodeTo:   pair.Pair.To[:],
+			History:  toRPCPairData(&pair.TimedPairResult),
 		}
 
 		rpcPairs = append(rpcPairs, &rpcPair)
 	}
 
 	response := QueryMissionControlResponse{
-		Nodes: rpcNodes,
 		Pairs: rpcPairs,
 	}
 
 	return &response, nil
+}
+
+// toRPCPairData marshalls mission control pair data to the rpc struct.
+func toRPCPairData(data *routing.TimedPairResult) *PairData {
+	rpcData := PairData{
+		FailAmtSat:     int64(data.FailAmt.ToSatoshis()),
+		FailAmtMsat:    int64(data.FailAmt),
+		SuccessAmtSat:  int64(data.SuccessAmt.ToSatoshis()),
+		SuccessAmtMsat: int64(data.SuccessAmt),
+	}
+
+	if !data.FailTime.IsZero() {
+		rpcData.FailTime = data.FailTime.Unix()
+	}
+
+	if !data.SuccessTime.IsZero() {
+		rpcData.SuccessTime = data.SuccessTime.Unix()
+	}
+
+	return &rpcData
+}
+
+// QueryProbability returns the current success probability estimate for a
+// given node pair and amount.
+func (s *Server) QueryProbability(ctx context.Context,
+	req *QueryProbabilityRequest) (*QueryProbabilityResponse, error) {
+
+	fromNode, err := route.NewVertexFromBytes(req.FromNode)
+	if err != nil {
+		return nil, err
+	}
+
+	toNode, err := route.NewVertexFromBytes(req.ToNode)
+	if err != nil {
+		return nil, err
+	}
+
+	amt := lnwire.MilliSatoshi(req.AmtMsat)
+
+	mc := s.cfg.RouterBackend.MissionControl
+	prob := mc.GetProbability(fromNode, toNode, amt)
+	history := mc.GetPairHistorySnapshot(fromNode, toNode)
+
+	return &QueryProbabilityResponse{
+		Probability: prob,
+		History:     toRPCPairData(&history),
+	}, nil
 }
 
 // TrackPayment returns a stream of payment state updates. The stream is
@@ -559,19 +600,12 @@ func (s *Server) trackPayment(paymentHash lntypes.Hash,
 	case result := <-resultChan:
 		// Marshall result to rpc type.
 		var status PaymentStatus
-
 		if result.Success {
 			log.Debugf("Payment %v successfully completed",
 				paymentHash)
 
 			status.State = PaymentState_SUCCEEDED
 			status.Preimage = result.Preimage[:]
-			status.Route, err = router.MarshallRoute(
-				result.Route,
-			)
-			if err != nil {
-				return err
-			}
 		} else {
 			state, err := marshallFailureReason(
 				result.FailureReason,
@@ -580,15 +614,49 @@ func (s *Server) trackPayment(paymentHash lntypes.Hash,
 				return err
 			}
 			status.State = state
-			if result.Route != nil {
-				status.Route, err = router.MarshallRoute(
-					result.Route,
-				)
-				if err != nil {
-					return err
-				}
+		}
+
+		// Extract the last route from the given list of HTLCs. This
+		// will populate the legacy route field for backwards
+		// compatibility.
+		//
+		// NOTE: For now there will be at most one HTLC, this code
+		// should be revisted or the field removed when multiple HTLCs
+		// are permitted.
+		var legacyRoute *route.Route
+		for _, htlc := range result.HTLCs {
+			switch {
+			case htlc.Settle != nil:
+				legacyRoute = &htlc.Route
+
+			// Only display the route for failed payments if we got
+			// an incorrect payment details error, so that it can be
+			// used for probing or fee estimation.
+			case htlc.Failure != nil && result.FailureReason ==
+				channeldb.FailureReasonPaymentDetails:
+
+				legacyRoute = &htlc.Route
 			}
 		}
+		if legacyRoute != nil {
+			status.Route, err = router.MarshallRoute(legacyRoute)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Marshal our list of HTLCs that have been tried for this
+		// payment.
+		htlcs := make([]*lnrpc.HTLCAttempt, 0, len(result.HTLCs))
+		for _, dbHtlc := range result.HTLCs {
+			htlc, err := router.MarshalHTLCAttempt(dbHtlc)
+			if err != nil {
+				return err
+			}
+
+			htlcs = append(htlcs, htlc)
+		}
+		status.Htlcs = htlcs
 
 		// Send event to the client.
 		err = stream.Send(&status)
@@ -620,8 +688,11 @@ func marshallFailureReason(reason channeldb.FailureReason) (
 	case channeldb.FailureReasonError:
 		return PaymentState_FAILED_ERROR, nil
 
-	case channeldb.FailureReasonIncorrectPaymentDetails:
+	case channeldb.FailureReasonPaymentDetails:
 		return PaymentState_FAILED_INCORRECT_PAYMENT_DETAILS, nil
+
+	case channeldb.FailureReasonInsufficientBalance:
+		return PaymentState_FAILED_INSUFFICIENT_BALANCE, nil
 	}
 
 	return 0, errors.New("unknown failure reason")

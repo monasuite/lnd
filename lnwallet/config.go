@@ -6,6 +6,7 @@ import (
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 )
 
 // Config is a struct which houses configuration parameters which modify the
@@ -42,7 +43,7 @@ type Config struct {
 
 	// FeeEstimator is the implementation that the wallet will use for the
 	// calculation of on-chain transaction fees.
-	FeeEstimator FeeEstimator
+	FeeEstimator chainfee.Estimator
 
 	// ChainIO is an instance of the BlockChainIO interface. ChainIO is
 	// used to lookup the existence of outputs within the UTXO set.

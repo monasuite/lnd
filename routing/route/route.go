@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -19,9 +20,21 @@ import (
 // VertexSize is the size of the array to store a vertex.
 const VertexSize = 33
 
-// ErrNoRouteHopsProvided is returned when a caller attempts to construct a new
-// sphinx packet, but provides an empty set of hops for each route.
-var ErrNoRouteHopsProvided = fmt.Errorf("empty route hops provided")
+var (
+	// ErrNoRouteHopsProvided is returned when a caller attempts to
+	// construct a new sphinx packet, but provides an empty set of hops for
+	// each route.
+	ErrNoRouteHopsProvided = fmt.Errorf("empty route hops provided")
+
+	// ErrMaxRouteHopsExceeded is returned when a caller attempts to
+	// construct a new sphinx packet, but provides too many hops.
+	ErrMaxRouteHopsExceeded = fmt.Errorf("route has too many hops")
+
+	// ErrIntermediateMPPHop is returned when a hop tries to deliver an MPP
+	// record to an intermediate hop, only final hops can receive MPP
+	// records.
+	ErrIntermediateMPPHop = errors.New("cannot send MPP to intermediate")
+)
 
 // Vertex is a simple alias for the serialization of a compressed Bitcoin
 // public key.
@@ -94,9 +107,13 @@ type Hop struct {
 	// carries as a fee will be subtracted by the hop.
 	AmtToForward lnwire.MilliSatoshi
 
-	// TLVRecords if non-nil are a set of additional TLV records that
+	// MPP encapsulates the data required for option_mpp. This field should
+	// only be set for the final hop.
+	MPP *record.MPP
+
+	// CustomRecords if non-nil are a set of additional TLV records that
 	// should be included in the forwarding instructions for this node.
-	TLVRecords []tlv.Record
+	CustomRecords record.CustomSet
 
 	// LegacyPayload if true, then this signals that this node doesn't
 	// understand the new TLV payload, so we must instead use the legacy
@@ -140,8 +157,20 @@ func (h *Hop) PackHopPayload(w io.Writer, nextChanID uint64) error {
 		)
 	}
 
+	// If an MPP record is destined for this hop, ensure that we only ever
+	// attach it to the final hop. Otherwise the route was constructed
+	// incorrectly.
+	if h.MPP != nil {
+		if nextChanID == 0 {
+			records = append(records, h.MPP.Record())
+		} else {
+			return ErrIntermediateMPPHop
+		}
+	}
+
 	// Append any custom types destined for this hop.
-	records = append(records, h.TLVRecords...)
+	tlvRecords := tlv.MapToRecords(h.CustomRecords)
+	records = append(records, tlvRecords...)
 
 	// To ensure we produce a canonical stream, we'll sort the records
 	// before encoding them as a stream in the hop payload.
@@ -153,6 +182,53 @@ func (h *Hop) PackHopPayload(w io.Writer, nextChanID uint64) error {
 	}
 
 	return tlvStream.Encode(w)
+}
+
+// Size returns the total size this hop's payload would take up in the onion
+// packet.
+func (h *Hop) PayloadSize(nextChanID uint64) uint64 {
+	if h.LegacyPayload {
+		return sphinx.LegacyHopDataSize
+	}
+
+	var payloadSize uint64
+
+	addRecord := func(tlvType tlv.Type, length uint64) {
+		payloadSize += tlv.VarIntSize(uint64(tlvType)) +
+			tlv.VarIntSize(length) + length
+	}
+
+	// Add amount size.
+	addRecord(record.AmtOnionType, tlv.SizeTUint64(uint64(h.AmtToForward)))
+
+	// Add lock time size.
+	addRecord(
+		record.LockTimeOnionType,
+		tlv.SizeTUint64(uint64(h.OutgoingTimeLock)),
+	)
+
+	// Add next hop if present.
+	if nextChanID != 0 {
+		addRecord(record.NextHopOnionType, 8)
+	}
+
+	// Add mpp if present.
+	if h.MPP != nil {
+		addRecord(record.MPPOnionType, h.MPP.PayloadSize())
+	}
+
+	// Add custom records.
+	for k, v := range h.CustomRecords {
+		addRecord(tlv.Type(k), uint64(len(v)))
+	}
+
+	// Add the size required to encode the payload length.
+	payloadSize += tlv.VarIntSize(payloadSize)
+
+	// Add HMAC.
+	payloadSize += sphinx.HMACSize
+
+	return payloadSize
 }
 
 // Route represents a path through the channel graph which runs over one or
@@ -242,6 +318,16 @@ func NewRouteFromHops(amtToSend lnwire.MilliSatoshi, timeLock uint32,
 func (r *Route) ToSphinxPath() (*sphinx.PaymentPath, error) {
 	var path sphinx.PaymentPath
 
+	// We can only construct a route if there are hops provided.
+	if len(r.Hops) == 0 {
+		return nil, ErrNoRouteHopsProvided
+	}
+
+	// Check maximum route length.
+	if len(r.Hops) > sphinx.NumMaxHops {
+		return nil, ErrMaxRouteHopsExceeded
+	}
+
 	// For each hop encoded within the route, we'll convert the hop struct
 	// to an OnionHop with matching per-hop payload within the path as used
 	// by the sphinx package.
@@ -316,15 +402,19 @@ func (r *Route) ToSphinxPath() (*sphinx.PaymentPath, error) {
 func (r *Route) String() string {
 	var b strings.Builder
 
+	amt := r.TotalAmount
 	for i, hop := range r.Hops {
 		if i > 0 {
-			b.WriteString(",")
+			b.WriteString(" -> ")
 		}
-		b.WriteString(strconv.FormatUint(hop.ChannelID, 10))
+		b.WriteString(fmt.Sprintf("%v (%v)",
+			strconv.FormatUint(hop.ChannelID, 10),
+			amt,
+		))
+		amt = hop.AmtToForward
 	}
 
-	return fmt.Sprintf("amt=%v, fees=%v, tl=%v, chans=%v",
-		r.TotalAmount-r.TotalFees(), r.TotalFees(), r.TotalTimeLock,
-		b.String(),
+	return fmt.Sprintf("%v, cltv %v",
+		b.String(), r.TotalTimeLock,
 	)
 }

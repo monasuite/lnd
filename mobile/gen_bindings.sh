@@ -3,7 +3,7 @@
 mkdir -p build
 
 # Check falafel version.
-falafelVersion="0.5"
+falafelVersion="0.7"
 falafel=$(which falafel)
 if [ $falafel ]
 then
@@ -19,11 +19,21 @@ else
         exit 1
 fi
 
+# Name of the package for the generated APIs.
 pkg="lndmobile"
+
+# The package where the protobuf definitions originally are found.
 target_pkg="github.com/monasuite/lnd/lnrpc"
 
-# Generate APIs by passing the parsed protos to the falafel plugin.
-opts="package_name=$pkg,target_package=$target_pkg,listeners=lightning=lightningLis walletunlocker=walletUnlockerLis,mem_rpc=1"
+# A mapping from grpc service to name of the custom listeners. The grpc server
+# must be configured to listen on these.
+listeners="lightning=lightningLis walletunlocker=walletUnlockerLis"
+
+# Set to 1 to create boiler plate grpc client code and listeners. If more than
+# one proto file is being parsed, it should only be done once.
+mem_rpc=1
+
+opts="package_name=$pkg,target_package=$target_pkg,listeners=$listeners,mem_rpc=$mem_rpc"
 protoc -I/usr/local/include -I. \
        -I$GOPATH/src/github.com/grpc-ecosystem/grpc-gateway/third_party/googleapis \
        --plugin=protoc-gen-custom=$falafel\
@@ -62,3 +72,6 @@ do
            --proto_path=${DIRECTORY} \
            ${file}
 done
+
+# Run goimports to resolve any dependencies among the sub-servers.
+goimports -w ./*_generated.go

@@ -37,11 +37,26 @@ var (
 	// TODO(roasbeef): flesh out comment
 	openChannelBucket = []byte("open-chan-bucket")
 
+	// historicalChannelBucket stores all channels that have seen their
+	// commitment tx confirm. All information from their previous open state
+	// is retained.
+	historicalChannelBucket = []byte("historical-chan-bucket")
+
 	// chanInfoKey can be accessed within the bucket for a channel
 	// (identified by its chanPoint). This key stores all the static
 	// information for a channel which is decided at the end of  the
 	// funding flow.
 	chanInfoKey = []byte("chan-info-key")
+
+	// localUpfrontShutdownKey can be accessed within the bucket for a channel
+	// (identified by its chanPoint). This key stores an optional upfront
+	// shutdown script for the local peer.
+	localUpfrontShutdownKey = []byte("local-upfront-shutdown-key")
+
+	// remoteUpfrontShutdownKey can be accessed within the bucket for a channel
+	// (identified by its chanPoint). This key stores an optional upfront
+	// shutdown script for the remote peer.
+	remoteUpfrontShutdownKey = []byte("remote-upfront-shutdown-key")
 
 	// chanCommitmentKey can be accessed within the sub-bucket for a
 	// particular channel. This key stores the up to date commitment state
@@ -59,9 +74,13 @@ var (
 	// remote peer during a channel sync in case we have lost channel state.
 	dataLossCommitPointKey = []byte("data-loss-commit-point-key")
 
-	// closingTxKey points to a the closing tx that we broadcasted when
-	// moving the channel to state CommitBroadcasted.
-	closingTxKey = []byte("closing-tx-key")
+	// forceCloseTxKey points to a the unilateral closing tx that we
+	// broadcasted when moving the channel to state CommitBroadcasted.
+	forceCloseTxKey = []byte("closing-tx-key")
+
+	// coopCloseTxKey points to a the cooperative closing tx that we
+	// broadcasted when moving the channel to state CoopBroadcasted.
+	coopCloseTxKey = []byte("coop-closing-tx-key")
 
 	// commitDiffKey stores the current pending commitment state we've
 	// extended to the remote party (if any). Each time we propose a new
@@ -125,39 +144,56 @@ var (
 // ChannelType is an enum-like type that describes one of several possible
 // channel types. Each open channel is associated with a particular type as the
 // channel type may determine how higher level operations are conducted such as
-// fee negotiation, channel closing, the format of HTLCs, etc.
-// TODO(roasbeef): split up per-chain?
+// fee negotiation, channel closing, the format of HTLCs, etc. Structure-wise,
+// a ChannelType is a bit field, with each bit denoting a modification from the
+// base channel type of single funder.
 type ChannelType uint8
 
 const (
 	// NOTE: iota isn't used here for this enum needs to be stable
 	// long-term as it will be persisted to the database.
 
-	// SingleFunder represents a channel wherein one party solely funds the
-	// entire capacity of the channel.
-	SingleFunder ChannelType = 0
+	// SingleFunderBit represents a channel wherein one party solely funds
+	// the entire capacity of the channel.
+	SingleFunderBit ChannelType = 0
 
-	// DualFunder represents a channel wherein both parties contribute
+	// DualFunderBit represents a channel wherein both parties contribute
 	// funds towards the total capacity of the channel. The channel may be
 	// funded symmetrically or asymmetrically.
-	DualFunder ChannelType = 1
+	DualFunderBit ChannelType = 1 << 0
 
 	// SingleFunderTweakless is similar to the basic SingleFunder channel
 	// type, but it omits the tweak for one's key in the commitment
 	// transaction of the remote party.
-	SingleFunderTweakless ChannelType = 2
+	SingleFunderTweaklessBit ChannelType = 1 << 1
+
+	// NoFundingTxBit denotes if we have the funding transaction locally on
+	// disk. This bit may be on if the funding transaction was crafted by a
+	// wallet external to the primary daemon.
+	NoFundingTxBit ChannelType = 1 << 2
 )
 
 // IsSingleFunder returns true if the channel type if one of the known single
 // funder variants.
 func (c ChannelType) IsSingleFunder() bool {
-	return c == SingleFunder || c == SingleFunderTweakless
+	return c&DualFunderBit == 0
+}
+
+// IsDualFunder returns true if the ChannelType has the DualFunderBit set.
+func (c ChannelType) IsDualFunder() bool {
+	return c&DualFunderBit == DualFunderBit
 }
 
 // IsTweakless returns true if the target channel uses a commitment that
 // doesn't tweak the key for the remote party.
 func (c ChannelType) IsTweakless() bool {
-	return c == SingleFunderTweakless
+	return c&SingleFunderTweaklessBit == SingleFunderTweaklessBit
+}
+
+// HasFundingTx returns true if this channel type is one that has a funding
+// transaction stored locally.
+func (c ChannelType) HasFundingTx() bool {
+	return c&NoFundingTxBit == 0
 }
 
 // ChannelConstraints represents a set of constraints meant to allow a node to
@@ -284,10 +320,14 @@ type ChannelCommitment struct {
 
 	// LocalBalance is the current available settled balance within the
 	// channel directly spendable by us.
+	//
+	// NOTE: This is the balance *after* subtracting any commitment fee.
 	LocalBalance lnwire.MilliSatoshi
 
 	// RemoteBalance is the current available settled balance within the
 	// channel directly spendable by the remote node.
+	//
+	// NOTE: This is the balance *after* subtracting any commitment fee.
 	RemoteBalance lnwire.MilliSatoshi
 
 	// CommitFee is the amount calculated to be paid in fees for the
@@ -355,6 +395,10 @@ var (
 	// has been restored, and doesn't have all the fields a typical channel
 	// will have.
 	ChanStatusRestored ChannelStatus = 1 << 3
+
+	// ChanStatusCoopBroadcasted indicates that a cooperative close for this
+	// channel has been broadcasted.
+	ChanStatusCoopBroadcasted ChannelStatus = 1 << 4
 )
 
 // chanStatusStrings maps a ChannelStatus to a human friendly string that
@@ -365,6 +409,7 @@ var chanStatusStrings = map[ChannelStatus]string{
 	ChanStatusCommitBroadcasted: "ChanStatusCommitBroadcasted",
 	ChanStatusLocalDataLoss:     "ChanStatusLocalDataLoss",
 	ChanStatusRestored:          "ChanStatusRestored",
+	ChanStatusCoopBroadcasted:   "ChanStatusCoopBroadcasted",
 }
 
 // orderedChanStatusFlags is an in-order list of all that channel status flags.
@@ -374,6 +419,7 @@ var orderedChanStatusFlags = []ChannelStatus{
 	ChanStatusCommitBroadcasted,
 	ChanStatusLocalDataLoss,
 	ChanStatusRestored,
+	ChanStatusCoopBroadcasted,
 }
 
 // String returns a human-readable representation of the ChannelStatus.
@@ -529,8 +575,20 @@ type OpenChannel struct {
 	// is found to be pending.
 	//
 	// NOTE: This value will only be populated for single-funder channels
-	// for which we are the initiator.
+	// for which we are the initiator, and that we also have the funding
+	// transaction for. One can check this by using the HasFundingTx()
+	// method on the ChanType field.
 	FundingTxn *wire.MsgTx
+
+	// LocalShutdownScript is set to a pre-set script if the channel was opened
+	// by the local node with option_upfront_shutdown_script set. If the option
+	// was not set, the field is empty.
+	LocalShutdownScript lnwire.DeliveryAddress
+
+	// RemoteShutdownScript is set to a pre-set script if the channel was opened
+	// by the remote node with option_upfront_shutdown_script set. If the option
+	// was not set, the field is empty.
+	RemoteShutdownScript lnwire.DeliveryAddress
 
 	// TODO(roasbeef): eww
 	Db *DB
@@ -588,13 +646,16 @@ func (c *OpenChannel) hasChanStatus(status ChannelStatus) bool {
 	return c.chanStatus&status == status
 }
 
-// RefreshShortChanID updates the in-memory short channel ID using the latest
+// RefreshShortChanID updates the in-memory channel state using the latest
 // value observed on disk.
+//
+// TODO: the name of this function should be changed to reflect the fact that
+// it is not only refreshing the short channel id but all the channel state.
+// maybe Refresh/Reload?
 func (c *OpenChannel) RefreshShortChanID() error {
 	c.Lock()
 	defer c.Unlock()
 
-	var sid lnwire.ShortChannelID
 	err := c.Db.View(func(tx *bbolt.Tx) error {
 		chanBucket, err := fetchChanBucket(
 			tx, c.IdentityPub, &c.FundingOutpoint, c.ChainHash,
@@ -603,21 +664,17 @@ func (c *OpenChannel) RefreshShortChanID() error {
 			return err
 		}
 
-		channel, err := fetchOpenChannel(chanBucket, &c.FundingOutpoint)
-		if err != nil {
-			return err
+		// We'll re-populating the in-memory channel with the info
+		// fetched from disk.
+		if err := fetchChanInfo(chanBucket, c); err != nil {
+			return fmt.Errorf("unable to fetch chan info: %v", err)
 		}
-
-		sid = channel.ShortChannelID
 
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-
-	c.ShortChannelID = sid
-	c.Packager = NewChannelPackager(sid)
 
 	return nil
 }
@@ -913,24 +970,65 @@ func (c *OpenChannel) isBorked(chanBucket *bbolt.Bucket) (bool, error) {
 // republish this tx at startup to ensure propagation, and we should still
 // handle the case where a different tx actually hits the chain.
 func (c *OpenChannel) MarkCommitmentBroadcasted(closeTx *wire.MsgTx) error {
+	return c.markBroadcasted(
+		ChanStatusCommitBroadcasted, forceCloseTxKey, closeTx,
+	)
+}
+
+// MarkCoopBroadcasted marks the channel to indicate that a cooperative close
+// transaction has been broadcast, either our own or the remote, and that we
+// should wach the chain for it to confirm before taking further action. It
+// takes as argument a cooperative close tx that could appear on chain, and
+// should be rebroadcast upon startup. This is only used to republish and ensure
+// propagation, and we should still handle the case where a different tx
+// actually hits the chain.
+func (c *OpenChannel) MarkCoopBroadcasted(closeTx *wire.MsgTx) error {
+	return c.markBroadcasted(
+		ChanStatusCoopBroadcasted, coopCloseTxKey, closeTx,
+	)
+}
+
+// markBroadcasted is a helper function which modifies the channel status of the
+// receiving channel and inserts a close transaction under the requested key,
+// which should specify either a coop or force close.
+func (c *OpenChannel) markBroadcasted(status ChannelStatus, key []byte,
+	closeTx *wire.MsgTx) error {
+
 	c.Lock()
 	defer c.Unlock()
 
-	var b bytes.Buffer
-	if err := WriteElement(&b, closeTx); err != nil {
-		return err
+	// If a closing tx is provided, we'll generate a closure to write the
+	// transaction in the appropriate bucket under the given key.
+	var putClosingTx func(*bbolt.Bucket) error
+	if closeTx != nil {
+		var b bytes.Buffer
+		if err := WriteElement(&b, closeTx); err != nil {
+			return err
+		}
+
+		putClosingTx = func(chanBucket *bbolt.Bucket) error {
+			return chanBucket.Put(key, b.Bytes())
+		}
 	}
 
-	putClosingTx := func(chanBucket *bbolt.Bucket) error {
-		return chanBucket.Put(closingTxKey, b.Bytes())
-	}
-
-	return c.putChanStatus(ChanStatusCommitBroadcasted, putClosingTx)
+	return c.putChanStatus(status, putClosingTx)
 }
 
-// BroadcastedCommitment retrieves the stored closing tx set during
+// BroadcastedCommitment retrieves the stored unilateral closing tx set during
 // MarkCommitmentBroadcasted. If not found ErrNoCloseTx is returned.
 func (c *OpenChannel) BroadcastedCommitment() (*wire.MsgTx, error) {
+	return c.getClosingTx(forceCloseTxKey)
+}
+
+// BroadcastedCooperative retrieves the stored cooperative closing tx set during
+// MarkCoopBroadcasted. If not found ErrNoCloseTx is returned.
+func (c *OpenChannel) BroadcastedCooperative() (*wire.MsgTx, error) {
+	return c.getClosingTx(coopCloseTxKey)
+}
+
+// getClosingTx is a helper method which returns the stored closing transaction
+// for key. The caller should use either the force or coop closing keys.
+func (c *OpenChannel) getClosingTx(key []byte) (*wire.MsgTx, error) {
 	var closeTx *wire.MsgTx
 
 	err := c.Db.View(func(tx *bbolt.Tx) error {
@@ -945,7 +1043,7 @@ func (c *OpenChannel) BroadcastedCommitment() (*wire.MsgTx, error) {
 			return err
 		}
 
-		bs := chanBucket.Get(closingTxKey)
+		bs := chanBucket.Get(key)
 		if bs == nil {
 			return ErrNoCloseTx
 		}
@@ -987,6 +1085,11 @@ func (c *OpenChannel) putChanStatus(status ChannelStatus,
 		}
 
 		for _, f := range fs {
+			// Skip execution of nil closures.
+			if f == nil {
+				continue
+			}
+
 			if err := f(chanBucket); err != nil {
 				return err
 			}
@@ -2191,7 +2294,8 @@ func (c *OpenChannel) CloseChannel(summary *ChannelCloseSummary) error {
 		if err != nil {
 			return err
 		}
-		chanBucket := chainBucket.Bucket(chanPointBuf.Bytes())
+		chanKey := chanPointBuf.Bytes()
+		chanBucket := chainBucket.Bucket(chanKey)
 		if chanBucket == nil {
 			return ErrNoActiveChannels
 		}
@@ -2224,6 +2328,25 @@ func (c *OpenChannel) CloseChannel(summary *ChannelCloseSummary) error {
 		}
 
 		err = chainBucket.DeleteBucket(chanPointBuf.Bytes())
+		if err != nil {
+			return err
+		}
+
+		// Add channel state to the historical channel bucket.
+		historicalBucket, err := tx.CreateBucketIfNotExists(
+			historicalChannelBucket,
+		)
+		if err != nil {
+			return err
+		}
+
+		historicalChanBucket, err :=
+			historicalBucket.CreateBucketIfNotExists(chanKey)
+		if err != nil {
+			return err
+		}
+
+		err = putOpenChannel(historicalChanBucket, chanState)
 		if err != nil {
 			return err
 		}
@@ -2517,6 +2640,16 @@ func writeChanConfig(b io.Writer, c *ChannelConfig) error {
 	)
 }
 
+// fundingTxPresent returns true if expect the funding transcation to be found
+// on disk or already populated within the passed oen chanel struct.
+func fundingTxPresent(channel *OpenChannel) bool {
+	chanType := channel.ChanType
+
+	return chanType.IsSingleFunder() && chanType.HasFundingTx() &&
+		channel.IsInitiator &&
+		!channel.hasChanStatus(ChanStatusRestored)
+}
+
 func putChanInfo(chanBucket *bbolt.Bucket, channel *OpenChannel) error {
 	var w bytes.Buffer
 	if err := WriteElements(&w,
@@ -2530,10 +2663,9 @@ func putChanInfo(chanBucket *bbolt.Bucket, channel *OpenChannel) error {
 		return err
 	}
 
-	// For single funder channels that we initiated, write the funding txn.
-	if channel.ChanType.IsSingleFunder() && channel.IsInitiator &&
-		!channel.hasChanStatus(ChanStatusRestored) {
-
+	// For single funder channels that we initiated, and we have the
+	// funding transaction, then write the funding txn.
+	if fundingTxPresent(channel) {
 		if err := WriteElement(&w, channel.FundingTxn); err != nil {
 			return err
 		}
@@ -2546,7 +2678,60 @@ func putChanInfo(chanBucket *bbolt.Bucket, channel *OpenChannel) error {
 		return err
 	}
 
-	return chanBucket.Put(chanInfoKey, w.Bytes())
+	if err := chanBucket.Put(chanInfoKey, w.Bytes()); err != nil {
+		return err
+	}
+
+	// Finally, add optional shutdown scripts for the local and remote peer if
+	// they are present.
+	if err := putOptionalUpfrontShutdownScript(
+		chanBucket, localUpfrontShutdownKey, channel.LocalShutdownScript,
+	); err != nil {
+		return err
+	}
+
+	return putOptionalUpfrontShutdownScript(
+		chanBucket, remoteUpfrontShutdownKey, channel.RemoteShutdownScript,
+	)
+}
+
+// putOptionalUpfrontShutdownScript adds a shutdown script under the key
+// provided if it has a non-zero length.
+func putOptionalUpfrontShutdownScript(chanBucket *bbolt.Bucket, key []byte,
+	script []byte) error {
+	// If the script is empty, we do not need to add anything.
+	if len(script) == 0 {
+		return nil
+	}
+
+	var w bytes.Buffer
+	if err := WriteElement(&w, script); err != nil {
+		return err
+	}
+
+	return chanBucket.Put(key, w.Bytes())
+}
+
+// getOptionalUpfrontShutdownScript reads the shutdown script stored under the
+// key provided if it is present. Upfront shutdown scripts are optional, so the
+// function returns with no error if the key is not present.
+func getOptionalUpfrontShutdownScript(chanBucket *bbolt.Bucket, key []byte,
+	script *lnwire.DeliveryAddress) error {
+
+	// Return early if the bucket does not exit, a shutdown script was not set.
+	bs := chanBucket.Get(key)
+	if bs == nil {
+		return nil
+	}
+
+	var tempScript []byte
+	r := bytes.NewReader(bs)
+	if err := ReadElement(r, &tempScript); err != nil {
+		return err
+	}
+	*script = tempScript
+
+	return nil
 }
 
 func serializeChanCommit(w io.Writer, c *ChannelCommitment) error {
@@ -2652,10 +2837,9 @@ func fetchChanInfo(chanBucket *bbolt.Bucket, channel *OpenChannel) error {
 		return err
 	}
 
-	// For single funder channels that we initiated, read the funding txn.
-	if channel.ChanType.IsSingleFunder() && channel.IsInitiator &&
-		!channel.hasChanStatus(ChanStatusRestored) {
-
+	// For single funder channels that we initiated and have the funding
+	// transaction to, read the funding txn.
+	if fundingTxPresent(channel) {
 		if err := ReadElement(r, &channel.FundingTxn); err != nil {
 			return err
 		}
@@ -2670,7 +2854,16 @@ func fetchChanInfo(chanBucket *bbolt.Bucket, channel *OpenChannel) error {
 
 	channel.Packager = NewChannelPackager(channel.ShortChannelID)
 
-	return nil
+	// Finally, read the optional shutdown scripts.
+	if err := getOptionalUpfrontShutdownScript(
+		chanBucket, localUpfrontShutdownKey, &channel.LocalShutdownScript,
+	); err != nil {
+		return err
+	}
+
+	return getOptionalUpfrontShutdownScript(
+		chanBucket, remoteUpfrontShutdownKey, &channel.RemoteShutdownScript,
+	)
 }
 
 func deserializeChanCommit(r io.Reader) (ChannelCommitment, error) {

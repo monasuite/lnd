@@ -5,6 +5,7 @@ package walletrpc
 import (
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/macaroons"
 	"github.com/monasuite/lnd/sweep"
 )
@@ -30,7 +31,7 @@ type Config struct {
 
 	// FeeEstimator is an instance of the primary fee estimator instance
 	// the WalletKit will use to respond to fee estimation requests.
-	FeeEstimator lnwallet.FeeEstimator
+	FeeEstimator chainfee.Estimator
 
 	// Wallet is the primary wallet that the WalletKit will use to proxy
 	// any relevant requests to.

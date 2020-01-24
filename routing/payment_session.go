@@ -1,7 +1,7 @@
 package routing
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/lnwire"
@@ -11,6 +11,12 @@ import (
 // BlockPadding is used to increment the finalCltvDelta value for the last hop
 // to prevent an HTLC being failed if some blocks are mined while it's in-flight.
 const BlockPadding uint16 = 3
+
+var (
+	// errPrebuiltRouteTried is returned when the single pre-built route
+	// failed and there is nothing more we can do.
+	errPrebuiltRouteTried = errors.New("pre-built route already tried")
+)
 
 // PaymentSession is used during SendPayment attempts to provide routes to
 // attempt. It also defines methods to give the PaymentSession additional
@@ -66,7 +72,7 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 	// If the pre-built route has been tried already, the payment session is
 	// over.
 	case p.preBuiltRoute != nil:
-		return nil, fmt.Errorf("pre-built route already tried")
+		return nil, errPrebuiltRouteTried
 	}
 
 	// Add BlockPadding to the finalCltvDelta so that the receiving node
@@ -89,7 +95,11 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 		ProbabilitySource: ss.MissionControl.GetProbability,
 		FeeLimit:          payment.FeeLimit,
 		OutgoingChannelID: payment.OutgoingChannelID,
+		LastHop:           payment.LastHop,
 		CltvLimit:         cltvLimit,
+		DestCustomRecords: payment.DestCustomRecords,
+		DestFeatures:      payment.DestFeatures,
+		PaymentAddr:       payment.PaymentAddr,
 	}
 
 	// We'll also obtain a set of bandwidthHints from the lower layer for
@@ -103,6 +113,8 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 		return nil, err
 	}
 
+	finalHtlcExpiry := int32(height) + int32(finalCltvDelta)
+
 	path, err := p.pathFinder(
 		&graphParams{
 			graph:           ss.Graph,
@@ -111,7 +123,7 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 		},
 		restrictions, &ss.PathFindingConfig,
 		ss.SelfNode.PubKeyBytes, payment.Target,
-		payment.Amount,
+		payment.Amount, finalHtlcExpiry,
 	)
 	if err != nil {
 		return nil, err
@@ -121,8 +133,13 @@ func (p *paymentSession) RequestRoute(payment *LightningPayment,
 	// a route by applying the time-lock and fee requirements.
 	sourceVertex := route.Vertex(ss.SelfNode.PubKeyBytes)
 	route, err := newRoute(
-		payment.Amount, sourceVertex, path, height, finalCltvDelta,
-		payment.FinalDestRecords,
+		sourceVertex, path, height,
+		finalHopParams{
+			amt:         payment.Amount,
+			cltvDelta:   finalCltvDelta,
+			records:     payment.DestCustomRecords,
+			paymentAddr: payment.PaymentAddr,
+		},
 	)
 	if err != nil {
 		// TODO(roasbeef): return which edge/vertex didn't work

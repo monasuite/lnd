@@ -4,7 +4,7 @@ import (
 	"io"
 
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/watchtower/blob"
 	"github.com/monasuite/lnd/watchtower/wtpolicy"
 )
@@ -58,7 +58,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 		}
 
 		e.BlobType = blob.Type(blobType)
-		e.SweepFeeRate = lnwallet.SatPerKWeight(sweepFeeRate)
+		e.SweepFeeRate = chainfee.SatPerKWeight(sweepFeeRate)
 
 	// Type is still unknown to wtdb extensions, fail.
 	default:

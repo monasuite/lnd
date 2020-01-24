@@ -13,6 +13,8 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/coreos/bbolt"
 	"github.com/go-errors/errors"
+	"github.com/monasuite/lnd/channeldb/migration12"
+	"github.com/monasuite/lnd/channeldb/migration_01_to_11"
 	"github.com/monasuite/lnd/lnwire"
 )
 
@@ -47,19 +49,19 @@ var (
 			// for the update time of node and channel updates were
 			// added.
 			number:    1,
-			migration: migrateNodeAndEdgeUpdateIndex,
+			migration: migration_01_to_11.MigrateNodeAndEdgeUpdateIndex,
 		},
 		{
 			// The DB version that added the invoice event time
 			// series.
 			number:    2,
-			migration: migrateInvoiceTimeSeries,
+			migration: migration_01_to_11.MigrateInvoiceTimeSeries,
 		},
 		{
 			// The DB version that updated the embedded invoice in
 			// outgoing payments to match the new format.
 			number:    3,
-			migration: migrateInvoiceTimeSeriesOutgoingPayments,
+			migration: migration_01_to_11.MigrateInvoiceTimeSeriesOutgoingPayments,
 		},
 		{
 			// The version of the database where every channel
@@ -67,53 +69,59 @@ var (
 			// a policy is unknown, this will be represented
 			// by a special byte sequence.
 			number:    4,
-			migration: migrateEdgePolicies,
+			migration: migration_01_to_11.MigrateEdgePolicies,
 		},
 		{
 			// The DB version where we persist each attempt to send
 			// an HTLC to a payment hash, and track whether the
 			// payment is in-flight, succeeded, or failed.
 			number:    5,
-			migration: paymentStatusesMigration,
+			migration: migration_01_to_11.PaymentStatusesMigration,
 		},
 		{
 			// The DB version that properly prunes stale entries
 			// from the edge update index.
 			number:    6,
-			migration: migratePruneEdgeUpdateIndex,
+			migration: migration_01_to_11.MigratePruneEdgeUpdateIndex,
 		},
 		{
 			// The DB version that migrates the ChannelCloseSummary
 			// to a format where optional fields are indicated with
 			// boolean flags.
 			number:    7,
-			migration: migrateOptionalChannelCloseSummaryFields,
+			migration: migration_01_to_11.MigrateOptionalChannelCloseSummaryFields,
 		},
 		{
 			// The DB version that changes the gossiper's message
 			// store keys to account for the message's type and
 			// ShortChannelID.
 			number:    8,
-			migration: migrateGossipMessageStoreKeys,
+			migration: migration_01_to_11.MigrateGossipMessageStoreKeys,
 		},
 		{
 			// The DB version where the payments and payment
 			// statuses are moved to being stored in a combined
 			// bucket.
 			number:    9,
-			migration: migrateOutgoingPayments,
+			migration: migration_01_to_11.MigrateOutgoingPayments,
 		},
 		{
 			// The DB version where we started to store legacy
 			// payload information for all routes, as well as the
 			// optional TLV records.
 			number:    10,
-			migration: migrateRouteSerialization,
+			migration: migration_01_to_11.MigrateRouteSerialization,
 		},
 		{
 			// Add invoice htlc and cltv delta fields.
 			number:    11,
-			migration: migrateInvoices,
+			migration: migration_01_to_11.MigrateInvoices,
+		},
+		{
+			// Migrate to TLV invoice bodies, add payment address
+			// and features, remove receipt.
+			number:    12,
+			migration: migration12.MigrateInvoiceTLV,
 		},
 	}
 
@@ -129,7 +137,8 @@ type DB struct {
 	*bbolt.DB
 	dbPath string
 	graph  *ChannelGraph
-	now    func() time.Time
+
+	Now func() time.Time
 }
 
 // Open opens an existing channeldb. Any necessary schemas migrations due to
@@ -163,7 +172,7 @@ func Open(dbPath string, modifiers ...OptionModifier) (*DB, error) {
 	chanDB := &DB{
 		DB:     bdb,
 		dbPath: dbPath,
-		now:    time.Now,
+		Now:    time.Now,
 	}
 	chanDB.graph = newChannelGraph(
 		chanDB, opts.RejectCacheSize, opts.ChannelCacheSize,
@@ -263,10 +272,6 @@ func createChannelDB(dbPath string) error {
 		}
 
 		if _, err := tx.CreateBucket(invoiceBucket); err != nil {
-			return err
-		}
-
-		if _, err := tx.CreateBucket(paymentBucket); err != nil {
 			return err
 		}
 
@@ -1095,6 +1100,54 @@ func (d *DB) AddrsForNode(nodePub *btcec.PublicKey) ([]net.Addr, error) {
 	}
 
 	return dedupedAddrs, nil
+}
+
+// AbandonChannel attempts to remove the target channel from the open channel
+// database. If the channel was already removed (has a closed channel entry),
+// then we'll return a nil error. Otherwise, we'll insert a new close summary
+// into the database.
+func (d *DB) AbandonChannel(chanPoint *wire.OutPoint, bestHeight uint32) error {
+	// With the chanPoint constructed, we'll attempt to find the target
+	// channel in the database. If we can't find the channel, then we'll
+	// return the error back to the caller.
+	dbChan, err := d.FetchChannel(*chanPoint)
+	switch {
+	// If the channel wasn't found, then it's possible that it was already
+	// abandoned from the database.
+	case err == ErrChannelNotFound:
+		_, closedErr := d.FetchClosedChannel(chanPoint)
+		if closedErr != nil {
+			return closedErr
+		}
+
+		// If the channel was already closed, then we don't return an
+		// error as we'd like fro this step to be repeatable.
+		return nil
+	case err != nil:
+		return err
+	}
+
+	// Now that we've found the channel, we'll populate a close summary for
+	// the channel, so we can store as much information for this abounded
+	// channel as possible. We also ensure that we set Pending to false, to
+	// indicate that this channel has been "fully" closed.
+	summary := &ChannelCloseSummary{
+		CloseType:               Abandoned,
+		ChanPoint:               *chanPoint,
+		ChainHash:               dbChan.ChainHash,
+		CloseHeight:             bestHeight,
+		RemotePub:               dbChan.IdentityPub,
+		Capacity:                dbChan.Capacity,
+		SettledBalance:          dbChan.LocalCommitment.LocalBalance.ToSatoshis(),
+		ShortChanID:             dbChan.ShortChanID(),
+		RemoteCurrentRevocation: dbChan.RemoteCurrentRevocation,
+		RemoteNextRevocation:    dbChan.RemoteNextRevocation,
+		LocalChanConfig:         dbChan.LocalChanCfg,
+	}
+
+	// Finally, we'll close the channel in the DB, and return back to the
+	// caller.
+	return dbChan.CloseChannel(summary)
 }
 
 // syncVersions function is used for safe db version synchronization. It

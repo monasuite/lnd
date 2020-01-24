@@ -5,6 +5,8 @@ import (
 	"io"
 
 	"github.com/btcsuite/btcutil"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnwallet"
 )
 
 // htlcOutgoingContestResolver is a ContractResolver that's able to resolve an
@@ -16,6 +18,21 @@ type htlcOutgoingContestResolver struct {
 	// htlcTimeoutResolver is the inner solver that this resolver may turn
 	// into. This only happens if the HTLC expires on-chain.
 	htlcTimeoutResolver
+}
+
+// newOutgoingContestResolver instantiates a new outgoing contested htlc
+// resolver.
+func newOutgoingContestResolver(res lnwallet.OutgoingHtlcResolution,
+	broadcastHeight uint32, htlc channeldb.HTLC,
+	resCfg ResolverConfig) *htlcOutgoingContestResolver {
+
+	timeout := newTimeoutResolver(
+		res, broadcastHeight, htlc, resCfg,
+	)
+
+	return &htlcOutgoingContestResolver{
+		htlcTimeoutResolver: *timeout,
+	}
 }
 
 // Resolve commences the resolution of this contract. As this contract hasn't
@@ -76,36 +93,6 @@ func (h *htlcOutgoingContestResolver) Resolve() (ContractResolver, error) {
 	default:
 	}
 
-	// We'll check the current height, if the HTLC has already expired,
-	// then we'll morph immediately into a resolver that can sweep the
-	// HTLC.
-	//
-	// TODO(roasbeef): use grace period instead?
-	_, currentHeight, err := h.ChainIO.GetBestBlock()
-	if err != nil {
-		return nil, err
-	}
-
-	// If the current height is >= expiry-1, then a spend will be valid to
-	// be included in the next block, and we can immediately return the
-	// resolver.
-	//
-	// TODO(joostjager): Statement above may not be valid. For CLTV locks,
-	// the expiry value is the last _invalid_ block. The likely reason that
-	// this does not create a problem, is that utxonursery is checking the
-	// expiry again (in the proper way). Same holds for minus one operation
-	// below.
-	//
-	// Source:
-	// https://github.com/btcsuite/btcd/blob/991d32e72fe84d5fbf9c47cd604d793a0cd3a072/blockchain/validate.go#L154
-	if uint32(currentHeight) >= h.htlcResolution.Expiry-1 {
-		log.Infof("%T(%v): HTLC has expired (height=%v, expiry=%v), "+
-			"transforming into timeout resolver", h,
-			h.htlcResolution.ClaimOutpoint, currentHeight,
-			h.htlcResolution.Expiry)
-		return &h.htlcTimeoutResolver, nil
-	}
-
 	// If we reach this point, then we can't fully act yet, so we'll await
 	// either of our signals triggering: the HTLC expires, or we learn of
 	// the preimage.
@@ -125,9 +112,18 @@ func (h *htlcOutgoingContestResolver) Resolve() (ContractResolver, error) {
 				return nil, errResolverShuttingDown
 			}
 
-			// If this new height expires the HTLC, then we can
-			// exit early and create a resolver that's capable of
-			// handling the time locked output.
+			// If the current height is >= expiry-1, then a timeout
+			// path spend will be valid to be included in the next
+			// block, and we can immediately return the resolver.
+			//
+			// TODO(joostjager): Statement above may not be valid.
+			// For CLTV locks, the expiry value is the last
+			// _invalid_ block. The likely reason that this does not
+			// create a problem, is that utxonursery is checking the
+			// expiry again (in the proper way).
+			//
+			// Source:
+			// https://github.com/btcsuite/btcd/blob/991d32e72fe84d5fbf9c47cd604d793a0cd3a072/blockchain/validate.go#L154
 			newHeight := uint32(newBlock.Height)
 			if newHeight >= h.htlcResolution.Expiry-1 {
 				log.Infof("%T(%v): HTLC has expired "+
@@ -151,7 +147,7 @@ func (h *htlcOutgoingContestResolver) Resolve() (ContractResolver, error) {
 			// claimed.
 			return h.claimCleanUp(commitSpend)
 
-		case <-h.Quit:
+		case <-h.quit:
 			return nil, fmt.Errorf("resolver canceled")
 		}
 	}
@@ -161,7 +157,7 @@ func (h *htlcOutgoingContestResolver) Resolve() (ContractResolver, error) {
 func (h *htlcOutgoingContestResolver) report() *ContractReport {
 	// No locking needed as these values are read-only.
 
-	finalAmt := h.htlcAmt.ToSatoshis()
+	finalAmt := h.htlc.Amt.ToSatoshis()
 	if h.htlcResolution.SignedTimeoutTx != nil {
 		finalAmt = btcutil.Amount(
 			h.htlcResolution.SignedTimeoutTx.TxOut[0].Value,
@@ -170,7 +166,7 @@ func (h *htlcOutgoingContestResolver) report() *ContractReport {
 
 	return &ContractReport{
 		Outpoint:       h.htlcResolution.ClaimOutpoint,
-		Incoming:       false,
+		Type:           ReportOutputOutgoingHtlc,
 		Amount:         finalAmt,
 		MaturityHeight: h.htlcResolution.Expiry,
 		LimboBalance:   finalAmt,
@@ -183,7 +179,7 @@ func (h *htlcOutgoingContestResolver) report() *ContractReport {
 //
 // NOTE: Part of the ContractResolver interface.
 func (h *htlcOutgoingContestResolver) Stop() {
-	close(h.Quit)
+	close(h.quit)
 }
 
 // IsResolved returns true if the stored state in the resolve is fully
@@ -202,23 +198,21 @@ func (h *htlcOutgoingContestResolver) Encode(w io.Writer) error {
 	return h.htlcTimeoutResolver.Encode(w)
 }
 
-// Decode attempts to decode an encoded ContractResolver from the passed Reader
-// instance, returning an active ContractResolver instance.
-//
-// NOTE: Part of the ContractResolver interface.
-func (h *htlcOutgoingContestResolver) Decode(r io.Reader) error {
-	return h.htlcTimeoutResolver.Decode(r)
-}
+// newOutgoingContestResolverFromReader attempts to decode an encoded ContractResolver
+// from the passed Reader instance, returning an active ContractResolver
+// instance.
+func newOutgoingContestResolverFromReader(r io.Reader, resCfg ResolverConfig) (
+	*htlcOutgoingContestResolver, error) {
 
-// AttachResolverKit should be called once a resolved is successfully decoded
-// from its stored format. This struct delivers a generic tool kit that
-// resolvers need to complete their duty.
-//
-// NOTE: Part of the ContractResolver interface.
-func (h *htlcOutgoingContestResolver) AttachResolverKit(r ResolverKit) {
-	h.ResolverKit = r
+	h := &htlcOutgoingContestResolver{}
+	timeoutResolver, err := newTimeoutResolverFromReader(r, resCfg)
+	if err != nil {
+		return nil, err
+	}
+	h.htlcTimeoutResolver = *timeoutResolver
+	return h, nil
 }
 
 // A compile time assertion to ensure htlcOutgoingContestResolver meets the
 // ContractResolver interface.
-var _ ContractResolver = (*htlcOutgoingContestResolver)(nil)
+var _ htlcContractResolver = (*htlcOutgoingContestResolver)(nil)

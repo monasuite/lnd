@@ -3,6 +3,8 @@ package channeldb
 import (
 	"github.com/btcsuite/btclog"
 	"github.com/monasuite/lnd/build"
+	"github.com/monasuite/lnd/channeldb/migration12"
+	"github.com/monasuite/lnd/channeldb/migration_01_to_11"
 )
 
 // log is a logger that is initialized with no output filters.  This
@@ -25,4 +27,6 @@ func DisableLog() {
 // using btclog.
 func UseLogger(logger btclog.Logger) {
 	log = logger
+	migration_01_to_11.UseLogger(logger)
+	migration12.UseLogger(logger)
 }

@@ -12,11 +12,13 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcutil"
+	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/record"
 	"github.com/monasuite/lnd/routing"
 	"github.com/monasuite/lnd/routing/route"
-	"github.com/monasuite/lnd/tlv"
 	"github.com/monasuite/lnd/zpay32"
 )
 
@@ -42,8 +44,9 @@ type RouterBackend struct {
 	// routes.
 	FindRoute func(source, target route.Vertex,
 		amt lnwire.MilliSatoshi, restrictions *routing.RestrictParams,
-		destTlvRecords []tlv.Record,
-		finalExpiry ...uint16) (*route.Route, error)
+		destCustomRecords record.CustomSet,
+		routeHints map[route.Vertex][]*channeldb.ChannelEdgePolicy,
+		finalExpiry uint16) (*route.Route, error)
 
 	MissionControl MissionControl
 
@@ -60,6 +63,10 @@ type RouterBackend struct {
 	// MaxTotalTimelock is the maximum total time lock a route is allowed to
 	// have.
 	MaxTotalTimelock uint32
+
+	// DefaultFinalCltvDelta is the default value used as final cltv delta
+	// when an RPC caller doesn't specify a value.
+	DefaultFinalCltvDelta uint16
 }
 
 // MissionControl defines the mission control dependencies of routerrpc.
@@ -76,6 +83,11 @@ type MissionControl interface {
 	// GetHistorySnapshot takes a snapshot from the current mission control
 	// state and actual probability estimates.
 	GetHistorySnapshot() *routing.MissionControlSnapshot
+
+	// GetPairHistorySnapshot returns the stored history for a given node
+	// pair.
+	GetPairHistorySnapshot(fromNode,
+		toNode route.Vertex) routing.TimedPairResult
 }
 
 // QueryRoutes attempts to query the daemons' Channel Router for a possible
@@ -121,15 +133,17 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 	// Currently, within the bootstrap phase of the network, we limit the
 	// largest payment size allotted to (2^32) - 1 mSAT or 4.29 million
 	// satoshis.
-	amt := btcutil.Amount(in.Amt)
-	amtMSat := lnwire.NewMSatFromSatoshis(amt)
-	if amtMSat > r.MaxPaymentMSat {
+	amt, err := lnrpc.UnmarshallAmt(in.Amt, in.AmtMsat)
+	if err != nil {
+		return nil, err
+	}
+	if amt > r.MaxPaymentMSat {
 		return nil, fmt.Errorf("payment of %v is too large, max payment "+
 			"allowed is %v", amt, r.MaxPaymentMSat.ToSatoshis())
 	}
 
 	// Unmarshall restrictions from request.
-	feeLimit := calculateFeeLimit(in.FeeLimit, amtMSat)
+	feeLimit := lnrpc.CalculateFeeLimit(in.FeeLimit, amt)
 
 	ignoredNodes := make(map[route.Vertex]struct{})
 	for _, ignorePubKey := range in.IgnoredNodes {
@@ -184,13 +198,18 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 	// We need to subtract the final delta before passing it into path
 	// finding. The optimal path is independent of the final cltv delta and
 	// the path finding algorithm is unaware of this value.
-	finalCLTVDelta := uint16(zpay32.DefaultFinalCLTVDelta)
+	finalCLTVDelta := r.DefaultFinalCltvDelta
 	if in.FinalCltvDelta != 0 {
 		finalCLTVDelta = uint16(in.FinalCltvDelta)
 	}
 	cltvLimit -= uint32(finalCLTVDelta)
 
-	var destTLV map[uint64][]byte
+	// Parse destination feature bits.
+	features, err := UnmarshalFeatures(in.DestFeatures)
+	if err != nil {
+		return nil, err
+	}
+
 	restrictions := &routing.RestrictParams{
 		FeeLimit: feeLimit,
 		ProbabilitySource: func(fromNode, toNode route.Vertex,
@@ -216,14 +235,43 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 				fromNode, toNode, amt,
 			)
 		},
-		DestPayloadTLV: len(destTLV) != 0,
-		CltvLimit:      cltvLimit,
+		DestCustomRecords: record.CustomSet(in.DestCustomRecords),
+		CltvLimit:         cltvLimit,
+		DestFeatures:      features,
+	}
+
+	// Pass along an outgoing channel restriction if specified.
+	if in.OutgoingChanId != 0 {
+		restrictions.OutgoingChannelID = &in.OutgoingChanId
+	}
+
+	// Pass along a last hop restriction if specified.
+	if len(in.LastHopPubkey) > 0 {
+		lastHop, err := route.NewVertexFromBytes(
+			in.LastHopPubkey,
+		)
+		if err != nil {
+			return nil, err
+		}
+		restrictions.LastHop = &lastHop
 	}
 
 	// If we have any TLV records destined for the final hop, then we'll
 	// attempt to decode them now into a form that the router can more
 	// easily manipulate.
-	destTlvRecords, err := tlv.MapToRecords(destTLV)
+	customRecords := record.CustomSet(in.DestCustomRecords)
+	if err := customRecords.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Convert route hints to an edge map.
+	routeHints, err := unmarshallRouteHints(in.RouteHints)
+	if err != nil {
+		return nil, err
+	}
+	routeHintEdges, err := routing.RouteHintsToEdges(
+		routeHints, targetPubKey,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -232,8 +280,8 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 	// can carry `in.Amt` satoshis _including_ the total fee required on
 	// the route.
 	route, err := r.FindRoute(
-		sourcePubKey, targetPubKey, amtMSat, restrictions,
-		destTlvRecords, finalCLTVDelta,
+		sourcePubKey, targetPubKey, amt, restrictions,
+		customRecords, routeHintEdges, finalCLTVDelta,
 	)
 	if err != nil {
 		return nil, err
@@ -301,27 +349,6 @@ func (r *RouterBackend) rpcEdgeToPair(e *lnrpc.EdgeLocator) (
 	return pair, nil
 }
 
-// calculateFeeLimit returns the fee limit in millisatoshis. If a percentage
-// based fee limit has been requested, we'll factor in the ratio provided with
-// the amount of the payment.
-func calculateFeeLimit(feeLimit *lnrpc.FeeLimit,
-	amount lnwire.MilliSatoshi) lnwire.MilliSatoshi {
-
-	switch feeLimit.GetLimit().(type) {
-	case *lnrpc.FeeLimit_Fixed:
-		return lnwire.NewMSatFromSatoshis(
-			btcutil.Amount(feeLimit.GetFixed()),
-		)
-	case *lnrpc.FeeLimit_Percent:
-		return amount * lnwire.MilliSatoshi(feeLimit.GetPercent()) / 100
-	default:
-		// If a fee limit was not specified, we'll use the payment's
-		// amount as an upper bound in order to avoid payment attempts
-		// from incurring fees higher than the payment amount itself.
-		return amount
-	}
-}
-
 // MarshallRoute marshalls an internal route to an rpc route struct.
 func (r *RouterBackend) MarshallRoute(route *route.Route) (*lnrpc.Route, error) {
 	resp := &lnrpc.Route{
@@ -347,6 +374,17 @@ func (r *RouterBackend) MarshallRoute(route *route.Route) (*lnrpc.Route, error) 
 			chanCapacity = incomingAmt.ToSatoshis()
 		}
 
+		// Extract the MPP fields if present on this hop.
+		var mpp *lnrpc.MPPRecord
+		if hop.MPP != nil {
+			addr := hop.MPP.PaymentAddr()
+
+			mpp = &lnrpc.MPPRecord{
+				PaymentAddr:  addr[:],
+				TotalAmtMsat: int64(hop.MPP.TotalMsat()),
+			}
+		}
+
 		resp.Hops[i] = &lnrpc.Hop{
 			ChanId:           hop.ChannelID,
 			ChanCapacity:     int64(chanCapacity),
@@ -358,7 +396,9 @@ func (r *RouterBackend) MarshallRoute(route *route.Route) (*lnrpc.Route, error) 
 			PubKey: hex.EncodeToString(
 				hop.PubKeyBytes[:],
 			),
-			TlvPayload: !hop.LegacyPayload,
+			CustomRecords: hop.CustomRecords,
+			TlvPayload:    !hop.LegacyPayload,
+			MppRecord:     mpp,
 		}
 		incomingAmt = hop.AmtToForward
 	}
@@ -366,78 +406,67 @@ func (r *RouterBackend) MarshallRoute(route *route.Route) (*lnrpc.Route, error) 
 	return resp, nil
 }
 
-// UnmarshallHopByChannelLookup unmarshalls an rpc hop for which the pub key is
-// not known. This function will query the channel graph with channel id to
-// retrieve both endpoints and determine the hop pubkey using the previous hop
-// pubkey. If the channel is unknown, an error is returned.
-func (r *RouterBackend) UnmarshallHopByChannelLookup(hop *lnrpc.Hop,
-	prevPubKeyBytes [33]byte) (*route.Hop, error) {
+// UnmarshallHopWithPubkey unmarshalls an rpc hop for which the pubkey has
+// already been extracted.
+func UnmarshallHopWithPubkey(rpcHop *lnrpc.Hop, pubkey route.Vertex) (*route.Hop,
+	error) {
 
-	// Discard edge policies, because they may be nil.
-	node1, node2, err := r.FetchChannelEndpoints(hop.ChanId)
+	customRecords := record.CustomSet(rpcHop.CustomRecords)
+	if err := customRecords.Validate(); err != nil {
+		return nil, err
+	}
+
+	mpp, err := UnmarshalMPP(rpcHop.MppRecord)
 	if err != nil {
 		return nil, err
 	}
 
-	var pubKeyBytes [33]byte
-	switch {
-	case prevPubKeyBytes == node1:
-		pubKeyBytes = node2
-	case prevPubKeyBytes == node2:
-		pubKeyBytes = node1
-	default:
-		return nil, fmt.Errorf("channel edge does not match expected node")
-	}
-
-	var tlvRecords []tlv.Record
-
 	return &route.Hop{
-		OutgoingTimeLock: hop.Expiry,
-		AmtToForward:     lnwire.MilliSatoshi(hop.AmtToForwardMsat),
-		PubKeyBytes:      pubKeyBytes,
-		ChannelID:        hop.ChanId,
-		TLVRecords:       tlvRecords,
-		LegacyPayload:    !hop.TlvPayload,
-	}, nil
-}
-
-// UnmarshallKnownPubkeyHop unmarshalls an rpc hop that contains the hop pubkey.
-// The channel graph doesn't need to be queried because all information required
-// for sending the payment is present.
-func UnmarshallKnownPubkeyHop(hop *lnrpc.Hop) (*route.Hop, error) {
-	pubKey, err := hex.DecodeString(hop.PubKey)
-	if err != nil {
-		return nil, fmt.Errorf("cannot decode pubkey %s", hop.PubKey)
-	}
-
-	var pubKeyBytes [33]byte
-	copy(pubKeyBytes[:], pubKey)
-
-	var tlvRecords []tlv.Record
-
-	return &route.Hop{
-		OutgoingTimeLock: hop.Expiry,
-		AmtToForward:     lnwire.MilliSatoshi(hop.AmtToForwardMsat),
-		PubKeyBytes:      pubKeyBytes,
-		ChannelID:        hop.ChanId,
-		TLVRecords:       tlvRecords,
-		LegacyPayload:    !hop.TlvPayload,
+		OutgoingTimeLock: rpcHop.Expiry,
+		AmtToForward:     lnwire.MilliSatoshi(rpcHop.AmtToForwardMsat),
+		PubKeyBytes:      pubkey,
+		ChannelID:        rpcHop.ChanId,
+		CustomRecords:    customRecords,
+		LegacyPayload:    !rpcHop.TlvPayload,
+		MPP:              mpp,
 	}, nil
 }
 
 // UnmarshallHop unmarshalls an rpc hop that may or may not contain a node
 // pubkey.
-func (r *RouterBackend) UnmarshallHop(hop *lnrpc.Hop,
+func (r *RouterBackend) UnmarshallHop(rpcHop *lnrpc.Hop,
 	prevNodePubKey [33]byte) (*route.Hop, error) {
 
-	if hop.PubKey == "" {
-		// If no pub key is given of the hop, the local channel
-		// graph needs to be queried to complete the information
-		// necessary for routing.
-		return r.UnmarshallHopByChannelLookup(hop, prevNodePubKey)
+	var pubKeyBytes [33]byte
+	if rpcHop.PubKey != "" {
+		// Unmarshall the provided hop pubkey.
+		pubKey, err := hex.DecodeString(rpcHop.PubKey)
+		if err != nil {
+			return nil, fmt.Errorf("cannot decode pubkey %s",
+				rpcHop.PubKey)
+		}
+		copy(pubKeyBytes[:], pubKey)
+	} else {
+		// If no pub key is given of the hop, the local channel graph
+		// needs to be queried to complete the information necessary for
+		// routing. Discard edge policies, because they may be nil.
+		node1, node2, err := r.FetchChannelEndpoints(rpcHop.ChanId)
+		if err != nil {
+			return nil, err
+		}
+
+		switch {
+		case prevNodePubKey == node1:
+			pubKeyBytes = node2
+		case prevNodePubKey == node2:
+			pubKeyBytes = node1
+		default:
+			return nil, fmt.Errorf("channel edge does not match " +
+				"expected node")
+		}
 	}
 
-	return UnmarshallKnownPubkeyHop(hop)
+	return UnmarshallHopWithPubkey(rpcHop, pubKeyBytes)
 }
 
 // UnmarshallRoute unmarshalls an rpc route. For hops that don't specify a
@@ -492,6 +521,17 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		payIntent.OutgoingChannelID = &rpcPayReq.OutgoingChanId
 	}
 
+	// Pass along a last hop restriction if specified.
+	if len(rpcPayReq.LastHopPubkey) > 0 {
+		lastHop, err := route.NewVertexFromBytes(
+			rpcPayReq.LastHopPubkey,
+		)
+		if err != nil {
+			return nil, err
+		}
+		payIntent.LastHop = &lastHop
+	}
+
 	// Take the CLTV limit from the request if set, otherwise use the max.
 	cltvLimit, err := ValidateCLTVLimit(
 		uint32(rpcPayReq.CltvLimit), r.MaxTotalTimelock,
@@ -502,23 +542,23 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 	payIntent.CltvLimit = cltvLimit
 
 	// Take fee limit from request.
-	payIntent.FeeLimit = lnwire.NewMSatFromSatoshis(
-		btcutil.Amount(rpcPayReq.FeeLimitSat),
+	payIntent.FeeLimit, err = lnrpc.UnmarshallAmt(
+		rpcPayReq.FeeLimitSat, rpcPayReq.FeeLimitMsat,
 	)
+	if err != nil {
+		return nil, err
+	}
 
 	// Set payment attempt timeout.
 	if rpcPayReq.TimeoutSeconds == 0 {
 		return nil, errors.New("timeout_seconds must be specified")
 	}
 
-	var destTLV map[uint64][]byte
-	if len(destTLV) != 0 {
-		var err error
-		payIntent.FinalDestRecords, err = tlv.MapToRecords(destTLV)
-		if err != nil {
-			return nil, err
-		}
+	customRecords := record.CustomSet(rpcPayReq.DestCustomRecords)
+	if err := customRecords.Validate(); err != nil {
+		return nil, err
 	}
+	payIntent.DestCustomRecords = customRecords
 
 	payIntent.PayAttemptTimeout = time.Second *
 		time.Duration(rpcPayReq.TimeoutSeconds)
@@ -531,6 +571,14 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		return nil, err
 	}
 	payIntent.RouteHints = routeHints
+
+	// Unmarshall either sat or msat amount from request.
+	reqAmt, err := lnrpc.UnmarshallAmt(
+		rpcPayReq.Amt, rpcPayReq.AmtMsat,
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	// If the payment request field isn't blank, then the details of the
 	// invoice are encoded entirely within the encoded payReq.  So we'll
@@ -569,17 +617,15 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		// We override the amount to pay with the amount provided from
 		// the payment request.
 		if payReq.MilliSat == nil {
-			if rpcPayReq.Amt == 0 {
+			if reqAmt == 0 {
 				return nil, errors.New("amount must be " +
 					"specified when paying a zero amount " +
 					"invoice")
 			}
 
-			payIntent.Amount = lnwire.NewMSatFromSatoshis(
-				btcutil.Amount(rpcPayReq.Amt),
-			)
+			payIntent.Amount = reqAmt
 		} else {
-			if rpcPayReq.Amt != 0 {
+			if reqAmt != 0 {
 				return nil, errors.New("amount must not be " +
 					"specified when paying a non-zero " +
 					" amount invoice")
@@ -596,6 +642,8 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		payIntent.RouteHints = append(
 			payIntent.RouteHints, payReq.RouteHints...,
 		)
+		payIntent.DestFeatures = payReq.Features
+		payIntent.PaymentAddr = payReq.PaymentAddr
 	} else {
 		// Otherwise, If the payment request field was not specified
 		// (and a custom route wasn't specified), construct the payment
@@ -613,20 +661,26 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 			payIntent.FinalCLTVDelta =
 				uint16(rpcPayReq.FinalCltvDelta)
 		} else {
-			payIntent.FinalCLTVDelta = zpay32.DefaultFinalCLTVDelta
+			payIntent.FinalCLTVDelta = r.DefaultFinalCltvDelta
 		}
 
 		// Amount.
-		if rpcPayReq.Amt == 0 {
+		if reqAmt == 0 {
 			return nil, errors.New("amount must be specified")
 		}
 
-		payIntent.Amount = lnwire.NewMSatFromSatoshis(
-			btcutil.Amount(rpcPayReq.Amt),
-		)
+		payIntent.Amount = reqAmt
 
 		// Payment hash.
 		copy(payIntent.PaymentHash[:], rpcPayReq.PaymentHash)
+
+		// Parse destination feature bits.
+		features, err := UnmarshalFeatures(rpcPayReq.DestFeatures)
+		if err != nil {
+			return nil, err
+		}
+
+		payIntent.DestFeatures = features
 	}
 
 	// Currently, within the bootstrap phase of the network, we limit the
@@ -639,6 +693,11 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 			"max payment allowed is %v", payIntent.Amount,
 			r.MaxPaymentMSat)
 
+	}
+
+	// Check for disallowed payments to self.
+	if !rpcPayReq.AllowSelfPayment && payIntent.Target == r.SelfNode {
+		return nil, errors.New("self-payments not allowed")
 	}
 
 	return payIntent, nil
@@ -688,6 +747,29 @@ func unmarshallHopHint(rpcHint *lnrpc.HopHint) (zpay32.HopHint, error) {
 	}, nil
 }
 
+// UnmarshalFeatures converts a list of uint32's into a valid feature vector.
+// This method checks that feature bit pairs aren't assigned toegether, and
+// validates transitive depdencies.
+func UnmarshalFeatures(
+	rpcFeatures []lnrpc.FeatureBit) (*lnwire.FeatureVector, error) {
+
+	// If no destination features are specified we'll return nil to signal
+	// that the router should try to use the graph as a fallback.
+	if rpcFeatures == nil {
+		return nil, nil
+	}
+
+	raw := lnwire.NewRawFeatureVector()
+	for _, bit := range rpcFeatures {
+		err := raw.SafeSet(lnwire.FeatureBit(bit))
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return lnwire.NewFeatureVector(raw, lnwire.Features), nil
+}
+
 // ValidatePayReqExpiry checks if the passed payment request has expired. In
 // the case it has expired, an error will be returned.
 func ValidatePayReqExpiry(payReq *zpay32.Invoice) error {
@@ -713,4 +795,91 @@ func ValidateCLTVLimit(val, max uint32) (uint32, error) {
 	default:
 		return val, nil
 	}
+}
+
+// UnmarshalMPP accepts the mpp_total_amt_msat and mpp_payment_addr fields from
+// an RPC request and converts into an record.MPP object. An error is returned
+// if the payment address is not 0 or 32 bytes. If the total amount and payment
+// address are zero-value, the return value will be nil signaling there is no
+// MPP record to attach to this hop. Otherwise, a non-nil reocrd will be
+// contained combining the provided values.
+func UnmarshalMPP(reqMPP *lnrpc.MPPRecord) (*record.MPP, error) {
+	// If no MPP record was submitted, assume the user wants to send a
+	// regular payment.
+	if reqMPP == nil {
+		return nil, nil
+	}
+
+	reqTotal := reqMPP.TotalAmtMsat
+	reqAddr := reqMPP.PaymentAddr
+
+	switch {
+
+	// No MPP fields were provided.
+	case reqTotal == 0 && len(reqAddr) == 0:
+		return nil, fmt.Errorf("missing total_msat and payment_addr")
+
+	// Total is present, but payment address is missing.
+	case reqTotal > 0 && len(reqAddr) == 0:
+		return nil, fmt.Errorf("missing payment_addr")
+
+	// Payment address is present, but total is missing.
+	case reqTotal == 0 && len(reqAddr) > 0:
+		return nil, fmt.Errorf("missing total_msat")
+	}
+
+	addr, err := lntypes.MakeHash(reqAddr)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse "+
+			"payment_addr: %v", err)
+	}
+
+	total := lnwire.MilliSatoshi(reqTotal)
+
+	return record.NewMPP(total, addr), nil
+}
+
+// MarshalHTLCAttempt constructs an RPC HTLCAttempt from the db representation.
+func (r *RouterBackend) MarshalHTLCAttempt(
+	htlc channeldb.HTLCAttempt) (*lnrpc.HTLCAttempt, error) {
+
+	var (
+		status      lnrpc.HTLCAttempt_HTLCStatus
+		resolveTime int64
+	)
+
+	switch {
+	case htlc.Settle != nil:
+		status = lnrpc.HTLCAttempt_SUCCEEDED
+		resolveTime = MarshalTimeNano(htlc.Settle.SettleTime)
+
+	case htlc.Failure != nil:
+		status = lnrpc.HTLCAttempt_FAILED
+		resolveTime = MarshalTimeNano(htlc.Failure.FailTime)
+
+	default:
+		status = lnrpc.HTLCAttempt_IN_FLIGHT
+	}
+
+	route, err := r.MarshallRoute(&htlc.Route)
+	if err != nil {
+		return nil, err
+	}
+
+	return &lnrpc.HTLCAttempt{
+		Status:        status,
+		Route:         route,
+		AttemptTimeNs: MarshalTimeNano(htlc.AttemptTime),
+		ResolveTimeNs: resolveTime,
+	}, nil
+}
+
+// MarshalTimeNano converts a time.Time into its nanosecond representation. If
+// the time is zero, this method simply returns 0, since calling UnixNano() on a
+// zero-valued time is undefined.
+func MarshalTimeNano(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixNano()
 }

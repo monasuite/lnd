@@ -1,6 +1,7 @@
 package lnd
 
 import (
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,11 @@ import (
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
+)
+
+var (
+	coinPkScript, _ = hex.DecodeString("001431df1bde03c074d0cf21ea2529427e1499b8f1de")
 )
 
 // The block height returned by the mock BlockChainIO's GetBestBlock.
@@ -271,13 +277,13 @@ func (*mockWalletController) IsOurAddress(a btcutil.Address) bool {
 }
 
 func (*mockWalletController) SendOutputs(outputs []*wire.TxOut,
-	_ lnwallet.SatPerKWeight) (*wire.MsgTx, error) {
+	_ chainfee.SatPerKWeight) (*wire.MsgTx, error) {
 
 	return nil, nil
 }
 
 func (*mockWalletController) CreateSimpleTx(outputs []*wire.TxOut,
-	_ lnwallet.SatPerKWeight, _ bool) (*txauthor.AuthoredTx, error) {
+	_ chainfee.SatPerKWeight, _ bool) (*txauthor.AuthoredTx, error) {
 
 	return nil, nil
 }
@@ -296,7 +302,7 @@ func (m *mockWalletController) ListUnspentWitness(minconfirms,
 	utxo := &lnwallet.Utxo{
 		AddressType: lnwallet.WitnessPubKey,
 		Value:       btcutil.Amount(10 * btcutil.SatoshiPerBitcoin),
-		PkScript:    make([]byte, 22),
+		PkScript:    coinPkScript,
 		OutPoint: wire.OutPoint{
 			Hash:  chainhash.Hash{},
 			Index: m.index,

@@ -216,7 +216,6 @@ func TestHtlcTimeoutResolver(t *testing.T) {
 				Notifier:   notifier,
 				PreimageDB: witnessBeacon,
 				IncubateOutputs: func(wire.OutPoint,
-					*lnwallet.CommitOutputResolution,
 					*lnwallet.OutgoingHtlcResolution,
 					*lnwallet.IncomingHtlcResolution,
 					uint32) error {
@@ -237,14 +236,17 @@ func TestHtlcTimeoutResolver(t *testing.T) {
 			},
 		}
 
-		resolver := &htlcTimeoutResolver{
-			ResolverKit: ResolverKit{
-				ChannelArbitratorConfig: chainCfg,
-				Checkpoint: func(_ ContractResolver) error {
-					checkPointChan <- struct{}{}
-					return nil
-				},
+		cfg := ResolverConfig{
+			ChannelArbitratorConfig: chainCfg,
+			Checkpoint: func(_ ContractResolver) error {
+				checkPointChan <- struct{}{}
+				return nil
 			},
+		}
+		resolver := &htlcTimeoutResolver{
+			contractResolverKit: *newContractResolverKit(
+				cfg,
+			),
 		}
 		resolver.htlcResolution.SweepSignDesc = *fakeSignDesc
 
