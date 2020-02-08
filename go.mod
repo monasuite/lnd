@@ -34,13 +34,13 @@ require (
 	github.com/lightningnetwork/lnd/queue v1.0.2
 	github.com/lightningnetwork/lnd/ticker v1.0.0
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
-	github.com/monaarchives/btcwallet v0.11.0
+	github.com/monaarchives/btcwallet v0.11.1
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
 	github.com/monaarchives/btcwallet/walletdb v1.1.0
 	github.com/monaarchives/btcwallet/wtxmgr v1.0.0
-	github.com/monasuite/monad v0.20.1-beta
-	github.com/monasuite/neutrino v0.11.0
+	github.com/monasuite/monad v0.20.2-beta
+	github.com/monasuite/neutrino v0.11.1
 	github.com/onsi/ginkgo v1.8.0 // indirect
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/prometheus/client_golang v0.9.3

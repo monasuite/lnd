@@ -148,6 +148,8 @@ github.com/monaarchives/btcwallet v0.0.0-20191016151304-1e0af427b87d h1:hgTeQ26v
 github.com/monaarchives/btcwallet v0.0.0-20191016151304-1e0af427b87d/go.mod h1:qTeGsuaKKlo4VrWoPG/5Mlw8unJF7q1GGBYfsA9LCYU=
 github.com/monaarchives/btcwallet v0.11.0 h1:Rwyhd9xzc7UsuS/GMKS3cfipsu3eL7Z3Lm6sbfjRS60=
 github.com/monaarchives/btcwallet v0.11.0/go.mod h1:+K+ts/DzrvushwhUUXRB2AXUqx3l+GVbLbNFdlDKg2k=
+github.com/monaarchives/btcwallet v0.11.1 h1:79FelvTzNkrb2dfqdKfz6njhqzf02ddw7fOFWpmuvj4=
+github.com/monaarchives/btcwallet v0.11.1/go.mod h1:bIKA2+CMJkm8UU0dqt924TKlwrQGNvptJu1TiQFc4ro=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0 h1:ksF3WKNj2SJX3yVWUuANQlS23Xe+9jpY1rrWlp9SalU=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0/go.mod h1:AtTKdIUCYgF07/DoNnJKJ8Sde4TN7nxS3AcqTf59Ea4=
 github.com/monaarchives/btcwallet/wallet/txrules v1.0.0 h1:4I2V23buSnS1fv91oZlZ3kKOrCGsBf15YwLX1vu9mSI=
@@ -168,6 +170,8 @@ github.com/monasuite/monad v0.0.0-20191002130939-cb322f305e5f h1:vh8iV43Zj9A4m6m
 github.com/monasuite/monad v0.0.0-20191002130939-cb322f305e5f/go.mod h1:ioPgaQSqFuc4H3OHqpXcYKKnPxC8wmg2sGHgrWssO+s=
 github.com/monasuite/monad v0.20.1-beta h1:3QwRucQa+TsojOF2TXBhhh2NKvx/kwFpbwL/eD8thS4=
 github.com/monasuite/monad v0.20.1-beta/go.mod h1:fu480ISQ0zpvXulpgMCpDH6a2tTxd7VfaNKW+A5db24=
+github.com/monasuite/monad v0.20.2-beta h1:LPxRoJBp7JGxXd8CqjPeh5cls4hF8DBEBToF/X1jOU8=
+github.com/monasuite/monad v0.20.2-beta/go.mod h1:fu480ISQ0zpvXulpgMCpDH6a2tTxd7VfaNKW+A5db24=
 github.com/monasuite/monautil v0.0.0-20190606162653-90b266792864 h1:pMKZU4hTeLssZCspx+e7yTjoluCNxcL+OPF6ipqZeHI=
 github.com/monasuite/monautil v0.0.0-20190606162653-90b266792864/go.mod h1:kIVSL9QpyEYOh60Z7DIAAIhzOd9pHpRbMA3rOqVXOwc=
 github.com/monasuite/neutrino v0.0.0-20190614104037-69d45d3c47e4/go.mod h1:HuqwTtShwYPj9ZHHDRnt/EU5b+f4pJqVSRVR+Z+eaWs=
@@ -178,6 +182,8 @@ github.com/monasuite/neutrino v0.10.0 h1:LjOUq2DW7yOV2dHGKNvQyk4Oga5LIjexEGal1vO
 github.com/monasuite/neutrino v0.10.0/go.mod h1:RLqVdv3uhp5K/EQEzDOpw3elKKODQGuEyQoBZew84lg=
 github.com/monasuite/neutrino v0.11.0 h1:CFkvWRdDAf57K3HMhG5Wwk/wgnN3PiscPG7duT1ilm4=
 github.com/monasuite/neutrino v0.11.0/go.mod h1:wnQFoz632F+DNtcoJ83/u0B2ffNsUi7YVYm4YaQqqEM=
+github.com/monasuite/neutrino v0.11.1 h1:HXUDe9ssXctaaBkHTkUoxqvDAPpFCxkj80svmrXUwSg=
+github.com/monasuite/neutrino v0.11.1/go.mod h1:OohBA8Z4DHjTIYzOtP3wsiDTWsGPqzr7xcAPMwhLoRg=
 github.com/mwitkow/go-conntrack v0.0.0-20161129095857-cc309e4a2223/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
 github.com/oklog/ulid v1.3.1/go.mod h1:CirwcVhetQ6Lv90oh/F+FBtV6XMibvdAFo93nm5qn4U=
 github.com/onsi/ginkgo v1.6.0/go.mod h1:lLunBs/Ym6LB5Z9jYTR76FiuTmxDTDusOGeTQH+WWjE=
