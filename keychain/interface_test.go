@@ -12,6 +12,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/davecgh/go-spew/spew"
+	"github.com/monaarchives/btcwallet/snacl"
 	"github.com/monaarchives/btcwallet/waddrmgr"
 	"github.com/monaarchives/btcwallet/wallet"
 	"github.com/monaarchives/btcwallet/walletdb"
@@ -41,6 +42,19 @@ var (
 )
 
 func createTestBtcWallet(coinType uint32) (func(), *wallet.Wallet, error) {
+	// Instruct waddrmgr to use the cranked down scrypt parameters when
+	// creating new wallet encryption keys.
+	fastScrypt := waddrmgr.FastScryptOptions
+	keyGen := func(passphrase *[]byte, config *waddrmgr.ScryptOptions) (
+		*snacl.SecretKey, error) {
+
+		return snacl.NewSecretKey(
+			passphrase, fastScrypt.N, fastScrypt.R, fastScrypt.P,
+		)
+	}
+	waddrmgr.SetSecretKeyGen(keyGen)
+
+	// Create a new test wallet that uses fast scrypt as KDF.
 	tempDir, err := ioutil.TempDir("", "keyring-lnwallet")
 	if err != nil {
 		return nil, nil, err

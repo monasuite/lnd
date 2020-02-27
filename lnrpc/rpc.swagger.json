@@ -831,7 +831,7 @@
           },
           {
             "name": "dest_features",
-            "description": "*\nFeatures assumed to be supported by the final node. All transitive feature\ndepdencies must also be set properly. For a given feature bit pair, either\noptional or remote may be set, but not both. If this field is nil or empty,\nthe router will try to load destination features from the graph as a\nfallback.",
+            "description": "*\nFeatures assumed to be supported by the final node. All transitive feature\ndependencies must also be set properly. For a given feature bit pair, either\noptional or remote may be set, but not both. If this field is nil or empty,\nthe router will try to load destination features from the graph as a\nfallback.",
             "in": "query",
             "required": false,
             "type": "array",
@@ -1461,6 +1461,16 @@
       ],
       "default": "COOPERATIVE_CLOSE"
     },
+    "ChannelCloseSummaryInitiator": {
+      "type": "string",
+      "enum": [
+        "UNKNOWN",
+        "LOCAL",
+        "REMOTE",
+        "BOTH"
+      ],
+      "default": "UNKNOWN"
+    },
     "ChannelEventUpdateUpdateType": {
       "type": "string",
       "enum": [
@@ -1706,7 +1716,7 @@
       "properties": {
         "chain": {
           "type": "string",
-          "title": "/ The blockchain the node is on (eg bitcoin, litecoin)"
+          "title": "/ The blockchain the node is on (eg bitcoin, monacoin)"
         },
         "network": {
           "type": "string",
@@ -2059,6 +2069,14 @@
         "close_type": {
           "$ref": "#/definitions/ChannelCloseSummaryClosureType",
           "description": "/ Details on how the channel was closed."
+        },
+        "open_initiator": {
+          "$ref": "#/definitions/ChannelCloseSummaryInitiator",
+          "description": "*\nOpen initiator is the party that initiated opening the channel. Note that\nthis value may be unknown if the channel was closed before we migrated to\nstore open channel information after close."
+        },
+        "close_initiator": {
+          "$ref": "#/definitions/ChannelCloseSummaryInitiator",
+          "description": "*\nClose initiator indicates which party initiated the close. This value will\nbe unknown for channels that were cooperatively closed before we started\ntracking cooperative close initiators. Note that this indicates which party\ninitiated a close, and it is possible for both to initiate cooperative or\nforce closes, although only one party's close will be confirmed on chain."
         }
       }
     },
@@ -4016,7 +4034,7 @@
           "items": {
             "$ref": "#/definitions/lnrpcFeatureBit"
           },
-          "description": "*\nFeatures assumed to be supported by the final node. All transitive feature\ndepdencies must also be set properly. For a given feature bit pair, either\noptional or remote may be set, but not both. If this field is nil or empty,\nthe router will try to load destination features from the graph as a\nfallback."
+          "description": "*\nFeatures assumed to be supported by the final node. All transitive feature\ndependencies must also be set properly. For a given feature bit pair, either\noptional or remote may be set, but not both. If this field is nil or empty,\nthe router will try to load destination features from the graph as a\nfallback."
         }
       }
     },

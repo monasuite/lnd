@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwallet/chainfee"
@@ -153,6 +155,19 @@ type ChainArbitratorConfig struct {
 	// OnionProcessor is used to decode onion payloads for on-chain
 	// resolution.
 	OnionProcessor OnionProcessor
+
+	// PaymentsExpirationGracePeriod indicates is a time window we let the
+	// other node to cancel an outgoing htlc that our node has initiated and
+	// has timed out.
+	PaymentsExpirationGracePeriod time.Duration
+
+	// IsForwardedHTLC checks for a given htlc, identified by channel id and
+	// htlcIndex, if it is a forwarded one.
+	IsForwardedHTLC func(chanID lnwire.ShortChannelID, htlcIndex uint64) bool
+
+	// Clock is the clock implementation that ChannelArbitrator uses.
+	// It is useful for testing.
+	Clock clock.Clock
 }
 
 // ChainArbitrator is a sub-system that oversees the on-chain resolution of all
@@ -269,8 +284,11 @@ func newActiveChannelArbitrator(channel *channeldb.OpenChannel,
 			return chanMachine.ForceClose()
 		},
 		MarkCommitmentBroadcasted: channel.MarkCommitmentBroadcasted,
-		MarkChannelClosed: func(summary *channeldb.ChannelCloseSummary) error {
-			if err := channel.CloseChannel(summary); err != nil {
+		MarkChannelClosed: func(summary *channeldb.ChannelCloseSummary,
+			statuses ...channeldb.ChannelStatus) error {
+
+			err := channel.CloseChannel(summary, statuses...)
+			if err != nil {
 				return err
 			}
 			c.cfg.NotifyClosedChannel(summary.ChanPoint)

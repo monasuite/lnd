@@ -607,8 +607,9 @@ func (c *chainWatcher) closeObserver(spendNtfn *chainntnfs.SpendEvent) {
 					c.cfg.chanState.FundingOutpoint)
 
 			} else {
-				log.Infof("ChannelPoint(%v) is tweakless, " +
-					"moving to sweep directly on chain")
+				log.Infof("ChannelPoint(%v) is tweakless, "+
+					"moving to sweep directly on chain",
+					c.cfg.chanState.FundingOutpoint)
 			}
 
 			// Since we don't have the commitment stored for this
@@ -984,7 +985,9 @@ func (c *chainWatcher) dispatchContractBreach(spendEvent *chainntnfs.SpendDetail
 		closeSummary.LastChanSyncMsg = chanSync
 	}
 
-	if err := c.cfg.chanState.CloseChannel(&closeSummary); err != nil {
+	if err := c.cfg.chanState.CloseChannel(
+		&closeSummary, channeldb.ChanStatusRemoteCloseInitiator,
+	); err != nil {
 		return err
 	}
 
