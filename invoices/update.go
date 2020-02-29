@@ -7,7 +7,7 @@ import (
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/record"
-)s
+)
 
 // invoiceUpdateCtx is an object that describes the context for the invoice
 // update to be carried out.

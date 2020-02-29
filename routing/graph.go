@@ -2,9 +2,9 @@ package routing
 
 import (
 	"github.com/coreos/bbolt"
-	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/lnwire"
-	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/routing/route"
 )
 
 // routingGraph is an abstract interface that provides information about nodes
