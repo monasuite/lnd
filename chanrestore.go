@@ -170,7 +170,7 @@ func (c *chanDBRestorer) RestoreChansFromSingles(backups ...chanbackup.Single) e
 		default:
 			// Worst case: We have no height hint and start at
 			// block 1. Should only happen for SCBs in regtest,
-			// simnet and litecoin.
+			// simnet and monacoin.
 			firstChanHeight = 1
 		}
 	}

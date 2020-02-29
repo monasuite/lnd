@@ -58,15 +58,16 @@ const (
 	// pending channels permitted per peer.
 	DefaultMaxPendingChannels = 1
 
-	defaultNoSeedBackup             = false
-	defaultTrickleDelay             = 90 * 1000
-	defaultChanStatusSampleInterval = time.Minute
-	defaultChanEnableTimeout        = 19 * time.Minute
-	defaultChanDisableTimeout       = 20 * time.Minute
-	defaultMaxLogFiles              = 3
-	defaultMaxLogFileSize           = 10
-	defaultMinBackoff               = time.Second
-	defaultMaxBackoff               = time.Hour
+	defaultNoSeedBackup                  = false
+	defaultPaymentsExpirationGracePeriod = time.Duration(0)
+	defaultTrickleDelay                  = 90 * 1000
+	defaultChanStatusSampleInterval      = time.Minute
+	defaultChanEnableTimeout             = 19 * time.Minute
+	defaultChanDisableTimeout            = 20 * time.Minute
+	defaultMaxLogFiles                   = 3
+	defaultMaxLogFileSize                = 10
+	defaultMinBackoff                    = time.Second
+	defaultMaxBackoff                    = time.Hour
 
 	defaultTorSOCKSPort            = 9050
 	defaultTorDNSHost              = "soa.nodes.lightning.directory"
@@ -232,21 +233,24 @@ type torConfig struct {
 type config struct {
 	ShowVersion bool `short:"V" long:"version" description:"Display version information and exit"`
 
-	LndDir          string   `long:"lnddir" description:"The base directory that contains lnd's data, logs, configuration file, etc."`
-	ConfigFile      string   `short:"C" long:"configfile" description:"Path to configuration file"`
-	DataDir         string   `short:"b" long:"datadir" description:"The directory to store lnd's data within"`
-	SyncFreelist    bool     `long:"sync-freelist" description:"Whether the databases used within lnd should sync their freelist to disk. This is disabled by default resulting in improved memory performance during operation, but with an increase in startup time."`
+	LndDir       string `long:"lnddir" description:"The base directory that contains lnd's data, logs, configuration file, etc."`
+	ConfigFile   string `short:"C" long:"configfile" description:"Path to configuration file"`
+	DataDir      string `short:"b" long:"datadir" description:"The directory to store lnd's data within"`
+	SyncFreelist bool   `long:"sync-freelist" description:"Whether the databases used within lnd should sync their freelist to disk. This is disabled by default resulting in improved memory performance during operation, but with an increase in startup time."`
+
 	TLSCertPath     string   `long:"tlscertpath" description:"Path to write the TLS certificate for lnd's RPC and REST services"`
 	TLSKeyPath      string   `long:"tlskeypath" description:"Path to write the TLS private key for lnd's RPC and REST services"`
 	TLSExtraIPs     []string `long:"tlsextraip" description:"Adds an extra ip to the generated certificate"`
 	TLSExtraDomains []string `long:"tlsextradomain" description:"Adds an extra domain to the generated certificate"`
-	NoMacaroons     bool     `long:"no-macaroons" description:"Disable macaroon authentication"`
-	AdminMacPath    string   `long:"adminmacaroonpath" description:"Path to write the admin macaroon for lnd's RPC and REST services if it doesn't exist"`
-	ReadMacPath     string   `long:"readonlymacaroonpath" description:"Path to write the read-only macaroon for lnd's RPC and REST services if it doesn't exist"`
-	InvoiceMacPath  string   `long:"invoicemacaroonpath" description:"Path to the invoice-only macaroon for lnd's RPC and REST services if it doesn't exist"`
-	LogDir          string   `long:"logdir" description:"Directory to log output."`
-	MaxLogFiles     int      `long:"maxlogfiles" description:"Maximum logfiles to keep (0 for no rotation)"`
-	MaxLogFileSize  int      `long:"maxlogfilesize" description:"Maximum logfile size in MB"`
+	TLSAutoRefresh  bool     `long:"tlsautorefresh" description:"Re-generate TLS certificate and key if the IPs or domains are changed"`
+
+	NoMacaroons    bool   `long:"no-macaroons" description:"Disable macaroon authentication"`
+	AdminMacPath   string `long:"adminmacaroonpath" description:"Path to write the admin macaroon for lnd's RPC and REST services if it doesn't exist"`
+	ReadMacPath    string `long:"readonlymacaroonpath" description:"Path to write the read-only macaroon for lnd's RPC and REST services if it doesn't exist"`
+	InvoiceMacPath string `long:"invoicemacaroonpath" description:"Path to the invoice-only macaroon for lnd's RPC and REST services if it doesn't exist"`
+	LogDir         string `long:"logdir" description:"Directory to log output."`
+	MaxLogFiles    int    `long:"maxlogfiles" description:"Maximum logfiles to keep (0 for no rotation)"`
+	MaxLogFileSize int    `long:"maxlogfilesize" description:"Maximum logfile size in MB"`
 
 	// We'll parse these 'raw' string arguments into real net.Addrs in the
 	// loadConfig function. We need to expose the 'raw' strings so the
@@ -298,10 +302,11 @@ type config struct {
 
 	NoSeedBackup bool `long:"noseedbackup" description:"If true, NO SEED WILL BE EXPOSED AND THE WALLET WILL BE ENCRYPTED USING THE DEFAULT PASSPHRASE -- EVER. THIS FLAG IS ONLY FOR TESTING AND IS BEING DEPRECATED."`
 
-	TrickleDelay             int           `long:"trickledelay" description:"Time in milliseconds between each release of announcements to the network"`
-	ChanEnableTimeout        time.Duration `long:"chan-enable-timeout" description:"The duration that a peer connection must be stable before attempting to send a channel update to reenable or cancel a pending disables of the peer's channels on the network (default: 19m)."`
-	ChanDisableTimeout       time.Duration `long:"chan-disable-timeout" description:"The duration that must elapse after first detecting that an already active channel is actually inactive and sending channel update disabling it to the network. The pending disable can be canceled if the peer reconnects and becomes stable for chan-enable-timeout before the disable update is sent. (default: 20m)"`
-	ChanStatusSampleInterval time.Duration `long:"chan-status-sample-interval" description:"The polling interval between attempts to detect if an active channel has become inactive due to its peer going offline. (default: 1m)"`
+	PaymentsExpirationGracePeriod time.Duration `long:"payments-expiration-grace-period" description:"A period to wait before force closing channels with outgoing htlcs that have timed-out and are a result of this node initiated payments."`
+	TrickleDelay                  int           `long:"trickledelay" description:"Time in milliseconds between each release of announcements to the network"`
+	ChanEnableTimeout             time.Duration `long:"chan-enable-timeout" description:"The duration that a peer connection must be stable before attempting to send a channel update to reenable or cancel a pending disables of the peer's channels on the network (default: 19m)."`
+	ChanDisableTimeout            time.Duration `long:"chan-disable-timeout" description:"The duration that must elapse after first detecting that an already active channel is actually inactive and sending channel update disabling it to the network. The pending disable can be canceled if the peer reconnects and becomes stable for chan-enable-timeout before the disable update is sent. (default: 20m)"`
+	ChanStatusSampleInterval      time.Duration `long:"chan-status-sample-interval" description:"The polling interval between attempts to detect if an active channel has become inactive due to its peer going offline. (default: 1m)"`
 
 	Alias       string `long:"alias" description:"The node alias. Used as a moniker by peers and intelligence services"`
 	Color       string `long:"color" description:"The color of the node in hex format (i.e. '#3399FF'). Used to customize node appearance in intelligence services"`
@@ -341,6 +346,8 @@ type config struct {
 	Watchtower *lncfg.Watchtower `group:"watchtower" namespace:"watchtower"`
 
 	LegacyProtocol *lncfg.LegacyProtocol `group:"legacyprotocol" namespace:"legacyprotocol"`
+
+	AllowCircularRoute bool `long:"allow-circular-route" description:"If true, our node will allow htlc forwards that arrive and depart on the same channel."`
 }
 
 // loadConfig initializes and parses the config using a config file and command
@@ -416,15 +423,16 @@ func loadConfig() (*config, error) {
 				"preferential": 1.0,
 			},
 		},
-		TrickleDelay:             defaultTrickleDelay,
-		ChanStatusSampleInterval: defaultChanStatusSampleInterval,
-		ChanEnableTimeout:        defaultChanEnableTimeout,
-		ChanDisableTimeout:       defaultChanDisableTimeout,
-		Alias:                    defaultAlias,
-		Color:                    defaultColor,
-		MinChanSize:              int64(minChanFundingSize),
-		NumGraphSyncPeers:        defaultMinPeers,
-		HistoricalSyncInterval:   discovery.DefaultHistoricalSyncInterval,
+		PaymentsExpirationGracePeriod: defaultPaymentsExpirationGracePeriod,
+		TrickleDelay:                  defaultTrickleDelay,
+		ChanStatusSampleInterval:      defaultChanStatusSampleInterval,
+		ChanEnableTimeout:             defaultChanEnableTimeout,
+		ChanDisableTimeout:            defaultChanDisableTimeout,
+		Alias:                         defaultAlias,
+		Color:                         defaultColor,
+		MinChanSize:                   int64(minChanFundingSize),
+		NumGraphSyncPeers:             defaultMinPeers,
+		HistoricalSyncInterval:        discovery.DefaultHistoricalSyncInterval,
 		Tor: &torConfig{
 			SOCKS:   defaultTorSOCKS,
 			DNS:     defaultTorDNS,

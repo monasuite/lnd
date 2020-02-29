@@ -39,6 +39,7 @@ import (
 
 const (
 	testStartingHeight = 100
+	testDefaultDelta   = 6
 )
 
 // concurrentTester is a thread-safe wrapper around the Fatalf method of a
@@ -1749,6 +1750,7 @@ func newSingleLinkTestHarness(chanAmt, chanReserve btcutil.Amount) (
 		MaxFeeAllocation:      DefaultMaxLinkFeeAllocation,
 		NotifyActiveChannel:   func(wire.OutPoint) {},
 		NotifyInactiveChannel: func(wire.OutPoint) {},
+		HtlcNotifier:          aliceSwitch.cfg.HtlcNotifier,
 	}
 
 	aliceLink := NewChannelLink(aliceCfg, aliceLc.channel)
@@ -1981,8 +1983,11 @@ func TestChannelLinkBandwidthConsistency(t *testing.T) {
 	)
 
 	// The starting bandwidth of the channel should be exactly the amount
-	// that we created the channel between her and Bob.
-	expectedBandwidth := lnwire.NewMSatFromSatoshis(chanAmt - defaultCommitFee)
+	// that we created the channel between her and Bob, minus the
+	// commitment fee and fee for adding an additional HTLC.
+	expectedBandwidth := lnwire.NewMSatFromSatoshis(
+		chanAmt-defaultCommitFee,
+	) - htlcFee
 	assertLinkBandwidth(t, aliceLink, expectedBandwidth)
 
 	// Next, we'll create an HTLC worth 1 BTC, and send it into the link as
@@ -2655,8 +2660,10 @@ func TestChannelLinkTrimCircuitsPending(t *testing.T) {
 
 	// The starting bandwidth of the channel should be exactly the amount
 	// that we created the channel between her and Bob, minus the commitment
-	// fee.
-	expectedBandwidth := lnwire.NewMSatFromSatoshis(chanAmt - defaultCommitFee)
+	// fee and fee of adding an HTLC.
+	expectedBandwidth := lnwire.NewMSatFromSatoshis(
+		chanAmt-defaultCommitFee,
+	) - htlcFee
 	assertLinkBandwidth(t, alice.link, expectedBandwidth)
 
 	// Capture Alice's starting bandwidth to perform later, relative
@@ -2934,8 +2941,10 @@ func TestChannelLinkTrimCircuitsNoCommit(t *testing.T) {
 
 	// The starting bandwidth of the channel should be exactly the amount
 	// that we created the channel between her and Bob, minus the commitment
-	// fee.
-	expectedBandwidth := lnwire.NewMSatFromSatoshis(chanAmt - defaultCommitFee)
+	// fee and fee for adding an additional HTLC.
+	expectedBandwidth := lnwire.NewMSatFromSatoshis(
+		chanAmt-defaultCommitFee,
+	) - htlcFee
 	assertLinkBandwidth(t, alice.link, expectedBandwidth)
 
 	// Capture Alice's starting bandwidth to perform later, relative
@@ -3190,9 +3199,9 @@ func TestChannelLinkBandwidthChanReserve(t *testing.T) {
 
 	// The starting bandwidth of the channel should be exactly the amount
 	// that we created the channel between her and Bob, minus the channel
-	// reserve.
+	// reserve, commitment fee and fee for adding an additional HTLC.
 	expectedBandwidth := lnwire.NewMSatFromSatoshis(
-		chanAmt - defaultCommitFee - chanReserve)
+		chanAmt-defaultCommitFee-chanReserve) - htlcFee
 	assertLinkBandwidth(t, aliceLink, expectedBandwidth)
 
 	// Next, we'll create an HTLC worth 3 BTC, and send it into the link as
@@ -4312,6 +4321,7 @@ func (h *persistentLinkHarness) restartLink(
 		MaxFeeAllocation:      DefaultMaxLinkFeeAllocation,
 		NotifyActiveChannel:   func(wire.OutPoint) {},
 		NotifyInactiveChannel: func(wire.OutPoint) {},
+		HtlcNotifier:          aliceSwitch.cfg.HtlcNotifier,
 	}
 
 	aliceLink := NewChannelLink(aliceCfg, aliceChannel)
@@ -5522,6 +5532,7 @@ func TestCheckHtlcForward(t *testing.T) {
 			},
 			FetchLastChannelUpdate: fetchLastChannelUpdate,
 			MaxOutgoingCltvExpiry:  DefaultMaxOutgoingCltvExpiry,
+			HtlcNotifier:           &mockHTLCNotifier{},
 		},
 		log:           log,
 		channel:       testChannel.channel,

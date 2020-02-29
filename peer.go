@@ -636,6 +636,7 @@ func (p *peer) addLink(chanPoint *wire.OutPoint,
 		MaxFeeAllocation:        cfg.MaxChannelFeeAllocation,
 		NotifyActiveChannel:     p.server.channelNotifier.NotifyActiveChannelEvent,
 		NotifyInactiveChannel:   p.server.channelNotifier.NotifyInactiveChannelEvent,
+		HtlcNotifier:            p.server.htlcNotifier,
 	}
 
 	link := htlcswitch.NewChannelLink(linkCfg, lnChan)
@@ -2118,6 +2119,7 @@ func (p *peer) fetchActiveChanCloser(chanID lnwire.ChannelID) (*channelCloser, e
 			feePerKw,
 			uint32(startingHeight),
 			nil,
+			false,
 		)
 		p.activeChanCloses[chanID] = chanCloser
 	}
@@ -2230,6 +2232,7 @@ func (p *peer) handleLocalCloseReq(req *htlcswitch.ChanClose) {
 			req.TargetFeePerKw,
 			uint32(startingHeight),
 			req,
+			true,
 		)
 		p.activeChanCloses[chanID] = chanCloser
 

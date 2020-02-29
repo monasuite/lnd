@@ -17,6 +17,7 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/input"
@@ -360,6 +361,12 @@ func createTestPeer(notifier chainntnfs.ChainNotifier, publTx chan *wire.MsgTx,
 		contractcourt.ChainArbitratorConfig{
 			Notifier: notifier,
 			ChainIO:  chainIO,
+			IsForwardedHTLC: func(chanID lnwire.ShortChannelID,
+				htlcIndex uint64) bool {
+
+				return true
+			},
+			Clock: clock.NewDefaultClock(),
 		}, dbAlice,
 	)
 	chainArb.WatchNewChannel(aliceChannelState)

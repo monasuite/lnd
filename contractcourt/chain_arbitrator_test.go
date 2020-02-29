@@ -9,6 +9,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/lnwallet"
 )
 
@@ -61,12 +62,12 @@ func TestChainArbitratorRepublishCloses(t *testing.T) {
 	for i := 0; i < numChans/2; i++ {
 		closeTx := channels[i].FundingTxn.Copy()
 		closeTx.TxIn[0].PreviousOutPoint = channels[i].FundingOutpoint
-		err := channels[i].MarkCommitmentBroadcasted(closeTx)
+		err := channels[i].MarkCommitmentBroadcasted(closeTx, true)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		err = channels[i].MarkCoopBroadcasted(closeTx)
+		err = channels[i].MarkCoopBroadcasted(closeTx, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,6 +84,7 @@ func TestChainArbitratorRepublishCloses(t *testing.T) {
 			published[tx.TxHash()]++
 			return nil
 		},
+		Clock: clock.NewDefaultClock(),
 	}
 	chainArb := NewChainArbitrator(
 		chainArbCfg, db,
@@ -171,6 +173,7 @@ func TestResolveContract(t *testing.T) {
 		PublishTx: func(tx *wire.MsgTx) error {
 			return nil
 		},
+		Clock: clock.NewDefaultClock(),
 	}
 	chainArb := NewChainArbitrator(
 		chainArbCfg, db,
