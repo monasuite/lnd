@@ -351,9 +351,8 @@ func isOurCommitment(localChanCfg, remoteChanCfg channeldb.ChannelConfig,
 
 	// With the keys derived, we'll construct the remote script that'll be
 	// present if they have a non-dust balance on the commitment.
-	remoteDelay := uint32(remoteChanCfg.CsvDelay)
-	remoteScript, err := lnwallet.CommitScriptToRemote(
-		chanType, remoteDelay, commitKeyRing.ToRemoteKey,
+	remoteScript, _, err := lnwallet.CommitScriptToRemote(
+		chanType, commitKeyRing.ToRemoteKey,
 	)
 	if err != nil {
 		return false, err
@@ -607,8 +606,9 @@ func (c *chainWatcher) closeObserver(spendNtfn *chainntnfs.SpendEvent) {
 					c.cfg.chanState.FundingOutpoint)
 
 			} else {
-				log.Infof("ChannelPoint(%v) is tweakless, " +
-					"moving to sweep directly on chain")
+				log.Infof("ChannelPoint(%v) is tweakless, "+
+					"moving to sweep directly on chain",
+					c.cfg.chanState.FundingOutpoint)
 			}
 
 			// Since we don't have the commitment stored for this
@@ -984,7 +984,9 @@ func (c *chainWatcher) dispatchContractBreach(spendEvent *chainntnfs.SpendDetail
 		closeSummary.LastChanSyncMsg = chanSync
 	}
 
-	if err := c.cfg.chanState.CloseChannel(&closeSummary); err != nil {
+	if err := c.cfg.chanState.CloseChannel(
+		&closeSummary, channeldb.ChanStatusRemoteCloseInitiator,
+	); err != nil {
 		return err
 	}
 

@@ -12,12 +12,12 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/coreos/bbolt"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/go-errors/errors"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chanacceptor"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/discovery"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/input"
@@ -366,7 +366,7 @@ type fundingConfig struct {
 
 	// NotifyPendingOpenChannelEvent informs the ChannelNotifier when channels
 	// enter a pending state.
-	NotifyPendingOpenChannelEvent func(wire.OutPoint)
+	NotifyPendingOpenChannelEvent func(wire.OutPoint, *channeldb.OpenChannel)
 }
 
 // fundingManager acts as an orchestrator/bridge between the wallet's
@@ -1009,7 +1009,11 @@ func (f *fundingManager) advancePendingChannelState(
 			LocalChanConfig:         ch.LocalChanCfg,
 		}
 
-		if err := ch.CloseChannel(closeInfo); err != nil {
+		// Close the channel with us as the initiator because we are
+		// timing the channel out.
+		if err := ch.CloseChannel(
+			closeInfo, channeldb.ChanStatusLocalCloseInitiator,
+		); err != nil {
 			return fmt.Errorf("failed closing channel "+
 				"%v: %v", ch.FundingOutpoint, err)
 		}
@@ -1100,6 +1104,42 @@ func (f *fundingManager) processFundingOpen(msg *lnwire.OpenChannel,
 	case <-f.quit:
 		return
 	}
+}
+
+// commitmentType returns the commitment type to use for the channel, based on
+// the features the two peers have available.
+func commitmentType(localFeatures,
+	remoteFeatures *lnwire.FeatureVector) lnwallet.CommitmentType {
+
+	// If both peers are signalling support for anchor commitments, this
+	// implicitly mean we'll create the channel of this type. Note that
+	// this also enables tweakless commitments, as anchor commitments are
+	// always tweakless.
+	localAnchors := localFeatures.HasFeature(
+		lnwire.AnchorsOptional,
+	)
+	remoteAnchors := remoteFeatures.HasFeature(
+		lnwire.AnchorsOptional,
+	)
+	if localAnchors && remoteAnchors {
+		return lnwallet.CommitmentTypeAnchors
+	}
+
+	localTweakless := localFeatures.HasFeature(
+		lnwire.StaticRemoteKeyOptional,
+	)
+	remoteTweakless := remoteFeatures.HasFeature(
+		lnwire.StaticRemoteKeyOptional,
+	)
+
+	// If both nodes are signaling the proper feature bit for tweakless
+	// copmmitments, we'll use that.
+	if localTweakless && remoteTweakless {
+		return lnwallet.CommitmentTypeTweakless
+	}
+
+	// Otherwise we'll fall back to the legacy type.
+	return lnwallet.CommitmentTypeLegacy
 }
 
 // handleFundingOpen creates an initial 'ChannelReservation' within the wallet,
@@ -1224,13 +1264,9 @@ func (f *fundingManager) handleFundingOpen(fmsg *fundingOpenMsg) {
 	// negotiated the new tweakless commitment format. This is only the
 	// case if *both* us and the remote peer are signaling the proper
 	// feature bit.
-	localTweakless := fmsg.peer.LocalFeatures().HasFeature(
-		lnwire.StaticRemoteKeyOptional,
+	commitType := commitmentType(
+		fmsg.peer.LocalFeatures(), fmsg.peer.RemoteFeatures(),
 	)
-	remoteTweakless := fmsg.peer.RemoteFeatures().HasFeature(
-		lnwire.StaticRemoteKeyOptional,
-	)
-	tweaklessCommitment := localTweakless && remoteTweakless
 	chainHash := chainhash.Hash(msg.ChainHash)
 	req := &lnwallet.InitFundingReserveMsg{
 		ChainHash:        &chainHash,
@@ -1244,7 +1280,7 @@ func (f *fundingManager) handleFundingOpen(fmsg *fundingOpenMsg) {
 		PushMSat:         msg.PushAmount,
 		Flags:            msg.ChannelFlags,
 		MinConfs:         1,
-		Tweakless:        tweaklessCommitment,
+		CommitType:       commitType,
 	}
 
 	reservation, err := f.cfg.Wallet.InitChannelReservation(req)
@@ -1303,9 +1339,9 @@ func (f *fundingManager) handleFundingOpen(fmsg *fundingOpenMsg) {
 	reservation.SetOurUpfrontShutdown(shutdown)
 
 	fndgLog.Infof("Requiring %v confirmations for pendingChan(%x): "+
-		"amt=%v, push_amt=%v, tweakless=%v, upfrontShutdown=%x", numConfsReq,
+		"amt=%v, push_amt=%v, committype=%v, upfrontShutdown=%x", numConfsReq,
 		fmsg.msg.PendingChannelID, amt, msg.PushAmount,
-		tweaklessCommitment, msg.UpfrontShutdownScript)
+		commitType, msg.UpfrontShutdownScript)
 
 	// Generate our required constraints for the remote party.
 	remoteCsvDelay := f.cfg.RequiredRemoteDelay(amt)
@@ -1639,7 +1675,11 @@ func (f *fundingManager) handleFundingCreated(fmsg *fundingCreatedMsg) {
 			LocalChanConfig:         completeChan.LocalChanCfg,
 		}
 
-		if err := completeChan.CloseChannel(closeInfo); err != nil {
+		// Close the channel with us as the initiator because we are
+		// deciding to exit the funding flow due to an internal error.
+		if err := completeChan.CloseChannel(
+			closeInfo, channeldb.ChanStatusLocalCloseInitiator,
+		); err != nil {
 			fndgLog.Errorf("Failed closing channel %v: %v",
 				completeChan.FundingOutpoint, err)
 		}
@@ -1697,7 +1737,7 @@ func (f *fundingManager) handleFundingCreated(fmsg *fundingCreatedMsg) {
 
 	// Inform the ChannelNotifier that the channel has entered
 	// pending open state.
-	f.cfg.NotifyPendingOpenChannelEvent(fundingOut)
+	f.cfg.NotifyPendingOpenChannelEvent(fundingOut, completeChan)
 
 	// At this point we have sent our last funding message to the
 	// initiating peer before the funding transaction will be broadcast.
@@ -1845,7 +1885,7 @@ func (f *fundingManager) handleFundingSigned(fmsg *fundingSignedMsg) {
 	case resCtx.updates <- upd:
 		// Inform the ChannelNotifier that the channel has entered
 		// pending open state.
-		f.cfg.NotifyPendingOpenChannelEvent(*fundingPoint)
+		f.cfg.NotifyPendingOpenChannelEvent(*fundingPoint, completeChan)
 	case <-f.quit:
 		return
 	}
@@ -2896,13 +2936,9 @@ func (f *fundingManager) handleInitFundingMsg(msg *initFundingMsg) {
 	// negotiated the new tweakless commitment format. This is only the
 	// case if *both* us and the remote peer are signaling the proper
 	// feature bit.
-	localTweakless := msg.peer.LocalFeatures().HasFeature(
-		lnwire.StaticRemoteKeyOptional,
+	commitType := commitmentType(
+		msg.peer.LocalFeatures(), msg.peer.RemoteFeatures(),
 	)
-	remoteTweakless := msg.peer.RemoteFeatures().HasFeature(
-		lnwire.StaticRemoteKeyOptional,
-	)
-	tweaklessCommitment := localTweakless && remoteTweakless
 	req := &lnwallet.InitFundingReserveMsg{
 		ChainHash:        &msg.chainHash,
 		PendingChanID:    chanID,
@@ -2916,7 +2952,7 @@ func (f *fundingManager) handleInitFundingMsg(msg *initFundingMsg) {
 		PushMSat:         msg.pushAmt,
 		Flags:            channelFlags,
 		MinConfs:         msg.minConfs,
-		Tweakless:        tweaklessCommitment,
+		CommitType:       commitType,
 		ChanFunder:       msg.chanFunder,
 	}
 
@@ -3004,7 +3040,7 @@ func (f *fundingManager) handleInitFundingMsg(msg *initFundingMsg) {
 	maxHtlcs := f.cfg.RequiredRemoteMaxHTLCs(capacity)
 
 	fndgLog.Infof("Starting funding workflow with %v for pending_id(%x), "+
-		"tweakless=%v", msg.peer.Address(), chanID, tweaklessCommitment)
+		"committype=%v", msg.peer.Address(), chanID, commitType)
 
 	fundingOpen := lnwire.OpenChannel{
 		ChainHash:             *f.cfg.Wallet.Cfg.NetParams.GenesisHash,
@@ -3251,9 +3287,9 @@ func copyPubKey(pub *btcec.PublicKey) *btcec.PublicKey {
 // chanPoint to the channelOpeningStateBucket.
 func (f *fundingManager) saveChannelOpeningState(chanPoint *wire.OutPoint,
 	state channelOpeningState, shortChanID *lnwire.ShortChannelID) error {
-	return f.cfg.Wallet.Cfg.Database.Update(func(tx *bbolt.Tx) error {
+	return kvdb.Update(f.cfg.Wallet.Cfg.Database, func(tx kvdb.RwTx) error {
 
-		bucket, err := tx.CreateBucketIfNotExists(channelOpeningStateBucket)
+		bucket, err := tx.CreateTopLevelBucket(channelOpeningStateBucket)
 		if err != nil {
 			return err
 		}
@@ -3281,9 +3317,9 @@ func (f *fundingManager) getChannelOpeningState(chanPoint *wire.OutPoint) (
 
 	var state channelOpeningState
 	var shortChanID lnwire.ShortChannelID
-	err := f.cfg.Wallet.Cfg.Database.View(func(tx *bbolt.Tx) error {
+	err := kvdb.View(f.cfg.Wallet.Cfg.Database, func(tx kvdb.ReadTx) error {
 
-		bucket := tx.Bucket(channelOpeningStateBucket)
+		bucket := tx.ReadBucket(channelOpeningStateBucket)
 		if bucket == nil {
 			// If the bucket does not exist, it means we never added
 			//  a channel to the db, so return ErrChannelNotFound.
@@ -3313,8 +3349,8 @@ func (f *fundingManager) getChannelOpeningState(chanPoint *wire.OutPoint) (
 
 // deleteChannelOpeningState removes any state for chanPoint from the database.
 func (f *fundingManager) deleteChannelOpeningState(chanPoint *wire.OutPoint) error {
-	return f.cfg.Wallet.Cfg.Database.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(channelOpeningStateBucket)
+	return kvdb.Update(f.cfg.Wallet.Cfg.Database, func(tx kvdb.RwTx) error {
+		bucket := tx.ReadWriteBucket(channelOpeningStateBucket)
 		if bucket == nil {
 			return fmt.Errorf("Bucket not found")
 		}

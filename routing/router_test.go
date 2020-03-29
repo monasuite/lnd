@@ -19,6 +19,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwire"
@@ -96,7 +97,7 @@ func createTestCtxFromGraphInstance(startingHeight uint32, graphInstance *testGr
 	}
 
 	mc, err := NewMissionControl(
-		graphInstance.graph.Database().DB,
+		graphInstance.graph.Database(),
 		mcConfig,
 	)
 	if err != nil {
@@ -131,6 +132,7 @@ func createTestCtxFromGraphInstance(startingHeight uint32, graphInstance *testGr
 			return next, nil
 		},
 		PathFindingConfig: pathFindingConfig,
+		Clock:             clock.NewTestClock(time.Unix(1, 0)),
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create router %v", err)
@@ -2967,6 +2969,7 @@ func TestRouterPaymentStateMachine(t *testing.T) {
 				next := atomic.AddUint64(&uniquePaymentID, 1)
 				return next, nil
 			},
+			Clock: clock.NewTestClock(time.Unix(1, 0)),
 		})
 		if err != nil {
 			t.Fatalf("unable to create router %v", err)

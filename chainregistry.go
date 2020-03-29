@@ -38,7 +38,7 @@ import (
 const (
 	// defaultBitcoinMinHTLCMSat is the default smallest value htlc this
 	// node will accept. This value is proposed in the channel open sequence
-	// and cannot be changed during the life of the channel. It is zero by
+	// and cannot be changed during the life of the channel. It is 1 msat by
 	// default to allow maximum flexibility in deciding what size payments
 	// to forward.
 	//
@@ -342,7 +342,8 @@ func newChainControlFromConfig(cfg *config, chanDB *channeldb.DB,
 			HTTPPostMode:         true,
 		}
 		if cfg.Bitcoin.Active && !cfg.Bitcoin.RegTest {
-			ltndLog.Infof("Initializing bitcoind backed fee estimator")
+			ltndLog.Infof("Initializing bitcoind backed fee estimator in "+
+				"%s mode", bitcoindMode.EstimateMode)
 
 			// Finally, we'll re-initialize the fee estimator, as
 			// if we're using bitcoind as a backend, then we can
@@ -350,7 +351,8 @@ func newChainControlFromConfig(cfg *config, chanDB *channeldb.DB,
 			// coded value.
 			fallBackFeeRate := chainfee.SatPerKVByte(25 * 1000)
 			cc.feeEstimator, err = chainfee.NewBitcoindEstimator(
-				*rpcConfig, fallBackFeeRate.FeePerKWeight(),
+				*rpcConfig, bitcoindMode.EstimateMode,
+				fallBackFeeRate.FeePerKWeight(),
 			)
 			if err != nil {
 				return nil, err
@@ -359,7 +361,8 @@ func newChainControlFromConfig(cfg *config, chanDB *channeldb.DB,
 				return nil, err
 			}
 		} else if cfg.Monacoin.Active && !cfg.Monacoin.RegTest {
-			ltndLog.Infof("Initializing monacoind backed fee estimator")
+			ltndLog.Infof("Initializing monacoind backed fee estimator in "+
+				"%s mode", bitcoindMode.EstimateMode)
 
 			// Finally, we'll re-initialize the fee estimator, as
 			// if we're using monacoind as a backend, then we can
@@ -367,7 +370,8 @@ func newChainControlFromConfig(cfg *config, chanDB *channeldb.DB,
 			// coded value.
 			fallBackFeeRate := chainfee.SatPerKVByte(25 * 1000)
 			cc.feeEstimator, err = chainfee.NewBitcoindEstimator(
-				*rpcConfig, fallBackFeeRate.FeePerKWeight(),
+				*rpcConfig, bitcoindMode.EstimateMode,
+				fallBackFeeRate.FeePerKWeight(),
 			)
 			if err != nil {
 				return nil, err

@@ -15,6 +15,39 @@ import (
 	"github.com/monasuite/lnd/lnwire"
 )
 
+// CommitmentType is an enum indicating the commitment type we should use for
+// the channel we are opening.
+type CommitmentType int
+
+const (
+	// CommitmentTypeLegacy is the legacy commitment format with a tweaked
+	// to_remote key.
+	CommitmentTypeLegacy = iota
+
+	// CommitmentTypeTweakless is a newer commitment format where the
+	// to_remote key is static.
+	CommitmentTypeTweakless
+
+	// CommitmentTypeAnchors is a commitment type that is tweakless, and
+	// has extra anchor ouputs in order to bump the fee of the commitment
+	// transaction.
+	CommitmentTypeAnchors
+)
+
+// String returns the name of the CommitmentType.
+func (c CommitmentType) String() string {
+	switch c {
+	case CommitmentTypeLegacy:
+		return "legacy"
+	case CommitmentTypeTweakless:
+		return "tweakless"
+	case CommitmentTypeAnchors:
+		return "anchors"
+	default:
+		return "invalid"
+	}
+}
+
 // ChannelContribution is the primary constituent of the funding workflow
 // within lnwallet. Each side first exchanges their respective contributions
 // along with channel specific parameters like the min fee/KB. Once
@@ -136,9 +169,9 @@ type ChannelReservation struct {
 func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 	commitFeePerKw chainfee.SatPerKWeight, wallet *LightningWallet,
 	id uint64, pushMSat lnwire.MilliSatoshi, chainHash *chainhash.Hash,
-	flags lnwire.FundingFlag, tweaklessCommit bool,
+	flags lnwire.FundingFlag, commitType CommitmentType,
 	fundingAssembler chanfunding.Assembler,
-	pendingChanID [32]byte) (*ChannelReservation, error) {
+	pendingChanID [32]byte, thawHeight uint32) (*ChannelReservation, error) {
 
 	var (
 		ourBalance   lnwire.MilliSatoshi
@@ -146,12 +179,25 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 		initiator    bool
 	)
 
-	commitFee := commitFeePerKw.FeeForWeight(input.CommitWeight)
+	// Based on the channel type, we determine the initial commit weight
+	// and fee.
+	commitWeight := int64(input.CommitWeight)
+	if commitType == CommitmentTypeAnchors {
+		commitWeight = input.AnchorCommitWeight
+	}
+	commitFee := commitFeePerKw.FeeForWeight(commitWeight)
+
 	localFundingMSat := lnwire.NewMSatFromSatoshis(localFundingAmt)
 	// TODO(halseth): make method take remote funding amount directly
 	// instead of inferring it from capacity and local amt.
 	capacityMSat := lnwire.NewMSatFromSatoshis(capacity)
+
+	// The total fee paid by the initiator will be the commitment fee in
+	// addition to the two anchor outputs.
 	feeMSat := lnwire.NewMSatFromSatoshis(commitFee)
+	if commitType == CommitmentTypeAnchors {
+		feeMSat += 2 * lnwire.NewMSatFromSatoshis(anchorSize)
+	}
 
 	// If we're the responder to a single-funder reservation, then we have
 	// no initial balance in the channel unless the remote party is pushing
@@ -213,6 +259,16 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 		)
 	}
 
+	// Similarly we ensure their balance is reasonable if we are not the
+	// initiator.
+	if !initiator && theirBalance.ToSatoshis() <= 2*DefaultDustLimit() {
+		return nil, ErrFunderBalanceDust(
+			int64(commitFee),
+			int64(theirBalance.ToSatoshis()),
+			int64(2*DefaultDustLimit()),
+		)
+	}
+
 	// Next we'll set the channel type based on what we can ascertain about
 	// the balances/push amount within the channel.
 	var chanType channeldb.ChannelType
@@ -221,7 +277,11 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 	// non-zero push amt (there's no pushing for dual funder), then this is
 	// a single-funder channel.
 	if ourBalance == 0 || theirBalance == 0 || pushMSat != 0 {
-		if tweaklessCommit {
+		// Both the tweakless type and the anchor type is tweakless,
+		// hence set the bit.
+		if commitType == CommitmentTypeTweakless ||
+			commitType == CommitmentTypeAnchors {
+
 			chanType |= channeldb.SingleFunderTweaklessBit
 		} else {
 			chanType |= channeldb.SingleFunderBit
@@ -239,6 +299,17 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 		// technically the "initiator"
 		initiator = false
 		chanType |= channeldb.DualFunderBit
+	}
+
+	// We are adding anchor outputs to our commitment.
+	if commitType == CommitmentTypeAnchors {
+		chanType |= channeldb.AnchorOutputsBit
+	}
+
+	// If the channel is meant to be frozen, then we'll set the frozen bit
+	// now so once the channel is open, it can be interpreted properly.
+	if thawHeight != 0 {
+		chanType |= channeldb.FrozenBit
 	}
 
 	return &ChannelReservation{
@@ -269,7 +340,8 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 				FeePerKw:      btcutil.Amount(commitFeePerKw),
 				CommitFee:     commitFee,
 			},
-			Db: wallet.Cfg.Database,
+			ThawHeight: thawHeight,
+			Db:         wallet.Cfg.Database,
 		},
 		pushMSat:      pushMSat,
 		pendingChanID: pendingChanID,

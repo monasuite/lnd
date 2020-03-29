@@ -10,11 +10,11 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/coreos/bbolt"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/lntypes"
@@ -44,11 +44,6 @@ var (
 	// ErrDuplicateAdd signals that the ADD htlc was already forwarded
 	// through the switch and is locked into another commitment txn.
 	ErrDuplicateAdd = errors.New("duplicate add HTLC detected")
-
-	// ErrIncompleteForward is used when an htlc was already forwarded
-	// through the switch, but did not get locked into another commitment
-	// txn.
-	ErrIncompleteForward = errors.New("incomplete forward detected")
 
 	// ErrUnknownErrorDecryptor signals that we were unable to locate the
 	// error decryptor for this payment. This is likely due to restarting
@@ -155,6 +150,10 @@ type Config struct {
 	// the switch when a new block has arrived.
 	Notifier chainntnfs.ChainNotifier
 
+	// HtlcNotifier is an instance of a htlcNotifier which we will pipe htlc
+	// events through.
+	HtlcNotifier htlcNotifier
+
 	// FwdEventTicker is a signal that instructs the htlcswitch to flush any
 	// pending forwarding events.
 	FwdEventTicker ticker.Ticker
@@ -166,6 +165,10 @@ type Config struct {
 	// AckEventTicker is a signal instructing the htlcswitch to ack any settle
 	// fails in forwarding packages.
 	AckEventTicker ticker.Ticker
+
+	// AllowCircularRoute is true if the user has configured their node to
+	// allow forwards that arrive and depart our node over the same channel.
+	AllowCircularRoute bool
 
 	// RejectHTLC is a flag that instructs the htlcswitch to reject any
 	// HTLCs that are not from the source hop.
@@ -460,6 +463,18 @@ func (s *Switch) UpdateForwardingPolicies(
 	s.indexMtx.RUnlock()
 }
 
+// IsForwardedHTLC checks for a given channel and htlc index if it is related
+// to an opened circuit that represents a forwarded payment.
+func (s *Switch) IsForwardedHTLC(chanID lnwire.ShortChannelID,
+	htlcIndex uint64) bool {
+
+	circuit := s.circuits.LookupOpenCircuit(channeldb.CircuitKey{
+		ChanID: chanID,
+		HtlcID: htlcIndex,
+	})
+	return circuit != nil && circuit.Incoming.ChanID != hop.Source
+}
+
 // forward is used in order to find next channel link and apply htlc update.
 // Also this function is used by channel links itself in order to forward the
 // update after it has been included in the channel.
@@ -492,9 +507,12 @@ func (s *Switch) forward(packet *htlcPacket) error {
 			} else {
 				failure = lnwire.NewTemporaryChannelFailure(update)
 			}
-			addErr := ErrIncompleteForward
 
-			return s.failAddPacket(packet, failure, addErr)
+			linkError := NewDetailedLinkError(
+				failure, OutgoingFailureIncompleteForward,
+			)
+
+			return s.failAddPacket(packet, linkError)
 		}
 
 		packet.circuit = circuit
@@ -643,14 +661,14 @@ func (s *Switch) ForwardPackets(linkQuit chan struct{},
 		} else {
 			failure = lnwire.NewTemporaryChannelFailure(update)
 		}
+		linkError := NewDetailedLinkError(
+			failure, OutgoingFailureIncompleteForward,
+		)
 
 		for _, packet := range failedPackets {
-			addErr := errors.New("failing packet after " +
-				"detecting incomplete forward")
-
 			// We don't handle the error here since this method
 			// always returns an error.
-			s.failAddPacket(packet, failure, addErr)
+			_ = s.failAddPacket(packet, linkError)
 		}
 	}
 
@@ -750,38 +768,23 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 	// User have created the htlc update therefore we should find the
 	// appropriate channel link and send the payment over this link.
 	if htlc, ok := pkt.htlc.(*lnwire.UpdateAddHTLC); ok {
-		// Try to find links by node destination.
-		s.indexMtx.RLock()
-		link, err := s.getLinkByShortID(pkt.outgoingChanID)
-		s.indexMtx.RUnlock()
+		link, err := s.handleLocalAddHTLC(pkt, htlc)
 		if err != nil {
-			log.Errorf("Link %v not found", pkt.outgoingChanID)
-			return NewLinkError(&lnwire.FailUnknownNextPeer{})
-		}
-
-		if !link.EligibleToForward() {
-			log.Errorf("Link %v is not available to forward",
-				pkt.outgoingChanID)
-
-			// The update does not need to be populated as the error
-			// will be returned back to the router.
-			return NewDetailedLinkError(
-				lnwire.NewTemporaryChannelFailure(nil),
-				FailureDetailLinkNotEligible,
+			// Notify the htlc notifier of a link failure on our
+			// outgoing link. Incoming timelock/amount values are
+			// not set because they are not present for local sends.
+			s.cfg.HtlcNotifier.NotifyLinkFailEvent(
+				newHtlcKey(pkt),
+				HtlcInfo{
+					OutgoingTimeLock: htlc.Expiry,
+					OutgoingAmt:      htlc.Amount,
+				},
+				HtlcEventTypeSend,
+				err,
+				false,
 			)
-		}
 
-		// Ensure that the htlc satisfies the outgoing channel policy.
-		currentHeight := atomic.LoadUint32(&s.bestHeight)
-		htlcErr := link.CheckHtlcTransit(
-			htlc.PaymentHash,
-			htlc.Amount,
-			htlc.Expiry, currentHeight,
-		)
-		if htlcErr != nil {
-			log.Errorf("Link %v policy for local forward not "+
-				"satisfied", pkt.outgoingChanID)
-			return htlcErr
+			return err
 		}
 
 		return link.HandleSwitchPacket(pkt)
@@ -791,6 +794,47 @@ func (s *Switch) handleLocalDispatch(pkt *htlcPacket) error {
 	go s.handleLocalResponse(pkt)
 
 	return nil
+}
+
+// handleLocalAddHTLC handles the addition of a htlc for a send that
+// originates from our node. It returns the link that the htlc should
+// be forwarded outwards on, and a link error if the htlc cannot be
+// forwarded.
+func (s *Switch) handleLocalAddHTLC(pkt *htlcPacket,
+	htlc *lnwire.UpdateAddHTLC) (ChannelLink, *LinkError) {
+
+	// Try to find links by node destination.
+	s.indexMtx.RLock()
+	link, err := s.getLinkByShortID(pkt.outgoingChanID)
+	s.indexMtx.RUnlock()
+	if err != nil {
+		log.Errorf("Link %v not found", pkt.outgoingChanID)
+		return nil, NewLinkError(&lnwire.FailUnknownNextPeer{})
+	}
+
+	if !link.EligibleToForward() {
+		log.Errorf("Link %v is not available to forward",
+			pkt.outgoingChanID)
+
+		// The update does not need to be populated as the error
+		// will be returned back to the router.
+		return nil, NewDetailedLinkError(
+			lnwire.NewTemporaryChannelFailure(nil),
+			OutgoingFailureLinkNotEligible,
+		)
+	}
+
+	// Ensure that the htlc satisfies the outgoing channel policy.
+	currentHeight := atomic.LoadUint32(&s.bestHeight)
+	htlcErr := link.CheckHtlcTransit(
+		htlc.PaymentHash, htlc.Amount, htlc.Expiry, currentHeight,
+	)
+	if htlcErr != nil {
+		log.Errorf("Link %v policy for local forward not "+
+			"satisfied", pkt.outgoingChanID)
+		return nil, htlcErr
+	}
+	return link, nil
 }
 
 // handleLocalResponse processes a Settle or Fail responding to a
@@ -854,6 +898,18 @@ func (s *Switch) handleLocalResponse(pkt *htlcPacket) {
 			pkt.inKey(), err)
 		return
 	}
+
+	// Finally, notify on the htlc failure or success that has been handled.
+	key := newHtlcKey(pkt)
+	eventType := getEventType(pkt)
+
+	switch pkt.htlc.(type) {
+	case *lnwire.UpdateFulfillHTLC:
+		s.cfg.HtlcNotifier.NotifySettleEvent(key, eventType)
+
+	case *lnwire.UpdateFailHTLC:
+		s.cfg.HtlcNotifier.NotifyForwardingFailEvent(key, eventType)
+	}
 }
 
 // extractResult uses the given deobfuscator to extract the payment result from
@@ -915,12 +971,12 @@ func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
 				// need to apply an update here since it goes
 				// directly to the router.
 				lnwire.NewTemporaryChannelFailure(nil),
-				FailureDetailOnionDecode,
+				OutgoingFailureDecodeError,
 			)
 
 			log.Errorf("%v: (hash=%v, pid=%d): %v",
-				linkError.FailureDetail, paymentHash, paymentID,
-				err)
+				linkError.FailureDetail.FailureString(),
+				paymentHash, paymentID, err)
 
 			return linkError
 		}
@@ -935,10 +991,11 @@ func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
 	case isResolution && htlc.Reason == nil:
 		linkError := NewDetailedLinkError(
 			&lnwire.FailPermanentChannelFailure{},
-			FailureDetailOnChainTimeout,
+			OutgoingFailureOnChainTimeout,
 		)
 
-		log.Info("%v: hash=%v, pid=%d", linkError.FailureDetail,
+		log.Info("%v: hash=%v, pid=%d",
+			linkError.FailureDetail.FailureString(),
 			paymentHash, paymentID)
 
 		return linkError
@@ -974,10 +1031,12 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 		// Check if the node is set to reject all onward HTLCs and also make
 		// sure that HTLC is not from the source node.
 		if s.cfg.RejectHTLC && packet.incomingChanID != hop.Source {
-			failure := &lnwire.FailChannelDisabled{}
-			addErr := fmt.Errorf("unable to forward any htlcs")
+			failure := NewDetailedLinkError(
+				&lnwire.FailChannelDisabled{},
+				OutgoingFailureForwardsDisabled,
+			)
 
-			return s.failAddPacket(packet, failure, addErr)
+			return s.failAddPacket(packet, failure)
 		}
 
 		if packet.incomingChanID == hop.Source {
@@ -986,19 +1045,36 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 			return s.handleLocalDispatch(packet)
 		}
 
+		// Before we attempt to find a non-strict forwarding path for
+		// this htlc, check whether the htlc is being routed over the
+		// same incoming and outgoing channel. If our node does not
+		// allow forwards of this nature, we fail the htlc early. This
+		// check is in place to disallow inefficiently routed htlcs from
+		// locking up our balance.
+		linkErr := checkCircularForward(
+			packet.incomingChanID, packet.outgoingChanID,
+			s.cfg.AllowCircularRoute, htlc.PaymentHash,
+		)
+		if linkErr != nil {
+			return s.failAddPacket(packet, linkErr)
+		}
+
 		s.indexMtx.RLock()
 		targetLink, err := s.getLinkByShortID(packet.outgoingChanID)
 		if err != nil {
 			s.indexMtx.RUnlock()
 
+			log.Debugf("unable to find link with "+
+				"destination %v", packet.outgoingChanID)
+
 			// If packet was forwarded from another channel link
 			// than we should notify this link that some error
 			// occurred.
-			failure := &lnwire.FailUnknownNextPeer{}
-			addErr := fmt.Errorf("unable to find link with "+
-				"destination %v", packet.outgoingChanID)
+			linkError := NewLinkError(
+				&lnwire.FailUnknownNextPeer{},
+			)
 
-			return s.failAddPacket(packet, failure, addErr)
+			return s.failAddPacket(packet, linkError)
 		}
 		targetPeerKey := targetLink.Peer().PubKey()
 		interfaceLinks, _ := s.getLinks(targetPeerKey)
@@ -1021,7 +1097,7 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 			if !link.EligibleToForward() {
 				failure = NewDetailedLinkError(
 					&lnwire.FailUnknownNextPeer{},
-					FailureDetailLinkNotEligible,
+					OutgoingFailureLinkNotEligible,
 				)
 			} else {
 				// We'll ensure that the HTLC satisfies the
@@ -1067,12 +1143,12 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 					}))
 			}
 
-			addErr := fmt.Errorf("incoming HTLC(%x) violated "+
+			log.Tracef("incoming HTLC(%x) violated "+
 				"target outgoing link (id=%v) policy: %v",
 				htlc.PaymentHash[:], packet.outgoingChanID,
 				linkErr)
 
-			return s.failAddPacket(packet, linkErr.WireMessage(), addErr)
+			return s.failAddPacket(packet, linkErr)
 		}
 
 		// Send the packet to the destination channel link which
@@ -1086,6 +1162,12 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 		circuit, err := s.closeCircuit(packet)
 		if err != nil {
 			return err
+		}
+
+		// closeCircuit returns a nil circuit when a settle packet returns an
+		// ErrUnknownCircuit error upon the inner call to CloseCircuit.
+		if circuit == nil {
+			return nil
 		}
 
 		fail, isFail := htlc.(*lnwire.UpdateFailHTLC)
@@ -1170,16 +1252,45 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 	}
 }
 
+// checkCircularForward checks whether a forward is circular (arrives and
+// departs on the same link) and returns a link error if the switch is
+// configured to disallow this behaviour.
+func checkCircularForward(incoming, outgoing lnwire.ShortChannelID,
+	allowCircular bool, paymentHash lntypes.Hash) *LinkError {
+
+	// If the route is not circular we do not need to perform any further
+	// checks.
+	if incoming != outgoing {
+		return nil
+	}
+
+	// If the incoming and outgoing link are equal, the htlc is part of a
+	// circular route which may be used to lock up our liquidity. If the
+	// switch is configured to allow circular routes, log that we are
+	// allowing the route then return nil.
+	if allowCircular {
+		log.Debugf("allowing circular route over link: %v "+
+			"(payment hash: %x)", incoming, paymentHash)
+		return nil
+	}
+
+	// If our node disallows circular routes, return a temporary channel
+	// failure. There is nothing wrong with the policy used by the remote
+	// node, so we do not include a channel update.
+	return NewDetailedLinkError(
+		lnwire.NewTemporaryChannelFailure(nil),
+		OutgoingFailureCircularRoute,
+	)
+}
+
 // failAddPacket encrypts a fail packet back to an add packet's source.
 // The ciphertext will be derived from the failure message proivded by context.
 // This method returns the failErr if all other steps complete successfully.
-func (s *Switch) failAddPacket(packet *htlcPacket,
-	failure lnwire.FailureMessage, failErr error) error {
-
+func (s *Switch) failAddPacket(packet *htlcPacket, failure *LinkError) error {
 	// Encrypt the failure so that the sender will be able to read the error
 	// message. Since we failed this packet, we use EncryptFirstHop to
 	// obfuscate the failure for their eyes only.
-	reason, err := packet.obfuscator.EncryptFirstHop(failure)
+	reason, err := packet.obfuscator.EncryptFirstHop(failure.WireMessage())
 	if err != nil {
 		err := fmt.Errorf("unable to obfuscate "+
 			"error: %v", err)
@@ -1187,13 +1298,23 @@ func (s *Switch) failAddPacket(packet *htlcPacket,
 		return err
 	}
 
-	log.Error(failErr)
+	log.Error(failure.Error())
 
+	// Create a failure packet for this htlc. The the full set of
+	// information about the htlc failure is included so that they can
+	// be included in link failure notifications.
 	failPkt := &htlcPacket{
-		sourceRef:      packet.sourceRef,
-		incomingChanID: packet.incomingChanID,
-		incomingHTLCID: packet.incomingHTLCID,
-		circuit:        packet.circuit,
+		sourceRef:       packet.sourceRef,
+		incomingChanID:  packet.incomingChanID,
+		incomingHTLCID:  packet.incomingHTLCID,
+		outgoingChanID:  packet.outgoingChanID,
+		outgoingHTLCID:  packet.outgoingHTLCID,
+		incomingAmount:  packet.incomingAmount,
+		amount:          packet.amount,
+		incomingTimeout: packet.incomingTimeout,
+		outgoingTimeout: packet.outgoingTimeout,
+		circuit:         packet.circuit,
+		linkFailure:     failure,
 		htlc: &lnwire.UpdateFailHTLC{
 			Reason: reason,
 		},
@@ -1209,7 +1330,7 @@ func (s *Switch) failAddPacket(packet *htlcPacket,
 		return err
 	}
 
-	return failErr
+	return failure
 }
 
 // closeCircuit accepts a settle or fail htlc and the associated htlc packet and
@@ -1279,19 +1400,28 @@ func (s *Switch) closeCircuit(pkt *htlcPacket) (*PaymentCircuit, error) {
 	// Failed to close circuit because it does not exist. This is likely
 	// because the circuit was already successfully closed.
 	case ErrUnknownCircuit:
-		err := fmt.Errorf("Unable to find target channel "+
-			"for HTLC settle/fail: channel ID = %s, "+
-			"HTLC ID = %d", pkt.outgoingChanID,
-			pkt.outgoingHTLCID)
-		log.Error(err)
-
 		if pkt.destRef != nil {
 			// Add this SettleFailRef to the set of pending settle/fail entries
 			// awaiting acknowledgement.
 			s.pendingSettleFails = append(s.pendingSettleFails, *pkt.destRef)
 		}
 
-		return nil, err
+		// If this is a settle, we will not log an error message as settles
+		// are expected to hit the ErrUnknownCircuit case. The only way fails
+		// can hit this case if the link restarts after having just sent a fail
+		// to the switch.
+		_, isSettle := pkt.htlc.(*lnwire.UpdateFulfillHTLC)
+		if !isSettle {
+			err := fmt.Errorf("unable to find target channel "+
+				"for HTLC fail: channel ID = %s, "+
+				"HTLC ID = %d", pkt.outgoingChanID,
+				pkt.outgoingHTLCID)
+			log.Error(err)
+
+			return nil, err
+		}
+
+		return nil, nil
 
 	// Unexpected error.
 	default:
@@ -1304,7 +1434,7 @@ func (s *Switch) closeCircuit(pkt *htlcPacket) (*PaymentCircuit, error) {
 // we're the originator of the payment, so the link stops attempting to
 // re-broadcast.
 func (s *Switch) ackSettleFail(settleFailRefs ...channeldb.SettleFailRef) error {
-	return s.cfg.DB.Batch(func(tx *bbolt.Tx) error {
+	return kvdb.Batch(s.cfg.DB.Backend, func(tx kvdb.RwTx) error {
 		return s.cfg.SwitchPackager.AckSettleFails(tx, settleFailRefs...)
 	})
 }
@@ -1750,7 +1880,7 @@ func (s *Switch) reforwardResponses() error {
 func (s *Switch) loadChannelFwdPkgs(source lnwire.ShortChannelID) ([]*channeldb.FwdPkg, error) {
 
 	var fwdPkgs []*channeldb.FwdPkg
-	if err := s.cfg.DB.Update(func(tx *bbolt.Tx) error {
+	if err := kvdb.Update(s.cfg.DB, func(tx kvdb.RwTx) error {
 		var err error
 		fwdPkgs, err = s.cfg.SwitchPackager.LoadChannelFwdPkgs(
 			tx, source,
@@ -1817,8 +1947,11 @@ func (s *Switch) reforwardSettleFails(fwdPkgs []*channeldb.FwdPkg) {
 			// commitment state, so we'll forward this to the switch so the
 			// backwards undo can continue.
 			case lnwallet.Fail:
-				// Fetch the reason the HTLC was canceled so we can
-				// continue to propagate it.
+				// Fetch the reason the HTLC was canceled so
+				// we can continue to propagate it. This
+				// failure originated from another node, so
+				// the linkFailure field is not set on this
+				// packet.
 				failPacket := &htlcPacket{
 					outgoingChanID: fwdPkg.Source,
 					outgoingHTLCID: pd.ParentIndex,

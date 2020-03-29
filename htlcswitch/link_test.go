@@ -19,13 +19,13 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/coreos/bbolt"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/go-errors/errors"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/build"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/htlcswitch/hodl"
 	"github.com/monasuite/lnd/htlcswitch/hop"
@@ -39,6 +39,7 @@ import (
 
 const (
 	testStartingHeight = 100
+	testDefaultDelta   = 6
 )
 
 // concurrentTester is a thread-safe wrapper around the Fatalf method of a
@@ -1747,8 +1748,10 @@ func newSingleLinkTestHarness(chanAmt, chanReserve btcutil.Amount) (
 		MaxFeeUpdateTimeout:   40 * time.Minute,
 		MaxOutgoingCltvExpiry: DefaultMaxOutgoingCltvExpiry,
 		MaxFeeAllocation:      DefaultMaxLinkFeeAllocation,
+		NotifyActiveLink:      func(wire.OutPoint) {},
 		NotifyActiveChannel:   func(wire.OutPoint) {},
 		NotifyInactiveChannel: func(wire.OutPoint) {},
+		HtlcNotifier:          aliceSwitch.cfg.HtlcNotifier,
 	}
 
 	aliceLink := NewChannelLink(aliceCfg, aliceLc.channel)
@@ -1981,8 +1984,11 @@ func TestChannelLinkBandwidthConsistency(t *testing.T) {
 	)
 
 	// The starting bandwidth of the channel should be exactly the amount
-	// that we created the channel between her and Bob.
-	expectedBandwidth := lnwire.NewMSatFromSatoshis(chanAmt - defaultCommitFee)
+	// that we created the channel between her and Bob, minus the
+	// commitment fee and fee for adding an additional HTLC.
+	expectedBandwidth := lnwire.NewMSatFromSatoshis(
+		chanAmt-defaultCommitFee,
+	) - htlcFee
 	assertLinkBandwidth(t, aliceLink, expectedBandwidth)
 
 	// Next, we'll create an HTLC worth 1 BTC, and send it into the link as
@@ -2655,8 +2661,10 @@ func TestChannelLinkTrimCircuitsPending(t *testing.T) {
 
 	// The starting bandwidth of the channel should be exactly the amount
 	// that we created the channel between her and Bob, minus the commitment
-	// fee.
-	expectedBandwidth := lnwire.NewMSatFromSatoshis(chanAmt - defaultCommitFee)
+	// fee and fee of adding an HTLC.
+	expectedBandwidth := lnwire.NewMSatFromSatoshis(
+		chanAmt-defaultCommitFee,
+	) - htlcFee
 	assertLinkBandwidth(t, alice.link, expectedBandwidth)
 
 	// Capture Alice's starting bandwidth to perform later, relative
@@ -2934,8 +2942,10 @@ func TestChannelLinkTrimCircuitsNoCommit(t *testing.T) {
 
 	// The starting bandwidth of the channel should be exactly the amount
 	// that we created the channel between her and Bob, minus the commitment
-	// fee.
-	expectedBandwidth := lnwire.NewMSatFromSatoshis(chanAmt - defaultCommitFee)
+	// fee and fee for adding an additional HTLC.
+	expectedBandwidth := lnwire.NewMSatFromSatoshis(
+		chanAmt-defaultCommitFee,
+	) - htlcFee
 	assertLinkBandwidth(t, alice.link, expectedBandwidth)
 
 	// Capture Alice's starting bandwidth to perform later, relative
@@ -3149,6 +3159,161 @@ func TestChannelLinkTrimCircuitsNoCommit(t *testing.T) {
 	assertLinkBandwidth(t, alice.link, aliceStartingBandwidth)
 }
 
+// TestChannelLinkTrimCircuitsRemoteCommit checks that the switch and link
+// don't trim circuits if the ADD is locked in on the remote commitment but
+// not on our local commitment.
+func TestChannelLinkTrimCircuitsRemoteCommit(t *testing.T) {
+	t.Parallel()
+
+	const (
+		chanAmt  = btcutil.SatoshiPerBitcoin * 5
+		numHtlcs = 2
+	)
+
+	// We'll start by creating a new link with our chanAmt (5 BTC).
+	aliceLink, bobChan, batchTicker, start, cleanUp, restore, err :=
+		newSingleLinkTestHarness(chanAmt, 0)
+	if err != nil {
+		t.Fatalf("unable to create link: %v", err)
+	}
+
+	if err := start(); err != nil {
+		t.Fatalf("unable to start test harness: %v", err)
+	}
+	defer cleanUp()
+
+	alice := newPersistentLinkHarness(
+		t, aliceLink, batchTicker, restore,
+	)
+
+	// Compute the static fees that will be used to determine the
+	// correctness of Alice's bandwidth when forwarding HTLCs.
+	estimator := chainfee.NewStaticEstimator(6000, 0)
+	feePerKw, err := estimator.EstimateFeePerKW(1)
+	if err != nil {
+		t.Fatalf("unable to query fee estimator: %v", err)
+	}
+
+	defaultCommitFee := alice.channel.StateSnapshot().CommitFee
+	htlcFee := lnwire.NewMSatFromSatoshis(
+		feePerKw.FeeForWeight(input.HTLCWeight),
+	)
+
+	// The starting bandwidth of the channel should be exactly the amount
+	// that we created the channel between her and Bob, minus the commitment
+	// fee and fee of adding an HTLC.
+	expectedBandwidth := lnwire.NewMSatFromSatoshis(
+		chanAmt-defaultCommitFee,
+	) - htlcFee
+	assertLinkBandwidth(t, alice.link, expectedBandwidth)
+
+	// Capture Alice's starting bandwidth to perform later, relative
+	// bandwidth assertions.
+	aliceStartingBandwidth := alice.link.Bandwidth()
+
+	// Next, we'll create an HTLC worth 1 BTC that will be used as a dummy
+	// message for the test.
+	var mockBlob [lnwire.OnionPacketSize]byte
+	htlcAmt := lnwire.NewMSatFromSatoshis(btcutil.SatoshiPerBitcoin)
+	_, htlc, _, err := generatePayment(htlcAmt, htlcAmt, 5, mockBlob)
+	if err != nil {
+		t.Fatalf("unable to create payment: %v", err)
+	}
+
+	// Create `numHtlc` htlcPackets and payment circuits that will be used
+	// to drive the test. All of the packets will use the same dummy HTLC.
+	addPkts, circuits := genAddsAndCircuits(numHtlcs, htlc)
+
+	// To begin the test, start by committing the circuits for our first two
+	// HTLCs.
+	fwdActions := alice.commitCircuits(circuits)
+
+	// Both of these circuits should have successfully added, as this is the
+	// first attempt to send them.
+	if len(fwdActions.Adds) != numHtlcs {
+		t.Fatalf("expected %d circuits to be added", numHtlcs)
+	}
+	alice.assertNumPendingNumOpenCircuits(2, 0)
+
+	// Since both were committed successfully, we will now deliver them to
+	// Alice's link.
+	for _, addPkt := range addPkts {
+		if err := alice.link.HandleSwitchPacket(addPkt); err != nil {
+			t.Fatalf("unable to handle switch packet: %v", err)
+		}
+	}
+
+	// Wait until Alice's link has sent both HTLCs via the peer.
+	alice.checkSent(addPkts)
+
+	// Pass both of the htlcs to Bob.
+	for i, addPkt := range addPkts {
+		pkt, ok := addPkt.htlc.(*lnwire.UpdateAddHTLC)
+		if !ok {
+			t.Fatalf("unable to add packet")
+		}
+
+		pkt.ID = uint64(i)
+
+		_, err := bobChan.ReceiveHTLC(pkt)
+		if err != nil {
+			t.Fatalf("unable to receive htlc: %v", err)
+		}
+	}
+
+	// The resulting bandwidth should reflect that Alice is paying both
+	// htlc amounts, in addition to both htlc fees.
+	assertLinkBandwidth(t, alice.link,
+		aliceStartingBandwidth-numHtlcs*(htlcAmt+htlcFee),
+	)
+
+	// Now, initiate a state transition by Alice so that the pending HTLCs
+	// are locked in.
+	alice.trySignNextCommitment()
+	alice.assertNumPendingNumOpenCircuits(2, 2)
+
+	select {
+	case aliceMsg := <-alice.msgs:
+		// Pass the commitment signature to Bob.
+		sig, ok := aliceMsg.(*lnwire.CommitSig)
+		if !ok {
+			t.Fatalf("alice did not send commitment signature")
+		}
+
+		err := bobChan.ReceiveNewCommitment(sig.CommitSig, sig.HtlcSigs)
+		if err != nil {
+			t.Fatalf("unable to receive new commitment: %v", err)
+		}
+	case <-time.After(time.Second):
+	}
+
+	// Next, revoke Bob's current commitment and send it to Alice so that we
+	// can test that Alice's circuits aren't trimmed.
+	rev, _, err := bobChan.RevokeCurrentCommitment()
+	if err != nil {
+		t.Fatalf("unable to revoke current commitment: %v", err)
+	}
+
+	_, _, _, _, err = alice.channel.ReceiveRevocation(rev)
+	if err != nil {
+		t.Fatalf("unable to receive revocation: %v", err)
+	}
+
+	// Restart Alice's link, which simulates a disconnection with the remote
+	// peer.
+	cleanUp = alice.restart(false)
+	defer cleanUp()
+
+	alice.assertNumPendingNumOpenCircuits(2, 2)
+
+	// Restart the link + switch and check that the number of open circuits
+	// doesn't change.
+	cleanUp = alice.restart(true)
+	defer cleanUp()
+
+	alice.assertNumPendingNumOpenCircuits(2, 2)
+}
+
 // TestChannelLinkBandwidthChanReserve checks that the bandwidth available
 // on the channel link reflects the channel reserve that must be kept
 // at all times.
@@ -3190,9 +3355,9 @@ func TestChannelLinkBandwidthChanReserve(t *testing.T) {
 
 	// The starting bandwidth of the channel should be exactly the amount
 	// that we created the channel between her and Bob, minus the channel
-	// reserve.
+	// reserve, commitment fee and fee for adding an additional HTLC.
 	expectedBandwidth := lnwire.NewMSatFromSatoshis(
-		chanAmt - defaultCommitFee - chanReserve)
+		chanAmt-defaultCommitFee-chanReserve) - htlcFee
 	assertLinkBandwidth(t, aliceLink, expectedBandwidth)
 
 	// Next, we'll create an HTLC worth 3 BTC, and send it into the link as
@@ -4310,8 +4475,10 @@ func (h *persistentLinkHarness) restartLink(
 		HodlMask:              hodl.MaskFromFlags(hodlFlags...),
 		MaxOutgoingCltvExpiry: DefaultMaxOutgoingCltvExpiry,
 		MaxFeeAllocation:      DefaultMaxLinkFeeAllocation,
+		NotifyActiveLink:      func(wire.OutPoint) {},
 		NotifyActiveChannel:   func(wire.OutPoint) {},
 		NotifyInactiveChannel: func(wire.OutPoint) {},
+		HtlcNotifier:          aliceSwitch.cfg.HtlcNotifier,
 	}
 
 	aliceLink := NewChannelLink(aliceCfg, aliceChannel)
@@ -5160,32 +5327,32 @@ type mockPackager struct {
 	failLoadFwdPkgs bool
 }
 
-func (*mockPackager) AddFwdPkg(tx *bbolt.Tx, fwdPkg *channeldb.FwdPkg) error {
+func (*mockPackager) AddFwdPkg(tx kvdb.RwTx, fwdPkg *channeldb.FwdPkg) error {
 	return nil
 }
 
-func (*mockPackager) SetFwdFilter(tx *bbolt.Tx, height uint64,
+func (*mockPackager) SetFwdFilter(tx kvdb.RwTx, height uint64,
 	fwdFilter *channeldb.PkgFilter) error {
 	return nil
 }
 
-func (*mockPackager) AckAddHtlcs(tx *bbolt.Tx,
+func (*mockPackager) AckAddHtlcs(tx kvdb.RwTx,
 	addRefs ...channeldb.AddRef) error {
 	return nil
 }
 
-func (m *mockPackager) LoadFwdPkgs(tx *bbolt.Tx) ([]*channeldb.FwdPkg, error) {
+func (m *mockPackager) LoadFwdPkgs(tx kvdb.ReadTx) ([]*channeldb.FwdPkg, error) {
 	if m.failLoadFwdPkgs {
 		return nil, fmt.Errorf("failing LoadFwdPkgs")
 	}
 	return nil, nil
 }
 
-func (*mockPackager) RemovePkg(tx *bbolt.Tx, height uint64) error {
+func (*mockPackager) RemovePkg(tx kvdb.RwTx, height uint64) error {
 	return nil
 }
 
-func (*mockPackager) AckSettleFails(tx *bbolt.Tx,
+func (*mockPackager) AckSettleFails(tx kvdb.RwTx,
 	settleFailRefs ...channeldb.SettleFailRef) error {
 	return nil
 }
@@ -5522,6 +5689,7 @@ func TestCheckHtlcForward(t *testing.T) {
 			},
 			FetchLastChannelUpdate: fetchLastChannelUpdate,
 			MaxOutgoingCltvExpiry:  DefaultMaxOutgoingCltvExpiry,
+			HtlcNotifier:           &mockHTLCNotifier{},
 		},
 		log:           log,
 		channel:       testChannel.channel,

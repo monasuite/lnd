@@ -7,7 +7,7 @@ require (
 	github.com/Yawning/aez v0.0.0-20180114000226-4dad034d9db2
 	github.com/btcsuite/btcd v0.20.1-beta
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f
-	github.com/btcsuite/btcutil v0.0.0-20190425235716-9e5f4b9a998d
+	github.com/btcsuite/btcutil v1.0.1
 	github.com/btcsuite/fastsha256 v0.0.0-20160815193821-637e65642941
 	github.com/coreos/bbolt v1.3.3
 	github.com/davecgh/go-spew v1.1.1
@@ -27,27 +27,28 @@ require (
 	github.com/juju/testing v0.0.0-20190723135506-ce30eb24acd2 // indirect
 	github.com/juju/utils v0.0.0-20180820210520-bf9cc5bdd62d // indirect
 	github.com/juju/version v0.0.0-20180108022336-b64dbd566305 // indirect
-	github.com/kkdai/bstream v0.0.0-20181106074824-b3251f7901ec
+	github.com/kkdai/bstream v1.0.0
 	github.com/lightninglabs/protobuf-hex-display v1.3.3-0.20191212020323-b444784ce75d
 	github.com/lightningnetwork/lightning-onion v1.0.1
-	github.com/lightningnetwork/lnd/cert v1.0.0
-	github.com/lightningnetwork/lnd/queue v1.0.2
+	github.com/lightningnetwork/lnd/cert v1.0.1
+	github.com/lightningnetwork/lnd/queue v1.0.3
 	github.com/lightningnetwork/lnd/ticker v1.0.0
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
 	github.com/monaarchives/btcwallet v0.11.1
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
-	github.com/monaarchives/btcwallet/walletdb v1.1.0
+	github.com/monaarchives/btcwallet/walletdb v1.3.0
 	github.com/monaarchives/btcwallet/wtxmgr v1.0.0
-	github.com/monasuite/monad v0.20.2-beta
-	github.com/monasuite/neutrino v0.11.1
+	github.com/monasuite/monad v0.21.1-beta
+	github.com/monasuite/monautil v1.0.1 // indirect
+	github.com/monasuite/neutrino v0.11.2
 	github.com/onsi/ginkgo v1.8.0 // indirect
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/prometheus/client_golang v0.9.3
 	github.com/rogpeppe/fastuuid v1.2.0 // indirect
 	github.com/tv42/zbase32 v0.0.0-20160707012821-501572607d02
 	github.com/urfave/cli v1.18.0
-	golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550
+	golang.org/x/crypto v0.0.0-20200323165209-0ec3e9974c59
 	golang.org/x/net v0.0.0-20191014212845-da9a3fd4c582
 	golang.org/x/sys v0.0.0-20191010194322-b09406accb47 // indirect
 	golang.org/x/text v0.3.2 // indirect

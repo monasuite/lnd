@@ -11,13 +11,14 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/coreos/bbolt"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/go-errors/errors"
 
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/lntypes"
@@ -302,6 +303,9 @@ type Config struct {
 
 	// PathFindingConfig defines global path finding parameters.
 	PathFindingConfig PathFindingConfig
+
+	// Clock is mockable time provider.
+	Clock clock.Clock
 }
 
 // EdgeLocator is a struct used to identify a specific edge.
@@ -537,7 +541,14 @@ func (r *ChannelRouter) Start() error {
 				PaymentHash: payment.Info.PaymentHash,
 			}
 
-			_, _, err := r.sendPayment(payment.Attempt, lPayment, paySession)
+			// TODO(joostjager): For mpp, possibly relaunch multiple
+			// in-flight htlcs here.
+			var attempt *channeldb.HTLCAttemptInfo
+			if len(payment.Attempts) > 0 {
+				attempt = &payment.Attempts[0]
+			}
+
+			_, _, err := r.sendPayment(attempt, lPayment, paySession)
 			if err != nil {
 				log.Errorf("Resuming payment with hash %v "+
 					"failed: %v.", payment.Info.PaymentHash, err)
@@ -1680,7 +1691,7 @@ func (r *ChannelRouter) preparePayment(payment *LightningPayment) (
 	info := &channeldb.PaymentCreationInfo{
 		PaymentHash:    payment.PaymentHash,
 		Value:          payment.Amount,
-		CreationDate:   time.Now(),
+		CreationTime:   r.cfg.Clock.Now(),
 		PaymentRequest: payment.PaymentRequest,
 	}
 
@@ -1709,7 +1720,7 @@ func (r *ChannelRouter) SendToRoute(hash lntypes.Hash, route *route.Route) (
 	info := &channeldb.PaymentCreationInfo{
 		PaymentHash:    hash,
 		Value:          amt,
-		CreationDate:   time.Now(),
+		CreationTime:   r.cfg.Clock.Now(),
 		PaymentRequest: nil,
 	}
 
@@ -1768,7 +1779,7 @@ func (r *ChannelRouter) SendToRoute(hash lntypes.Hash, route *route.Route) (
 // router will call this method for every payment still in-flight according to
 // the ControlTower.
 func (r *ChannelRouter) sendPayment(
-	existingAttempt *channeldb.PaymentAttemptInfo,
+	existingAttempt *channeldb.HTLCAttemptInfo,
 	payment *LightningPayment, paySession PaymentSession) (
 	[32]byte, *route.Route, error) {
 
@@ -2100,7 +2111,7 @@ func (r *ChannelRouter) FetchLightningNode(node route.Vertex) (*channeldb.Lightn
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) ForEachNode(cb func(*channeldb.LightningNode) error) error {
-	return r.cfg.Graph.ForEachNode(nil, func(_ *bbolt.Tx, n *channeldb.LightningNode) error {
+	return r.cfg.Graph.ForEachNode(nil, func(_ kvdb.ReadTx, n *channeldb.LightningNode) error {
 		return cb(n)
 	})
 }
@@ -2112,7 +2123,7 @@ func (r *ChannelRouter) ForEachNode(cb func(*channeldb.LightningNode) error) err
 func (r *ChannelRouter) ForAllOutgoingChannels(cb func(*channeldb.ChannelEdgeInfo,
 	*channeldb.ChannelEdgePolicy) error) error {
 
-	return r.selfNode.ForEachChannel(nil, func(_ *bbolt.Tx, c *channeldb.ChannelEdgeInfo,
+	return r.selfNode.ForEachChannel(nil, func(_ kvdb.ReadTx, c *channeldb.ChannelEdgeInfo,
 		e, _ *channeldb.ChannelEdgePolicy) error {
 
 		if e == nil {
@@ -2253,7 +2264,7 @@ func generateBandwidthHints(sourceNode *channeldb.LightningNode,
 	// First, we'll collect the set of outbound edges from the target
 	// source node.
 	var localChans []*channeldb.ChannelEdgeInfo
-	err := sourceNode.ForEachChannel(nil, func(tx *bbolt.Tx,
+	err := sourceNode.ForEachChannel(nil, func(tx kvdb.ReadTx,
 		edgeInfo *channeldb.ChannelEdgeInfo,
 		_, _ *channeldb.ChannelEdgePolicy) error {
 
@@ -2311,6 +2322,13 @@ func (r *ChannelRouter) BuildRoute(amt *lnwire.MilliSatoshi,
 		return nil, err
 	}
 
+	// Fetch the current block height outside the routing transaction, to
+	// prevent the rpc call blocking the database.
+	_, height, err := r.cfg.Chain.GetBestBlock()
+	if err != nil {
+		return nil, err
+	}
+
 	// Allocate a list that will contain the unified policies for this
 	// route.
 	edges := make([]*unifiedPolicy, len(hops))
@@ -2327,6 +2345,18 @@ func (r *ChannelRouter) BuildRoute(amt *lnwire.MilliSatoshi,
 		// delivers exactly this amount to the final destination.
 		runningAmt = *amt
 	}
+
+	// Open a transaction to execute the graph queries in.
+	routingTx, err := newDbRoutingTx(r.cfg.Graph)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err := routingTx.close()
+		if err != nil {
+			log.Errorf("Error closing db tx: %v", err)
+		}
+	}()
 
 	// Traverse hops backwards to accumulate fees in the running amounts.
 	source := r.selfNode.PubKeyBytes
@@ -2346,7 +2376,7 @@ func (r *ChannelRouter) BuildRoute(amt *lnwire.MilliSatoshi,
 		// known in the graph.
 		u := newUnifiedPolicies(source, toNode, outgoingChan)
 
-		err := u.addGraphPolicies(r.cfg.Graph, nil)
+		err := u.addGraphPolicies(routingTx)
 		if err != nil {
 			return nil, err
 		}
@@ -2414,11 +2444,6 @@ func (r *ChannelRouter) BuildRoute(amt *lnwire.MilliSatoshi,
 	}
 
 	// Build and return the final route.
-	_, height, err := r.cfg.Chain.GetBestBlock()
-	if err != nil {
-		return nil, err
-	}
-
 	return newRoute(
 		source, pathEdges, uint32(height),
 		finalHopParams{

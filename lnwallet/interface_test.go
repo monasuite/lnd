@@ -27,14 +27,15 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/coreos/bbolt"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monaarchives/btcwallet/walletdb"
 	_ "github.com/monaarchives/btcwallet/walletdb/bdb"
+	"github.com/davecgh/go-spew/spew"
+	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chainntnfs/btcdnotify"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnwallet"
@@ -42,7 +43,6 @@ import (
 	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwallet/chanfunding"
 	"github.com/monasuite/lnd/lnwire"
-	"github.com/monasuite/neutrino"
 )
 
 var (
@@ -700,7 +700,8 @@ func testCancelNonExistentReservation(miner *rpctest.Harness,
 	// Create our own reservation, give it some ID.
 	res, err := lnwallet.NewChannelReservation(
 		10000, 10000, feePerKw, alice, 22, 10, &testHdSeed,
-		lnwire.FFAnnounceChannel, true, nil, [32]byte{},
+		lnwire.FFAnnounceChannel, lnwallet.CommitmentTypeTweakless,
+		nil, [32]byte{}, 0,
 	)
 	if err != nil {
 		t.Fatalf("unable to create res: %v", err)
@@ -738,7 +739,7 @@ func testReservationInitiatorBalanceBelowDustCancel(miner *rpctest.Harness,
 		FundingFeePerKw:  1000,
 		PushMSat:         0,
 		Flags:            lnwire.FFAnnounceChannel,
-		Tweakless:        true,
+		CommitType:       lnwallet.CommitmentTypeTweakless,
 	}
 	_, err = alice.InitChannelReservation(req)
 	switch {
@@ -793,9 +794,10 @@ func assertContributionInitPopulated(t *testing.T, c *lnwallet.ChannelContributi
 }
 
 func testSingleFunderReservationWorkflow(miner *rpctest.Harness,
-	alice, bob *lnwallet.LightningWallet, t *testing.T, tweakless bool,
-	aliceChanFunder chanfunding.Assembler,
-	fetchFundingTx func() *wire.MsgTx, pendingChanID [32]byte) {
+	alice, bob *lnwallet.LightningWallet, t *testing.T,
+	commitType lnwallet.CommitmentType,
+	aliceChanFunder chanfunding.Assembler, fetchFundingTx func() *wire.MsgTx,
+	pendingChanID [32]byte, thawHeight uint32) {
 
 	// For this scenario, Alice will be the channel initiator while bob
 	// will act as the responder to the workflow.
@@ -823,7 +825,7 @@ func testSingleFunderReservationWorkflow(miner *rpctest.Harness,
 		FundingFeePerKw:  feePerKw,
 		PushMSat:         pushAmt,
 		Flags:            lnwire.FFAnnounceChannel,
-		Tweakless:        tweakless,
+		CommitType:       commitType,
 		ChanFunder:       aliceChanFunder,
 	}
 	aliceChanReservation, err := alice.InitChannelReservation(aliceReq)
@@ -874,7 +876,7 @@ func testSingleFunderReservationWorkflow(miner *rpctest.Harness,
 		FundingFeePerKw:  feePerKw,
 		PushMSat:         pushAmt,
 		Flags:            lnwire.FFAnnounceChannel,
-		Tweakless:        tweakless,
+		CommitType:       commitType,
 	}
 	bobChanReservation, err := bob.InitChannelReservation(bobReq)
 	if err != nil {
@@ -1041,6 +1043,24 @@ func testSingleFunderReservationWorkflow(miner *rpctest.Harness,
 	blockTx := block.Transactions[1]
 	if blockTx.TxHash() != fundingSha {
 		t.Fatalf("incorrect transaction was mined")
+	}
+
+	// If a frozen channel was requested, then we expect that both channel
+	// types show as being a frozen channel type.
+	aliceChanFrozen := aliceChannels[0].ChanType.IsFrozen()
+	bobChanFrozen := bobChannels[0].ChanType.IsFrozen()
+	if thawHeight != 0 && (!aliceChanFrozen || !bobChanFrozen) {
+		t.Fatalf("expected both alice and bob to have frozen chans: "+
+			"alice_frozen=%v, bob_frozen=%v", aliceChanFrozen,
+			bobChanFrozen)
+	}
+	if thawHeight != bobChannels[0].ThawHeight {
+		t.Fatalf("wrong thaw height: expected %v got %v", thawHeight,
+			bobChannels[0].ThawHeight)
+	}
+	if thawHeight != aliceChannels[0].ThawHeight {
+		t.Fatalf("wrong thaw height: expected %v got %v", thawHeight,
+			aliceChannels[0].ThawHeight)
 	}
 
 	assertReservationDeleted(aliceChanReservation, t)
@@ -2543,8 +2563,9 @@ var walletTests = []walletTestCase{
 			bob *lnwallet.LightningWallet, t *testing.T) {
 
 			testSingleFunderReservationWorkflow(
-				miner, alice, bob, t, false, nil, nil,
-				[32]byte{},
+				miner, alice, bob, t,
+				lnwallet.CommitmentTypeLegacy, nil,
+				nil, [32]byte{}, 0,
 			)
 		},
 	},
@@ -2554,8 +2575,9 @@ var walletTests = []walletTestCase{
 			bob *lnwallet.LightningWallet, t *testing.T) {
 
 			testSingleFunderReservationWorkflow(
-				miner, alice, bob, t, true, nil, nil,
-				[32]byte{},
+				miner, alice, bob, t,
+				lnwallet.CommitmentTypeTweakless, nil,
+				nil, [32]byte{}, 0,
 			)
 		},
 	},
@@ -2773,12 +2795,13 @@ func testSingleFunderExternalFundingTx(miner *rpctest.Harness,
 	// Now that we have the fully constructed funding transaction, we'll
 	// create a new shim external funder out of it for Alice, and prep a
 	// shim intent for Bob.
+	thawHeight := uint32(200)
 	aliceExternalFunder := chanfunding.NewCannedAssembler(
-		*chanPoint, btcutil.Amount(chanAmt), &aliceFundingKey,
+		thawHeight, *chanPoint, btcutil.Amount(chanAmt), &aliceFundingKey,
 		bobFundingKey.PubKey, true,
 	)
 	bobShimIntent, err := chanfunding.NewCannedAssembler(
-		*chanPoint, btcutil.Amount(chanAmt), &bobFundingKey,
+		thawHeight, *chanPoint, btcutil.Amount(chanAmt), &bobFundingKey,
 		aliceFundingKey.PubKey, false,
 	).ProvisionChannel(&chanfunding.Request{
 		LocalAmt: btcutil.Amount(chanAmt),
@@ -2809,10 +2832,10 @@ func testSingleFunderExternalFundingTx(miner *rpctest.Harness,
 	// pending channel ID generated above to allow Alice and Bob to track
 	// the funding flow externally.
 	testSingleFunderReservationWorkflow(
-		miner, alice, bob, t, true, aliceExternalFunder,
-		func() *wire.MsgTx {
+		miner, alice, bob, t, lnwallet.CommitmentTypeTweakless,
+		aliceExternalFunder, func() *wire.MsgTx {
 			return fundingTx
-		}, pendingChanID,
+		}, pendingChanID, thawHeight,
 	)
 }
 
@@ -3158,7 +3181,7 @@ func runTests(t *testing.T, walletDriver *lnwallet.WalletDriver,
 		// node's chainstate to initial level, cleanly
 		// wipe buckets
 		if err := clearWalletStates(alice, bob); err !=
-			nil && err != bbolt.ErrBucketNotFound {
+			nil && err != kvdb.ErrBucketNotFound {
 			t.Fatalf("unable to wipe wallet state: %v", err)
 		}
 	}

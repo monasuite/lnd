@@ -118,7 +118,7 @@ func AdminAuthOptions() ([]grpc.DialOption, error) {
 	return opts, nil
 }
 
-// ListnerWithSignal is a net.Listner that has an additional Ready channel that
+// ListenerWithSignal is a net.Listener that has an additional Ready channel that
 // will be closed when a server starts listening.
 type ListenerWithSignal struct {
 	net.Listener
@@ -222,8 +222,12 @@ func Main(lisCfg ListenerCfg) error {
 		defaultGraphSubDirname,
 		normalizeNetwork(activeNetParams.Name))
 
+	ltndLog.Infof("Opening the main database, this might take a few " +
+		"minutes...")
+
 	// Open the channeldb, which is dedicated to storing channel, and
 	// network related metadata.
+	startOpenTime := time.Now()
 	chanDB, err := channeldb.Open(
 		graphDir,
 		channeldb.OptionSetRejectCacheSize(cfg.Caches.RejectCacheSize),
@@ -236,6 +240,9 @@ func Main(lisCfg ListenerCfg) error {
 		return err
 	}
 	defer chanDB.Close()
+
+	openTime := time.Since(startOpenTime)
+	ltndLog.Infof("Database now open (time_to_open=%v)!", openTime)
 
 	// Only process macaroons if --no-macaroons isn't set.
 	ctx := context.Background()
@@ -710,10 +717,25 @@ func getTLSConfig(tlsCertPath string, tlsKeyPath string, tlsExtraIPs,
 		return nil, nil, "", err
 	}
 
-	// If the certificate expired, delete it and the TLS key and generate a
-	// new pair.
-	if time.Now().After(parsedCert.NotAfter) {
-		ltndLog.Info("TLS certificate is expired, generating a new one")
+	// We check whether the certifcate we have on disk match the IPs and
+	// domains specified by the config. If the extra IPs or domains have
+	// changed from when the certificate was created, we will refresh the
+	// certificate if auto refresh is active.
+	refresh := false
+	if cfg.TLSAutoRefresh {
+		refresh, err = cert.IsOutdated(
+			parsedCert, tlsExtraIPs, tlsExtraDomains,
+		)
+		if err != nil {
+			return nil, nil, "", err
+		}
+	}
+
+	// If the certificate expired or it was outdated, delete it and the TLS
+	// key and generate a new pair.
+	if time.Now().After(parsedCert.NotAfter) || refresh {
+		ltndLog.Info("TLS certificate is expired or outdated, " +
+			"generating a new one")
 
 		err := os.Remove(tlsCertPath)
 		if err != nil {
@@ -735,6 +757,12 @@ func getTLSConfig(tlsCertPath string, tlsKeyPath string, tlsExtraIPs,
 			return nil, nil, "", err
 		}
 		rpcsLog.Infof("Done renewing TLS certificates")
+
+		// Reload the certificate data.
+		certData, _, err = cert.LoadCert(tlsCertPath, tlsKeyPath)
+		if err != nil {
+			return nil, nil, "", err
+		}
 	}
 
 	tlsCfg := cert.TLSConfFromCert(certData)
