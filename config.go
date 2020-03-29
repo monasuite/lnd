@@ -736,6 +736,10 @@ func loadConfig() (*config, error) {
 			numNets++
 			monaParams = monacoinRegTestNetParams
 		}
+		if cfg.Monacoin.SimNet {
+			numNets++
+			monaParams = monacoinSimNetParams
+		}
 
 		if numNets > 1 {
 			str := "%s: The mainnet, testnet, and simnet params " +

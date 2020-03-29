@@ -11,14 +11,11 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/btcec"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/monaarchives/btcwallet/snacl"
 	"github.com/monaarchives/btcwallet/waddrmgr"
 	"github.com/monaarchives/btcwallet/wallet"
 	"github.com/monaarchives/btcwallet/walletdb"
-	"github.com/davecgh/go-spew/spew"
 
 	_ "github.com/monaarchives/btcwallet/walletdb/bdb" // Required in order to create the default database.
 )
@@ -109,7 +106,6 @@ func createTestBtcWallet(coinType uint32) (func(), *wallet.Wallet, error) {
 
 	return cleanUp, baseWallet, nil
 }
-
 func assertEqualKeyLocator(t *testing.T, a, b KeyLocator) {
 	t.Helper()
 	if a != b {
