@@ -11,7 +11,7 @@
     * [Starting btcd](#starting-btcd)
     * [Running lnd using the btcd backend](#running-lnd-using-the-btcd-backend)
   * [Using Neutrino](#using-neutrino)
-  * [Using bitcoind or litecoind](#using-bitcoind-or-monacoind)
+  * [Using bitcoind or monacoind](#using-bitcoind-or-monacoind)
 * [Creating a Wallet](#creating-a-wallet)
 * [Macaroons](#macaroons)
 * [Network Reachability](#network-reachability)

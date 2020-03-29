@@ -1711,7 +1711,7 @@ message GetInfoResponse {
 }
 
 message Chain {
-    /// The blockchain the node is on (eg bitcoin, litecoin)
+    /// The blockchain the node is on (eg bitcoin, monacoin)
     string chain = 1;
 
     /// The network the node is on (eg regtest, testnet, mainnet)
