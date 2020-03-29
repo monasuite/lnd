@@ -1854,7 +1854,7 @@
       "properties": {
         "chain": {
           "type": "string",
-          "title": "/ The blockchain the node is on (eg bitcoin, litecoin)"
+          "title": "/ The blockchain the node is on (eg bitcoin, monacoin)"
         },
         "network": {
           "type": "string",
