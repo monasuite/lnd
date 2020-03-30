@@ -1,3 +1,8 @@
+## Attention
+
+This repository is the fork of [LND(lightningnetwork)](https://github.com/lightningnetwork/lnd).
+Created to realize lightning in Monacoin.
+
 ## Lightning Network Daemon
 
 [![Build Status](http://img.shields.io/travis/monasuite/lnd.svg)](https://travis-ci.org/monasuite/lnd) 
