@@ -1,6 +1,6 @@
 version: '2'
 services:
-    # mona is an image of litecoin node which used as base image for monad and
+    # mona is an image of monacoin node which used as base image for monad and
     # monactl. The environment variables default values determined on stage of
     # container start within starting script.
     monad:
@@ -10,7 +10,7 @@ services:
         context: monad/
       volumes:
         - shared:/rpc
-        - litecoin:/data
+        - monacoin:/data
       environment:
         - RPCUSER
         - RPCPASS
@@ -44,9 +44,9 @@ volumes:
   shared:
     driver: local
 
-  # litecoin volume is needed for maintaining blockchain persistence
+  # monacoin volume is needed for maintaining blockchain persistence
   # during monad container recreation.
-  litecoin:
+  monacoin:
     driver: local
 
   # lnd volume is used for persisting lnd application data and chain state

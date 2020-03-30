@@ -16,9 +16,9 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcutil/gcs/builder"
 	"github.com/lightningnetwork/lnd/queue"
+	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/neutrino"
 	"github.com/monasuite/neutrino/headerfs"
-	"github.com/monasuite/lnd/chainntnfs"
 )
 
 const (

@@ -10,9 +10,9 @@ import (
 	"github.com/btcsuite/btcutil"
 
 	"github.com/monaarchives/btcwallet/chain"
+	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/neutrino"
 	"github.com/monasuite/neutrino/headerfs"
-	"github.com/monasuite/lnd/lnwallet"
 )
 
 var (

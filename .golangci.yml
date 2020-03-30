@@ -29,6 +29,10 @@ linters-settings:
   gofmt:
     # simplify code: gofmt with `-s` option, true by default
     simplify: true
+  goconst:
+    # minimal occurrences count to trigger, 3 by default # TODO monacoin is ok?
+    min-occurrences: 6
+
 
 linters:
   enable-all: true

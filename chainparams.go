@@ -126,10 +126,10 @@ func applyMonacoinParams(params *bitcoinNetParams, monacoinParams *monacoinNetPa
 		monacoinParams.GenesisBlock.Transactions[0].TxIn[0].Sequence
 	params.GenesisBlock.Transactions[0].TxIn[0].PreviousOutPoint.Index =
 		monacoinParams.GenesisBlock.Transactions[0].TxIn[0].PreviousOutPoint.Index
-	copy(params.GenesisBlock.Transactions[0].TxIn[0].SignatureScript[:],
-		monacoinParams.GenesisBlock.Transactions[0].TxIn[0].SignatureScript[:])
-	copy(params.GenesisBlock.Transactions[0].TxOut[0].PkScript[:],
-		monacoinParams.GenesisBlock.Transactions[0].TxOut[0].PkScript[:])
+	copy(params.GenesisBlock.Transactions[0].TxIn[0].SignatureScript,
+		monacoinParams.GenesisBlock.Transactions[0].TxIn[0].SignatureScript)
+	copy(params.GenesisBlock.Transactions[0].TxOut[0].PkScript,
+		monacoinParams.GenesisBlock.Transactions[0].TxOut[0].PkScript)
 	params.GenesisBlock.Transactions[0].TxOut[0].Value =
 		monacoinParams.GenesisBlock.Transactions[0].TxOut[0].Value
 	params.GenesisBlock.Transactions[0].TxIn[0].PreviousOutPoint.Hash =
