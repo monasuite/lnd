@@ -15,6 +15,8 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
+
+	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/clock"
@@ -27,7 +29,6 @@ import (
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/netann"
 	"github.com/monasuite/lnd/shachain"
-	"github.com/lightningnetwork/lnd/ticker"
 )
 
 var (

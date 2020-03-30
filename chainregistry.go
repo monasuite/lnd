@@ -18,8 +18,6 @@ import (
 	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monaarchives/btcwallet/wallet"
 	"github.com/monaarchives/btcwallet/walletdb"
-	"github.com/monasuite/neutrino"
-	"github.com/monasuite/neutrino/headerfs"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chainntnfs/bitcoindnotify"
 	"github.com/monasuite/lnd/chainntnfs/btcdnotify"
@@ -33,6 +31,8 @@ import (
 	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing/chainview"
+	"github.com/monasuite/neutrino"
+	"github.com/monasuite/neutrino/headerfs"
 )
 
 const (

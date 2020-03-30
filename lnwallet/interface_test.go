@@ -27,11 +27,10 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monaarchives/btcwallet/walletdb"
 	_ "github.com/monaarchives/btcwallet/walletdb/bdb"
-	"github.com/davecgh/go-spew/spew"
-	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chainntnfs/btcdnotify"
 	"github.com/monasuite/lnd/channeldb"
@@ -43,6 +42,7 @@ import (
 	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwallet/chanfunding"
 	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/neutrino"
 )
 
 var (
