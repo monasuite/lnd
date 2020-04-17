@@ -24,6 +24,7 @@ import (
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/lnpeer"
 	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/lnwire"
@@ -96,7 +97,7 @@ type mockSigner struct {
 }
 
 func (n *mockSigner) SignMessage(pubKey *btcec.PublicKey,
-	msg []byte) (*btcec.Signature, error) {
+	msg []byte) (input.Signature, error) {
 
 	if !pubKey.IsEqual(n.privKey.PubKey()) {
 		return nil, fmt.Errorf("unknown public key")

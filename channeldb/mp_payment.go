@@ -108,9 +108,9 @@ type HTLCFailInfo struct {
 // have the associated Settle or Fail struct populated if the HTLC is no longer
 // in-flight.
 type MPPayment struct {
-	// sequenceNum is a unique identifier used to sort the payments in
+	// SequenceNum is a unique identifier used to sort the payments in
 	// order of creation.
-	sequenceNum uint64
+	SequenceNum uint64
 
 	// Info holds all static information about this payment, and is
 	// populated when the payment is initiated.
@@ -129,6 +129,52 @@ type MPPayment struct {
 
 	// Status is the current PaymentStatus of this payment.
 	Status PaymentStatus
+}
+
+// TerminalInfo returns any HTLC settle info recorded. If no settle info is
+// recorded, any payment level failure will be returned. If neither a settle
+// nor a failure is recorded, both return values will be nil.
+func (m *MPPayment) TerminalInfo() (*HTLCSettleInfo, *FailureReason) {
+	for _, h := range m.HTLCs {
+		if h.Settle != nil {
+			return h.Settle, nil
+		}
+	}
+
+	return nil, m.FailureReason
+}
+
+// SentAmt returns the sum of sent amount and fees for HTLCs that are either
+// settled or still in flight.
+func (m *MPPayment) SentAmt() (lnwire.MilliSatoshi, lnwire.MilliSatoshi) {
+	var sent, fees lnwire.MilliSatoshi
+	for _, h := range m.HTLCs {
+		if h.Failure != nil {
+			continue
+		}
+
+		// The attempt was not failed, meaning the amount was
+		// potentially sent to the receiver.
+		sent += h.Route.ReceiverAmt()
+		fees += h.Route.TotalFees()
+	}
+
+	return sent, fees
+}
+
+// InFlightHTLCs returns the HTLCs that are still in-flight, meaning they have
+// not been settled or failed.
+func (m *MPPayment) InFlightHTLCs() []HTLCAttempt {
+	var inflights []HTLCAttempt
+	for _, h := range m.HTLCs {
+		if h.Settle != nil || h.Failure != nil {
+			continue
+		}
+
+		inflights = append(inflights, h)
+	}
+
+	return inflights
 }
 
 // serializeHTLCSettleInfo serializes the details of a settled htlc.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec"
+	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
 )
@@ -11,7 +12,7 @@ import (
 // SignAnnouncement signs any type of gossip message that is announced on the
 // network.
 func SignAnnouncement(signer lnwallet.MessageSigner, pubKey *btcec.PublicKey,
-	msg lnwire.Message) (*btcec.Signature, error) {
+	msg lnwire.Message) (input.Signature, error) {
 
 	var (
 		data []byte

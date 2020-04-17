@@ -10,6 +10,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/monaarchives/btcwallet/wallet/txauthor"
+	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/lnwallet/chainfee"
 )
 
@@ -292,7 +293,7 @@ type MessageSigner interface {
 	// that corresponds to the passed public key. If the target private key
 	// is unable to be found, then an error will be returned. The actual
 	// digest signed is the double SHA-256 of the passed message.
-	SignMessage(pubKey *btcec.PublicKey, msg []byte) (*btcec.Signature, error)
+	SignMessage(pubKey *btcec.PublicKey, msg []byte) (input.Signature, error)
 }
 
 // WalletDriver represents a "driver" for a particular concrete

@@ -733,13 +733,14 @@
         "parameters": [
           {
             "name": "types",
-            "description": "/ The requesteded node metrics.",
+            "description": "/ The requested node metrics.",
             "in": "query",
             "required": false,
             "type": "array",
             "items": {
               "type": "string",
               "enum": [
+                "UNKNOWN",
                 "BETWEENNESS_CENTRALITY"
               ]
             },
@@ -1154,7 +1155,31 @@
         "parameters": [
           {
             "name": "include_incomplete",
-            "description": "*\nIf true, then return payments that have not yet fully completed. This means\nthat pending payments, as well as failed payments will show up if this\nfield is set to True.",
+            "description": "*\nIf true, then return payments that have not yet fully completed. This means\nthat pending payments, as well as failed payments will show up if this\nfield is set to true. This flag doesn't change the meaning of the indices,\nwhich are tied to individual payments.",
+            "in": "query",
+            "required": false,
+            "type": "boolean",
+            "format": "boolean"
+          },
+          {
+            "name": "index_offset",
+            "description": "*\nThe index of a payment that will be used as either the start or end of a\nquery to determine which payments should be returned in the response. The\nindex_offset is exclusive. In the case of a zero index_offset, the query\nwill start with the oldest payment when paginating forwards, or will end\nwith the most recent payment when paginating backwards.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "max_payments",
+            "description": "/ The maximal number of payments returned in the response to this query.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "uint64"
+          },
+          {
+            "name": "reversed",
+            "description": "*\nIf set, the payments returned will result from seeking backwards from the\nspecified index offset. This can be used to paginate backwards. The order\nof the returned payments is always oldest first (ascending index order).",
             "in": "query",
             "required": false,
             "type": "boolean",
@@ -1512,16 +1537,6 @@
       ],
       "default": "COOPERATIVE_CLOSE"
     },
-    "ChannelCloseSummaryInitiator": {
-      "type": "string",
-      "enum": [
-        "UNKNOWN",
-        "LOCAL",
-        "REMOTE",
-        "BOTH"
-      ],
-      "default": "UNKNOWN"
-    },
     "ChannelEventUpdateUpdateType": {
       "type": "string",
       "enum": [
@@ -1742,9 +1757,12 @@
           "description": "*\nThe minimum satoshis the other node is required to reserve in its\nbalance."
         },
         "initiator": {
-          "type": "boolean",
-          "format": "boolean",
-          "description": "True if we initiated opening the channel."
+          "$ref": "#/definitions/lnrpcInitiator",
+          "description": "The party that initiated opening the channel."
+        },
+        "commitment_type": {
+          "$ref": "#/definitions/lnrpcCommitmentType",
+          "description": "/ The commitment type used by this channel."
         }
       }
     },
@@ -2228,11 +2246,11 @@
           "description": "/ Details on how the channel was closed."
         },
         "open_initiator": {
-          "$ref": "#/definitions/ChannelCloseSummaryInitiator",
+          "$ref": "#/definitions/lnrpcInitiator",
           "description": "*\nOpen initiator is the party that initiated opening the channel. Note that\nthis value may be unknown if the channel was closed before we migrated to\nstore open channel information after close."
         },
         "close_initiator": {
-          "$ref": "#/definitions/ChannelCloseSummaryInitiator",
+          "$ref": "#/definitions/lnrpcInitiator",
           "description": "*\nClose initiator indicates which party initiated the close. This value will\nbe unknown for channels that were cooperatively closed before we started\ntracking cooperative close initiators. Note that this indicates which party\ninitiated a close, and it is possible for both to initiate cooperative or\nforce closes, although only one party's close will be confirmed on chain."
         }
       }
@@ -2522,10 +2540,11 @@
       "enum": [
         "LEGACY",
         "STATIC_REMOTE_KEY",
-        "ANCHORS"
+        "ANCHORS",
+        "UNKNOWN_COMMITMENT_TYPE"
       ],
       "default": "LEGACY",
-      "description": " - LEGACY: *\nA channel using the legacy commitment format having tweaked to_remote\nkeys.\n - STATIC_REMOTE_KEY: *\nA channel that uses the modern commitment format where the key in the\noutput of the remote party does not change each state. This makes back\nup and recovery easier as when the channel is closed, the funds go\ndirectly to that key.\n - ANCHORS: *\nA channel that uses a commitment format that has anchor outputs on the\ncommitments, allowing fee bumping after a force close transaction has\nbeen broadcast."
+      "description": " - LEGACY: *\nA channel using the legacy commitment format having tweaked to_remote\nkeys.\n - STATIC_REMOTE_KEY: *\nA channel that uses the modern commitment format where the key in the\noutput of the remote party does not change each state. This makes back\nup and recovery easier as when the channel is closed, the funds go\ndirectly to that key.\n - ANCHORS: *\nA channel that uses a commitment format that has anchor outputs on the\ncommitments, allowing fee bumping after a force close transaction has\nbeen broadcast.\n - UNKNOWN_COMMITMENT_TYPE: *\nReturned when the commitment type isn't known or unavailable."
     },
     "lnrpcConnectPeerRequest": {
       "type": "object",
@@ -2717,7 +2736,7 @@
         }
       }
     },
-    "lnrpcFloatValue": {
+    "lnrpcFloatMetric": {
       "type": "object",
       "properties": {
         "value": {
@@ -2824,11 +2843,46 @@
         }
       }
     },
+    "lnrpcFundingPsbtFinalize": {
+      "type": "object",
+      "properties": {
+        "signed_psbt": {
+          "type": "string",
+          "format": "byte",
+          "description": "*\nThe funded PSBT that contains all witness data to send the exact channel\ncapacity amount to the PK script returned in the open channel message in a\nprevious step."
+        },
+        "pending_chan_id": {
+          "type": "string",
+          "format": "byte",
+          "description": "/ The pending channel ID of the channel to get the PSBT for."
+        }
+      }
+    },
+    "lnrpcFundingPsbtVerify": {
+      "type": "object",
+      "properties": {
+        "funded_psbt": {
+          "type": "string",
+          "format": "byte",
+          "description": "*\nThe funded but not yet signed PSBT that sends the exact channel capacity\namount to the PK script returned in the open channel message in a previous\nstep."
+        },
+        "pending_chan_id": {
+          "type": "string",
+          "format": "byte",
+          "description": "/ The pending channel ID of the channel to get the PSBT for."
+        }
+      }
+    },
     "lnrpcFundingShim": {
       "type": "object",
       "properties": {
         "chan_point_shim": {
-          "$ref": "#/definitions/lnrpcChanPointShim"
+          "$ref": "#/definitions/lnrpcChanPointShim",
+          "description": "*\nA channel shim where the channel point was fully constructed outside\nof lnd's wallet and the transaction might already be published."
+        },
+        "psbt_shim": {
+          "$ref": "#/definitions/lnrpcPsbtShim",
+          "description": "*\nA channel shim that uses a PSBT to fund and sign the channel funding\ntransaction."
         }
       }
     },
@@ -2868,6 +2922,10 @@
         "version": {
           "type": "string",
           "description": "/ The version of the LND software that the node is running."
+        },
+        "commit_hash": {
+          "type": "string",
+          "description": "/ The SHA1 commit hash that the daemon is compiled with."
         },
         "identity_pubkey": {
           "type": "string",
@@ -3141,6 +3199,16 @@
     },
     "lnrpcInitWalletResponse": {
       "type": "object"
+    },
+    "lnrpcInitiator": {
+      "type": "string",
+      "enum": [
+        "INITIATOR_UNKNOWN",
+        "INITIATOR_LOCAL",
+        "INITIATOR_REMOTE",
+        "INITIATOR_BOTH"
+      ],
+      "default": "INITIATOR_UNKNOWN"
     },
     "lnrpcInvoice": {
       "type": "object",
@@ -3454,6 +3522,16 @@
             "$ref": "#/definitions/lnrpcPayment"
           },
           "title": "/ The list of payments"
+        },
+        "first_index_offset": {
+          "type": "string",
+          "format": "uint64",
+          "description": "*\nThe index of the first item in the set of returned payments. This can be\nused as the index_offset to continue seeking backwards in the next request."
+        },
+        "last_index_offset": {
+          "type": "string",
+          "format": "uint64",
+          "description": "*\nThe index of the last item in the set of returned payments. This can be used\nas the index_offset to continue seeking forwards in the next request."
         }
       }
     },
@@ -3625,9 +3703,10 @@
     "lnrpcNodeMetricType": {
       "type": "string",
       "enum": [
+        "UNKNOWN",
         "BETWEENNESS_CENTRALITY"
       ],
-      "default": "BETWEENNESS_CENTRALITY"
+      "default": "UNKNOWN"
     },
     "lnrpcNodeMetricsResponse": {
       "type": "object",
@@ -3635,7 +3714,7 @@
         "betweenness_centrality": {
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/definitions/lnrpcFloatValue"
+            "$ref": "#/definitions/lnrpcFloatMetric"
           },
           "description": "*\nBetweenness centrality is the sum of the ratio of shortest paths that pass\nthrough the node for each pair of nodes in the graph (not counting paths\nstarting or ending at this node).\nMap of node pubkey to betweenness centrality of the node. Normalized\nvalues are in the [0,1] closed interval."
         }
@@ -3751,10 +3830,16 @@
       "type": "object",
       "properties": {
         "chan_pending": {
-          "$ref": "#/definitions/lnrpcPendingUpdate"
+          "$ref": "#/definitions/lnrpcPendingUpdate",
+          "description": "*\nSignals that the channel is now fully negotiated and the funding\ntransaction published."
         },
         "chan_open": {
-          "$ref": "#/definitions/lnrpcChannelOpenUpdate"
+          "$ref": "#/definitions/lnrpcChannelOpenUpdate",
+          "description": "*\nSignals that the channel's funding transaction has now reached the\nrequired number of confirmations on chain and can be used."
+        },
+        "psbt_fund": {
+          "$ref": "#/definitions/lnrpcReadyForPsbtFunding",
+          "description": "*\nSignals that the funding process has been suspended and the construction\nof a PSBT that funds the channel PK script is now required."
         },
         "pending_chan_id": {
           "type": "string",
@@ -3855,13 +3940,6 @@
           "format": "int64",
           "title": "/ Deprecated, use creation_time_ns"
         },
-        "path": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "/ The path this payment took."
-        },
         "fee": {
           "type": "string",
           "format": "int64",
@@ -3910,8 +3988,29 @@
             "$ref": "#/definitions/lnrpcHTLCAttempt"
           },
           "description": "/ The HTLCs made in attempt to settle the payment [EXPERIMENTAL]."
+        },
+        "payment_index": {
+          "type": "string",
+          "format": "uint64",
+          "description": "*\nThe creation index of this payment. Each payment can be uniquely identified\nby this index, which may not strictly increment by 1 for payments made in\nolder versions of lnd."
+        },
+        "failure_reason": {
+          "$ref": "#/definitions/lnrpcPaymentFailureReason"
         }
       }
+    },
+    "lnrpcPaymentFailureReason": {
+      "type": "string",
+      "enum": [
+        "FAILURE_REASON_NONE",
+        "FAILURE_REASON_TIMEOUT",
+        "FAILURE_REASON_NO_ROUTE",
+        "FAILURE_REASON_ERROR",
+        "FAILURE_REASON_INCORRECT_PAYMENT_DETAILS",
+        "FAILURE_REASON_INSUFFICIENT_BALANCE"
+      ],
+      "default": "FAILURE_REASON_NONE",
+      "description": " - FAILURE_REASON_NONE: *\nPayment isn't failed (yet).\n - FAILURE_REASON_TIMEOUT: *\nThere are more routes to try, but the payment timeout was exceeded.\n - FAILURE_REASON_NO_ROUTE: *\nAll possible routes were tried and failed permanently. Or were no\nroutes to the destination at all.\n - FAILURE_REASON_ERROR: *\nA non-recoverable error has occured.\n - FAILURE_REASON_INCORRECT_PAYMENT_DETAILS: *\nPayment details incorrect (unknown hash, invalid amt or\ninvalid final cltv delta)\n - FAILURE_REASON_INSUFFICIENT_BALANCE: *\nInsufficient local balance."
     },
     "lnrpcPeer": {
       "type": "object",
@@ -4118,6 +4217,21 @@
     "lnrpcPolicyUpdateResponse": {
       "type": "object"
     },
+    "lnrpcPsbtShim": {
+      "type": "object",
+      "properties": {
+        "pending_chan_id": {
+          "type": "string",
+          "format": "byte",
+          "description": "*\nA unique identifier of 32 random bytes that will be used as the pending\nchannel ID to identify the PSBT state machine when interacting with it and\non the wire protocol to initiate the funding request."
+        },
+        "base_psbt": {
+          "type": "string",
+          "format": "byte",
+          "description": "*\nAn optional base PSBT the new channel output will be added to. If this is\nnon-empty, it must be a binary serialized PSBT."
+        }
+      }
+    },
     "lnrpcQueryRoutesResponse": {
       "type": "object",
       "properties": {
@@ -4132,6 +4246,25 @@
           "type": "number",
           "format": "double",
           "title": "*\nThe success probability of the returned route based on the current mission\ncontrol state. [EXPERIMENTAL]"
+        }
+      }
+    },
+    "lnrpcReadyForPsbtFunding": {
+      "type": "object",
+      "properties": {
+        "funding_address": {
+          "type": "string",
+          "description": "*\nThe P2WSH address of the channel funding multisig address that the below\nspecified amount in satoshis needs to be sent to."
+        },
+        "funding_amount": {
+          "type": "string",
+          "format": "int64",
+          "description": "*\nThe exact amount in satoshis that needs to be sent to the above address to\nfund the pending channel."
+        },
+        "psbt": {
+          "type": "string",
+          "format": "byte",
+          "description": "*\nA raw PSBT that contains the pending channel output. If a base PSBT was\nprovided in the PsbtShim, this is the base PSBT with one additional output.\nIf no base PSBT was specified, this is an otherwise empty PSBT with exactly\none output."
         }
       }
     },

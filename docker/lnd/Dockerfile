@@ -16,7 +16,7 @@ COPY . /go/src/github.com/monasuite/lnd
 
 RUN cd /go/src/github.com/monasuite/lnd \
 &&  make \
-&&  make install tags="signrpc walletrpc chainrpc invoicesrpc routerrpc"
+&&  make install tags="signrpc walletrpc chainrpc invoicesrpc"
 
 # Start a new, final image to reduce size.
 FROM alpine as final

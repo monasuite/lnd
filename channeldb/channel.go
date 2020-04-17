@@ -2,6 +2,7 @@ package channeldb
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -474,7 +475,6 @@ var chanStatusStrings = map[ChannelStatus]string{
 
 // orderedChanStatusFlags is an in-order list of all that channel status flags.
 var orderedChanStatusFlags = []ChannelStatus{
-	ChanStatusDefault,
 	ChanStatusBorked,
 	ChanStatusCommitBroadcasted,
 	ChanStatusLocalDataLoss,
@@ -487,7 +487,7 @@ var orderedChanStatusFlags = []ChannelStatus{
 // String returns a human-readable representation of the ChannelStatus.
 func (c ChannelStatus) String() string {
 	// If no flags are set, then this is the default case.
-	if c == 0 {
+	if c == ChanStatusDefault {
 		return chanStatusStrings[ChanStatusDefault]
 	}
 
@@ -710,6 +710,12 @@ func (c *OpenChannel) HasChanStatus(status ChannelStatus) bool {
 }
 
 func (c *OpenChannel) hasChanStatus(status ChannelStatus) bool {
+	// Special case ChanStatusDefualt since it isn't actually flag, but a
+	// particular combination (or lack-there-of) of flags.
+	if status == ChanStatusDefault {
+		return c.chanStatus == ChanStatusDefault
+	}
+
 	return c.chanStatus&status == status
 }
 
@@ -1481,6 +1487,36 @@ func (c *OpenChannel) BalancesAtHeight(height uint64) (lnwire.MilliSatoshi,
 	}
 
 	return commit.LocalBalance, commit.RemoteBalance, nil
+}
+
+// ActiveHtlcs returns a slice of HTLC's which are currently active on *both*
+// commitment transactions.
+func (c *OpenChannel) ActiveHtlcs() []HTLC {
+	c.RLock()
+	defer c.RUnlock()
+
+	// We'll only return HTLC's that are locked into *both* commitment
+	// transactions. So we'll iterate through their set of HTLC's to note
+	// which ones are present on their commitment.
+	remoteHtlcs := make(map[[32]byte]struct{})
+	for _, htlc := range c.RemoteCommitment.Htlcs {
+		onionHash := sha256.Sum256(htlc.OnionBlob)
+		remoteHtlcs[onionHash] = struct{}{}
+	}
+
+	// Now that we know which HTLC's they have, we'll only mark the HTLC's
+	// as active if *we* know them as well.
+	activeHtlcs := make([]HTLC, 0, len(remoteHtlcs))
+	for _, htlc := range c.LocalCommitment.Htlcs {
+		onionHash := sha256.Sum256(htlc.OnionBlob)
+		if _, ok := remoteHtlcs[onionHash]; !ok {
+			continue
+		}
+
+		activeHtlcs = append(activeHtlcs, htlc)
+	}
+
+	return activeHtlcs
 }
 
 // HTLC is the on-disk representation of a hash time-locked contract. HTLCs are

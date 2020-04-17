@@ -61,6 +61,7 @@ const (
 	channelCloseTimeout = lntest.ChannelCloseTimeout
 	itestLndBinary      = "../../lnd-itest"
 	anchorSize          = 330
+	noFeeLimitMsat      = math.MaxInt64
 )
 
 // harnessTest wraps a regular testing.T providing enhanced error detection
@@ -205,6 +206,31 @@ func mineBlocks(t *harnessTest, net *lntest.NetworkHarness,
 	return blocks
 }
 
+// openChannelStream blocks until an OpenChannel request for a channel funding
+// by alice succeeds. If it does, a stream client is returned to receive events
+// about the opening channel.
+func openChannelStream(ctx context.Context, t *harnessTest,
+	net *lntest.NetworkHarness, alice, bob *lntest.HarnessNode,
+	p lntest.OpenChannelParams) lnrpc.Lightning_OpenChannelClient {
+
+	t.t.Helper()
+
+	// Wait until we are able to fund a channel successfully. This wait
+	// prevents us from erroring out when trying to create a channel while
+	// the node is starting up.
+	var chanOpenUpdate lnrpc.Lightning_OpenChannelClient
+	err := wait.NoError(func() error {
+		var err error
+		chanOpenUpdate, err = net.OpenChannel(ctx, alice, bob, p)
+		return err
+	}, defaultTimeout)
+	if err != nil {
+		t.Fatalf("unable to open channel: %v", err)
+	}
+
+	return chanOpenUpdate
+}
+
 // openChannelAndAssert attempts to open a channel with the specified
 // parameters extended from Alice to Bob. Additionally, two items are asserted
 // after the channel is considered open: the funding transaction should be
@@ -214,12 +240,9 @@ func openChannelAndAssert(ctx context.Context, t *harnessTest,
 	net *lntest.NetworkHarness, alice, bob *lntest.HarnessNode,
 	p lntest.OpenChannelParams) *lnrpc.ChannelPoint {
 
-	chanOpenUpdate, err := net.OpenChannel(
-		ctx, alice, bob, p,
-	)
-	if err != nil {
-		t.Fatalf("unable to open channel: %v", err)
-	}
+	t.t.Helper()
+
+	chanOpenUpdate := openChannelStream(ctx, t, net, alice, bob, p)
 
 	// Mine 6 blocks, then wait for Alice's node to notify us that the
 	// channel has been opened. The funding transaction should be found
@@ -793,7 +816,7 @@ func testOnchainFundRecovery(net *lntest.NetworkHarness, t *harnessTest) {
 	// method takes the expected value of Carol's balance when using the
 	// given recovery window. Additionally, the caller can specify an action
 	// to perform on the restored node before the node is shutdown.
-	restoreCheckBalance := func(expAmount int64, expectedNumUTXOs int,
+	restoreCheckBalance := func(expAmount int64, expectedNumUTXOs uint32,
 		recoveryWindow int32, fn func(*lntest.HarnessNode)) {
 
 		// Restore Carol, passing in the password, mnemonic, and
@@ -819,13 +842,7 @@ func testOnchainFundRecovery(net *lntest.NetworkHarness, t *harnessTest) {
 				t.Fatalf("unable to query wallet balance: %v",
 					err)
 			}
-
-			// Verify that Carol's balance matches our expected
-			// amount.
 			currBalance = resp.ConfirmedBalance
-			if expAmount != currBalance {
-				return false
-			}
 
 			utxoReq := &lnrpc.ListUnspentRequest{
 				MaxConfs: math.MaxInt32,
@@ -835,8 +852,13 @@ func testOnchainFundRecovery(net *lntest.NetworkHarness, t *harnessTest) {
 			if err != nil {
 				t.Fatalf("unable to query utxos: %v", err)
 			}
+			currNumUTXOs = uint32(len(utxoResp.Utxos))
 
-			currNumUTXOs := len(utxoResp.Utxos)
+			// Verify that Carol's balance and number of UTXOs
+			// matches what's expected.
+			if expAmount != currBalance {
+				return false
+			}
 			if currNumUTXOs != expectedNumUTXOs {
 				return false
 			}
@@ -952,7 +974,50 @@ func testOnchainFundRecovery(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Ensure that using a recovery window of 20 succeeds with all UTXOs
 	// found and the final balance reflected.
-	restoreCheckBalance(6*btcutil.SatoshiPerBitcoin, 6, 20, nil)
+
+	// After these checks are done, we'll want to make sure we can also
+	// recover change address outputs.  This is mainly motivated by a now
+	// fixed bug in the wallet in which change addresses could at times be
+	// created outside of the default key scopes. Recovery only used to be
+	// performed on the default key scopes, so ideally this test case
+	// would've caught the bug earlier. Carol has received 6 BTC so far from
+	// the miner, we'll send 5 back to ensure all of her UTXOs get spent to
+	// avoid fee discrepancies and a change output is formed.
+	const minerAmt = 5 * btcutil.SatoshiPerBitcoin
+	const finalBalance = 6 * btcutil.SatoshiPerBitcoin
+	promptChangeAddr := func(node *lntest.HarnessNode) {
+		minerAddr, err := net.Miner.NewAddress()
+		if err != nil {
+			t.Fatalf("unable to create new miner address: %v", err)
+		}
+		ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
+		resp, err := node.SendCoins(ctxt, &lnrpc.SendCoinsRequest{
+			Addr:   minerAddr.String(),
+			Amount: minerAmt,
+		})
+		if err != nil {
+			t.Fatalf("unable to send coins to miner: %v", err)
+		}
+		txid, err := waitForTxInMempool(
+			net.Miner.Node, minerMempoolTimeout,
+		)
+		if err != nil {
+			t.Fatalf("transaction not found in mempool: %v", err)
+		}
+		if resp.Txid != txid.String() {
+			t.Fatalf("txid mismatch: %v vs %v", resp.Txid,
+				txid.String())
+		}
+		block := mineBlocks(t, net, 1, 1)[0]
+		assertTxInBlock(t, block, txid)
+	}
+	restoreCheckBalance(finalBalance, 6, 20, promptChangeAddr)
+
+	// We should expect a static fee of 27750 satoshis for spending 6 inputs
+	// (3 P2WPKH, 3 NP2WPKH) to two P2WPKH outputs. Carol should therefore
+	// only have one UTXO present (the change output) of 6 - 5 - fee BTC.
+	const fee = 27750
+	restoreCheckBalance(finalBalance-minerAmt-fee, 1, 21, nil)
 }
 
 // commitType is a simple enum used to run though the basic funding flow with
@@ -1347,23 +1412,20 @@ func testUnconfirmedChannelFunding(net *lntest.NetworkHarness, t *harnessTest) {
 	// Now, we'll connect her to Alice so that they can open a channel
 	// together. The funding flow should select Carol's unconfirmed output
 	// as she doesn't have any other funds since it's a new node.
+
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	if err := net.ConnectNodes(ctxt, carol, net.Alice); err != nil {
 		t.Fatalf("unable to connect dave to alice: %v", err)
 	}
-	ctxt, _ = context.WithTimeout(ctxb, channelOpenTimeout)
-	chanOpenUpdate, err := net.OpenChannel(
-		ctxt, carol, net.Alice,
+
+	chanOpenUpdate := openChannelStream(
+		ctxt, t, net, carol, net.Alice,
 		lntest.OpenChannelParams{
 			Amt:              chanAmt,
 			PushAmt:          pushAmt,
 			SpendUnconfirmed: true,
 		},
 	)
-	if err != nil {
-		t.Fatalf("unable to open channel between carol and alice: %v",
-			err)
-	}
 
 	// Confirm the channel and wait for it to be recognized by both
 	// parties. Two transactions should be mined, the unconfirmed spend and
@@ -1909,8 +1971,9 @@ func testUpdateChannelPolicy(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Alice knows about the channel policy of Carol and should therefore
 	// not be able to find a path during routing.
+	expErr := channeldb.FailureReasonNoRoute.Error()
 	if err == nil ||
-		!strings.Contains(err.Error(), "unable to find a path") {
+		!strings.Contains(err.Error(), expErr) {
 		t.Fatalf("expected payment to fail, instead got %v", err)
 	}
 
@@ -3989,6 +4052,41 @@ func assertAmountSent(amt btcutil.Amount, sndr, rcvr *lntest.HarnessNode) func()
 	}
 }
 
+// assertLastHTLCError checks that the last sent HTLC of the last payment sent
+// by the given node failed with the expected failure code.
+func assertLastHTLCError(t *harnessTest, node *lntest.HarnessNode,
+	code lnrpc.Failure_FailureCode) {
+
+	req := &lnrpc.ListPaymentsRequest{
+		IncludeIncomplete: true,
+	}
+	ctxt, _ := context.WithTimeout(context.Background(), defaultTimeout)
+	paymentsResp, err := node.ListPayments(ctxt, req)
+	if err != nil {
+		t.Fatalf("error when obtaining payments: %v", err)
+	}
+
+	payments := paymentsResp.Payments
+	if len(payments) == 0 {
+		t.Fatalf("no payments found")
+	}
+
+	payment := payments[len(payments)-1]
+	htlcs := payment.Htlcs
+	if len(htlcs) == 0 {
+		t.Fatalf("no htlcs")
+	}
+
+	htlc := htlcs[len(htlcs)-1]
+	if htlc.Failure == nil {
+		t.Fatalf("expected failure")
+	}
+
+	if htlc.Failure.Code != code {
+		t.Fatalf("expected failure %v, got %v", code, htlc.Failure.Code)
+	}
+}
+
 // testSphinxReplayPersistence verifies that replayed onion packets are rejected
 // by a remote peer after a restart. We use a combination of unsafe
 // configuration arguments to force Carol to replay the same sphinx packet after
@@ -4128,11 +4226,10 @@ func testSphinxReplayPersistence(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Construct the response we expect after sending a duplicate packet
 	// that fails due to sphinx replay detection.
-	replayErr := "InvalidOnionKey"
-	if !strings.Contains(resp.PaymentError, replayErr) {
-		t.Fatalf("received payment error: %v, expected %v",
-			resp.PaymentError, replayErr)
+	if resp.PaymentError == "" {
+		t.Fatalf("expected payment error")
 	}
+	assertLastHTLCError(t, carol, lnrpc.Failure_INVALID_ONION_KEY)
 
 	// Since the payment failed, the balance should still be left
 	// unaltered.
@@ -4239,15 +4336,12 @@ func testListPayments(net *lntest.NetworkHarness, t *harnessTest) {
 			len(paymentsResp.Payments), 1)
 	}
 	p := paymentsResp.Payments[0]
+	path := p.Htlcs[len(p.Htlcs)-1].Route.Hops
 
 	// Ensure that the stored path shows a direct payment to Bob with no
 	// other nodes in-between.
-	expectedPath := []string{
-		net.Bob.PubKeyStr,
-	}
-	if !reflect.DeepEqual(p.Path, expectedPath) {
-		t.Fatalf("incorrect path, got %v, want %v",
-			p.Path, expectedPath)
+	if len(path) != 1 || path[0].PubKey != net.Bob.PubKeyStr {
+		t.Fatalf("incorrect path")
 	}
 
 	// The payment amount should also match our previous payment directly.
@@ -4284,7 +4378,7 @@ func testListPayments(net *lntest.NetworkHarness, t *harnessTest) {
 		t.Fatalf("Can't delete payments at the end: %v", err)
 	}
 
-	// Check that there are no payments before test.
+	// Check that there are no payments after test.
 	listReq := &lnrpc.ListPaymentsRequest{}
 	ctxt, _ = context.WithTimeout(ctxt, defaultTimeout)
 	paymentsResp, err = net.Alice.ListPayments(ctxt, listReq)
@@ -5446,15 +5540,12 @@ func testUnannouncedChannels(net *lntest.NetworkHarness, t *harnessTest) {
 	// Open a channel between Alice and Bob, ensuring the
 	// channel has been opened properly.
 	ctxt, _ := context.WithTimeout(ctxb, channelOpenTimeout)
-	chanOpenUpdate, err := net.OpenChannel(
-		ctxt, net.Alice, net.Bob,
+	chanOpenUpdate := openChannelStream(
+		ctxt, t, net, net.Alice, net.Bob,
 		lntest.OpenChannelParams{
 			Amt: amount,
 		},
 	)
-	if err != nil {
-		t.Fatalf("unable to open channel: %v", err)
-	}
 
 	// Mine 2 blocks, and check that the channel is opened but not yet
 	// announced to the network.
@@ -5684,8 +5775,8 @@ func testPrivateChannels(net *lntest.NetworkHarness, t *harnessTest) {
 		t.Fatalf("unable to connect dave to alice: %v", err)
 	}
 	ctxt, _ = context.WithTimeout(ctxb, channelOpenTimeout)
-	chanOpenUpdate, err := net.OpenChannel(
-		ctxt, carol, net.Alice,
+	chanOpenUpdate := openChannelStream(
+		ctxt, t, net, carol, net.Alice,
 		lntest.OpenChannelParams{
 			Amt:     chanAmt,
 			Private: true,
@@ -6622,7 +6713,7 @@ func subscribeChannelNotifications(ctxb context.Context, t *harnessTest,
 // expected type.
 func verifyCloseUpdate(chanUpdate *lnrpc.ChannelEventUpdate,
 	closeType lnrpc.ChannelCloseSummary_ClosureType,
-	closeInitiator lnrpc.ChannelCloseSummary_Initiator) error {
+	closeInitiator lnrpc.Initiator) error {
 
 	// We should receive one inactive and one closed notification
 	// for each channel.
@@ -6766,7 +6857,7 @@ func testBasicChannelCreationAndUpdates(net *lntest.NetworkHarness, t *harnessTe
 	// receive the correct channel updates in order.
 	verifyCloseUpdatesReceived := func(sub channelSubscription,
 		forceType lnrpc.ChannelCloseSummary_ClosureType,
-		closeInitiator lnrpc.ChannelCloseSummary_Initiator) error {
+		closeInitiator lnrpc.Initiator) error {
 
 		// Ensure one inactive and one closed notification is received for each
 		// closed channel.
@@ -6812,7 +6903,7 @@ func testBasicChannelCreationAndUpdates(net *lntest.NetworkHarness, t *harnessTe
 	// close initiator because Alice closed the channels.
 	if err := verifyCloseUpdatesReceived(bobChanSub,
 		lnrpc.ChannelCloseSummary_REMOTE_FORCE_CLOSE,
-		lnrpc.ChannelCloseSummary_REMOTE); err != nil {
+		lnrpc.Initiator_INITIATOR_REMOTE); err != nil {
 		t.Fatalf("errored verifying close updates: %v", err)
 	}
 
@@ -6822,7 +6913,7 @@ func testBasicChannelCreationAndUpdates(net *lntest.NetworkHarness, t *harnessTe
 	// close initiator because Alice closed the channels.
 	if err := verifyCloseUpdatesReceived(aliceChanSub,
 		lnrpc.ChannelCloseSummary_LOCAL_FORCE_CLOSE,
-		lnrpc.ChannelCloseSummary_LOCAL); err != nil {
+		lnrpc.Initiator_INITIATOR_LOCAL); err != nil {
 		t.Fatalf("errored verifying close updates: %v", err)
 	}
 }
@@ -6864,15 +6955,12 @@ func testMaxPendingChannels(net *lntest.NetworkHarness, t *harnessTest) {
 	openStreams := make([]lnrpc.Lightning_OpenChannelClient, maxPendingChannels)
 	for i := 0; i < maxPendingChannels; i++ {
 		ctxt, _ = context.WithTimeout(ctxb, channelOpenTimeout)
-		stream, err := net.OpenChannel(
-			ctxt, net.Alice, carol,
+		stream := openChannelStream(
+			ctxt, t, net, net.Alice, carol,
 			lntest.OpenChannelParams{
 				Amt: amount,
 			},
 		)
-		if err != nil {
-			t.Fatalf("unable to open channel: %v", err)
-		}
 		openStreams[i] = stream
 	}
 
@@ -9446,12 +9534,11 @@ out:
 		t.Fatalf("payment should have been rejected due to invalid " +
 			"payment hash")
 	}
-	expectedErrorCode := lnwire.CodeIncorrectOrUnknownPaymentDetails.String()
-	if !strings.Contains(resp.PaymentError, expectedErrorCode) {
-		// TODO(roasbeef): make into proper gRPC error code
-		t.Fatalf("payment should have failed due to unknown payment hash, "+
-			"instead failed due to: %v", resp.PaymentError)
-	}
+
+	assertLastHTLCError(
+		t, net.Alice,
+		lnrpc.Failure_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS,
+	)
 
 	// The balances of all parties should be the same as initially since
 	// the HTLC was canceled.
@@ -9478,18 +9565,11 @@ out:
 		t.Fatalf("payment should have been rejected due to wrong " +
 			"HTLC amount")
 	}
-	expectedErrorCode = lnwire.CodeIncorrectOrUnknownPaymentDetails.String()
-	if !strings.Contains(resp.PaymentError, expectedErrorCode) {
-		t.Fatalf("payment should have failed due to wrong amount, "+
-			"instead failed due to: %v", resp.PaymentError)
-	}
 
-	// We'll also ensure that the encoded error includes the invlaid HTLC
-	// amount.
-	if !strings.Contains(resp.PaymentError, htlcAmt.String()) {
-		t.Fatalf("error didn't include expected payment amt of %v: "+
-			"%v", htlcAmt, resp.PaymentError)
-	}
+	assertLastHTLCError(
+		t, net.Alice,
+		lnrpc.Failure_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS,
+	)
 
 	// The balances of all parties should be the same as initially since
 	// the HTLC was canceled.
@@ -9568,11 +9648,11 @@ out:
 	if resp.PaymentError == "" {
 		t.Fatalf("payment should fail due to insufficient "+
 			"capacity: %v", err)
-	} else if !strings.Contains(resp.PaymentError,
-		lnwire.CodeTemporaryChannelFailure.String()) {
-		t.Fatalf("payment should fail due to insufficient capacity, "+
-			"instead: %v", resp.PaymentError)
 	}
+
+	assertLastHTLCError(
+		t, net.Alice, lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE,
+	)
 
 	// Generate new invoice to not pay same invoice twice.
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
@@ -9610,11 +9690,8 @@ out:
 	if resp.PaymentError == "" {
 		t.Fatalf("payment should have failed")
 	}
-	expectedErrorCode = lnwire.CodeUnknownNextPeer.String()
-	if !strings.Contains(resp.PaymentError, expectedErrorCode) {
-		t.Fatalf("payment should fail due to unknown hop, instead: %v",
-			resp.PaymentError)
-	}
+
+	assertLastHTLCError(t, net.Alice, lnrpc.Failure_UNKNOWN_NEXT_PEER)
 
 	// Finally, immediately close the channel. This function will also
 	// block until the channel is closed and will additionally assert the
@@ -9781,9 +9858,8 @@ func testRejectHTLC(net *lntest.NetworkHarness, t *harnessTest) {
 			"should have been rejected, carol will not accept forwarded htlcs",
 		)
 	}
-	if !strings.Contains(err.Error(), lnwire.CodeChannelDisabled.String()) {
-		t.Fatalf("error returned should have been Channel Disabled")
-	}
+
+	assertLastHTLCError(t, net.Alice, lnrpc.Failure_CHANNEL_DISABLED)
 
 	// Close all channels.
 	ctxt, _ = context.WithTimeout(ctxb, channelCloseTimeout)
@@ -10266,9 +10342,7 @@ func testNodeSignVerify(net *lntest.NetworkHarness, t *harnessTest) {
 	closeChannelAndAssert(ctxt, t, net, net.Alice, aliceBobCh, false)
 }
 
-// testAsyncPayments tests the performance of the async payments, and also
-// checks that balances of both sides can't be become negative under stress
-// payment strikes.
+// testAsyncPayments tests the performance of the async payments.
 func testAsyncPayments(net *lntest.NetworkHarness, t *harnessTest) {
 	ctxb := context.Background()
 
@@ -10294,17 +10368,15 @@ func testAsyncPayments(net *lntest.NetworkHarness, t *harnessTest) {
 		t.Fatalf("unable to get alice channel info: %v", err)
 	}
 
-	// Calculate the number of invoices. We will deplete the channel
-	// all the way down to the channel reserve.
-	chanReserve := channelCapacity / 100
-	availableBalance := btcutil.Amount(info.LocalBalance) - chanReserve
-	numInvoices := int(availableBalance / paymentAmt)
+	// We'll create a number of invoices equal the max number of HTLCs that
+	// can be carried in one direction. The number on the commitment will
+	// likely be lower, but we can't guarantee that any more HTLCs will
+	// succeed due to the limited path diversity and inability of the router
+	// to retry via another path.
+	numInvoices := int(input.MaxHTLCNumber / 2)
 
 	bobAmt := int64(numInvoices * paymentAmt)
 	aliceAmt := info.LocalBalance - bobAmt
-
-	// Send one more payment in order to cause insufficient capacity error.
-	numInvoices++
 
 	// With the channel open, we'll create invoices for Bob that Alice
 	// will pay to in order to advance the state of the channel.
@@ -10346,26 +10418,11 @@ func testAsyncPayments(net *lntest.NetworkHarness, t *harnessTest) {
 		}
 	}
 
-	// We should receive one insufficient capacity error, because we sent
-	// one more payment than we can actually handle with the current
-	// channel capacity.
-	errorReceived := false
+	// Wait until all the payments have settled.
 	for i := 0; i < numInvoices; i++ {
-		if resp, err := alicePayStream.Recv(); err != nil {
+		if _, err := alicePayStream.Recv(); err != nil {
 			t.Fatalf("payment stream have been closed: %v", err)
-		} else if resp.PaymentError != "" {
-			if errorReceived {
-				t.Fatalf("redundant payment error: %v",
-					resp.PaymentError)
-			}
-
-			errorReceived = true
-			continue
 		}
-	}
-
-	if !errorReceived {
-		t.Fatalf("insufficient capacity error haven't been received")
 	}
 
 	// All payments have been sent, mark the finish time.
@@ -10457,8 +10514,12 @@ func testBidirectionalAsyncPayments(net *lntest.NetworkHarness, t *harnessTest) 
 		t.Fatalf("unable to get alice channel info: %v", err)
 	}
 
-	// Calculate the number of invoices.
-	numInvoices := int(info.LocalBalance / paymentAmt)
+	// We'll create a number of invoices equal the max number of HTLCs that
+	// can be carried in one direction. The number on the commitment will
+	// likely be lower, but we can't guarantee that any more HTLCs will
+	// succeed due to the limited path diversity and inability of the router
+	// to retry via another path.
+	numInvoices := int(input.MaxHTLCNumber / 2)
 
 	// Nodes should exchange the same amount of money and because of this
 	// at the end balances should remain the same.
@@ -14208,13 +14269,13 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Wait for inlight status update.
 	for _, payStream := range paymentStreams {
-		status, err := payStream.Recv()
+		payment, err := payStream.Recv()
 		if err != nil {
 			t.Fatalf("Failed receiving status update: %v", err)
 		}
 
-		if status.State != routerrpc.PaymentState_IN_FLIGHT {
-			t.Fatalf("state not in flight: %v", status.State)
+		if payment.Status != lnrpc.Payment_IN_FLIGHT {
+			t.Fatalf("state not in flight: %v", payment.Status)
 		}
 	}
 
@@ -14253,8 +14314,8 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 
 			// We wait for the payment attempt to have been
 			// properly recorded in the DB.
-			if len(payment.Path) == 0 {
-				return fmt.Errorf("path is empty")
+			if len(payment.Htlcs) == 0 {
+				return fmt.Errorf("no attempt recorded")
 			}
 
 			delete(payHashes, payment.PaymentHash)
@@ -14292,7 +14353,7 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 	// Now after a restart, we must re-track the payments. We set up a
 	// goroutine for each to track thir status updates.
 	var (
-		statusUpdates []chan *routerrpc.PaymentStatus
+		statusUpdates []chan *lnrpc.Payment
 		wg            sync.WaitGroup
 		quit          = make(chan struct{})
 	)
@@ -14314,20 +14375,20 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 		}
 
 		// We set up a channel where we'll forward any status update.
-		upd := make(chan *routerrpc.PaymentStatus)
+		upd := make(chan *lnrpc.Payment)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
 			for {
-				status, err := payStream.Recv()
+				payment, err := payStream.Recv()
 				if err != nil {
 					close(upd)
 					return
 				}
 
 				select {
-				case upd <- status:
+				case upd <- payment:
 				case <-quit:
 					return
 				}
@@ -14337,17 +14398,17 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 		statusUpdates = append(statusUpdates, upd)
 	}
 
-	// Wait for the infligt status update.
+	// Wait for the in-flight status update.
 	for _, upd := range statusUpdates {
 		select {
-		case status, ok := <-upd:
+		case payment, ok := <-upd:
 			if !ok {
-				t.Fatalf("failed getting status update")
+				t.Fatalf("failed getting payment update")
 			}
 
-			if status.State != routerrpc.PaymentState_IN_FLIGHT {
+			if payment.Status != lnrpc.Payment_IN_FLIGHT {
 				t.Fatalf("state not in in flight: %v",
-					status.State)
+					payment.Status)
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatalf("in flight status not recevied")
@@ -14376,25 +14437,38 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Make sure we get the expected status update.
 	for i, upd := range statusUpdates {
-		select {
-		case status, ok := <-upd:
-			if !ok {
-				t.Fatalf("failed getting status update")
-			}
+		// Read until the payment is in a terminal state.
+		var payment *lnrpc.Payment
+		for payment == nil {
+			select {
+			case p, ok := <-upd:
+				if !ok {
+					t.Fatalf("failed getting payment update")
+				}
 
-			if i%2 == 0 {
-				if status.State != routerrpc.PaymentState_SUCCEEDED {
-					t.Fatalf("state not suceeded : %v",
-						status.State)
+				if p.Status == lnrpc.Payment_IN_FLIGHT {
+					continue
 				}
-			} else {
-				if status.State != routerrpc.PaymentState_FAILED_INCORRECT_PAYMENT_DETAILS {
-					t.Fatalf("state not failed: %v",
-						status.State)
-				}
+
+				payment = p
+			case <-time.After(5 * time.Second):
+				t.Fatalf("in flight status not recevied")
 			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("in flight status not recevied")
+		}
+
+		// Assert terminal payment state.
+		if i%2 == 0 {
+			if payment.Status != lnrpc.Payment_SUCCEEDED {
+				t.Fatalf("state not suceeded : %v",
+					payment.Status)
+			}
+		} else {
+			if payment.FailureReason !=
+				lnrpc.PaymentFailureReason_FAILURE_REASON_INCORRECT_PAYMENT_DETAILS {
+
+				t.Fatalf("state not failed: %v",
+					payment.FailureReason)
+			}
 		}
 	}
 
@@ -14642,6 +14716,47 @@ func testExternalFundingChanPoint(net *lntest.NetworkHarness, t *harnessTest) {
 	closeChannelAndAssert(ctxt, t, net, dave, chanPoint, false)
 }
 
+// sendAndAssertSuccess sends the given payment requests and asserts that the
+// payment completes successfully.
+func sendAndAssertSuccess(t *harnessTest, node *lntest.HarnessNode,
+	req *routerrpc.SendPaymentRequest) *lnrpc.Payment {
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	stream, err := node.RouterClient.SendPayment(ctx, req)
+	if err != nil {
+		t.Fatalf("unable to send payment: %v", err)
+	}
+
+	result, err := getPaymentResult(stream)
+	if err != nil {
+		t.Fatalf("unable to get payment result: %v", err)
+	}
+
+	if result.Status != lnrpc.Payment_SUCCEEDED {
+		t.Fatalf("payment failed: %v", result.Status)
+	}
+
+	return result
+}
+
+// getPaymentResult reads a final result from the stream and returns it.
+func getPaymentResult(stream routerrpc.Router_SendPaymentClient) (
+	*lnrpc.Payment, error) {
+
+	for {
+		payment, err := stream.Recv()
+		if err != nil {
+			return nil, err
+		}
+
+		if payment.Status != lnrpc.Payment_IN_FLIGHT {
+			return payment, nil
+		}
+	}
+}
+
 type testCase struct {
 	name string
 	test func(net *lntest.NetworkHarness, t *harnessTest)
@@ -14875,6 +14990,18 @@ var testsCases = []*testCase{
 		name: "external channel funding",
 		test: testExternalFundingChanPoint,
 	},
+	{
+		name: "psbt channel funding",
+		test: testPsbtChanFunding,
+	},
+	{
+		name: "sendtoroute multi path payment",
+		test: testSendToRouteMultiPath,
+	},
+	{
+		name: "send multi path payment",
+		test: testSendMultiPathPayment,
+	},
 }
 
 // TestLightningNetworkDaemon performs a series of integration tests amongst a
@@ -15015,6 +15142,10 @@ func TestLightningNetworkDaemon(t *testing.T) {
 		// Stop at the first failure. Mimic behavior of original test
 		// framework.
 		if !success {
+			// Log failure time to help relate the lnd logs to the
+			// failure.
+			t.Logf("Failure time: %v",
+				time.Now().Format("2006-01-02 15:04:05.000"))
 			break
 		}
 	}

@@ -67,6 +67,10 @@ var (
 	ErrBelowMinHTLC = fmt.Errorf("proposed HTLC value is below minimum " +
 		"allowed HTLC value")
 
+	// ErrInvalidHTLCAmt signals that a proposed HTLC has a value that is
+	// not positive.
+	ErrInvalidHTLCAmt = fmt.Errorf("proposed HTLC value must be positive")
+
 	// ErrCannotSyncCommitChains is returned if, upon receiving a ChanSync
 	// message, the state machine deems that is unable to properly
 	// synchronize states with the remote peer. In this case we should fail
@@ -549,7 +553,7 @@ type commitment struct {
 // transition.  This ensures that we don't assign multiple HTLC's to the same
 // index within the commitment transaction.
 func locateOutputIndex(p *PaymentDescriptor, tx *wire.MsgTx, ourCommit bool,
-	dups map[PaymentHash][]int32) (int32, error) {
+	dups map[PaymentHash][]int32, cltvs []uint32) (int32, error) {
 
 	// Checks to see if element (e) exists in slice (s).
 	contains := func(s []int32, e int32) bool {
@@ -571,8 +575,11 @@ func locateOutputIndex(p *PaymentDescriptor, tx *wire.MsgTx, ourCommit bool,
 	}
 
 	for i, txOut := range tx.TxOut {
+		cltv := cltvs[i]
+
 		if bytes.Equal(txOut.PkScript, pkScript) &&
-			txOut.Value == int64(p.Amount.ToSatoshis()) {
+			txOut.Value == int64(p.Amount.ToSatoshis()) &&
+			cltv == p.Timeout {
 
 			// If this payment hash and index has already been
 			// found, then we'll continue in order to avoid any
@@ -587,8 +594,8 @@ func locateOutputIndex(p *PaymentDescriptor, tx *wire.MsgTx, ourCommit bool,
 		}
 	}
 
-	return 0, fmt.Errorf("unable to find htlc: script=%x, value=%v",
-		pkScript, p.Amount)
+	return 0, fmt.Errorf("unable to find htlc: script=%x, value=%v, "+
+		"cltv=%v", pkScript, p.Amount, p.Timeout)
 }
 
 // populateHtlcIndexes modifies the set of HTLC's locked-into the target view
@@ -596,7 +603,9 @@ func locateOutputIndex(p *PaymentDescriptor, tx *wire.MsgTx, ourCommit bool,
 // we need to keep track of the indexes of each HTLC in order to properly write
 // the current state to disk, and also to locate the PaymentDescriptor
 // corresponding to HTLC outputs in the commitment transaction.
-func (c *commitment) populateHtlcIndexes(chanType channeldb.ChannelType) error {
+func (c *commitment) populateHtlcIndexes(chanType channeldb.ChannelType,
+	cltvs []uint32) error {
+
 	// First, we'll set up some state to allow us to locate the output
 	// index of the all the HTLC's within the commitment transaction. We
 	// must keep this index so we can validate the HTLC signatures sent to
@@ -632,7 +641,7 @@ func (c *commitment) populateHtlcIndexes(chanType channeldb.ChannelType) error {
 		// signatures.
 		case c.isOurs:
 			htlc.localOutputIndex, err = locateOutputIndex(
-				htlc, c.txn, c.isOurs, dups,
+				htlc, c.txn, c.isOurs, dups, cltvs,
 			)
 			if err != nil {
 				return err
@@ -653,7 +662,7 @@ func (c *commitment) populateHtlcIndexes(chanType channeldb.ChannelType) error {
 		// index within the HTLC index.
 		case !c.isOurs:
 			htlc.remoteOutputIndex, err = locateOutputIndex(
-				htlc, c.txn, c.isOurs, dups,
+				htlc, c.txn, c.isOurs, dups, cltvs,
 			)
 			if err != nil {
 				return err
@@ -766,7 +775,8 @@ func (c *commitment) toDiskCommit(ourCommit bool) *channeldb.ChannelCommitment {
 // restart a channel session.
 func (lc *LightningChannel) diskHtlcToPayDesc(feeRate chainfee.SatPerKWeight,
 	commitHeight uint64, htlc *channeldb.HTLC, localCommitKeys,
-	remoteCommitKeys *CommitmentKeyRing) (PaymentDescriptor, error) {
+	remoteCommitKeys *CommitmentKeyRing, isLocal bool) (PaymentDescriptor,
+	error) {
 
 	// The proper pkScripts for this PaymentDescriptor must be
 	// generated so we can easily locate them within the commitment
@@ -811,6 +821,19 @@ func (lc *LightningChannel) diskHtlcToPayDesc(feeRate chainfee.SatPerKWeight,
 		}
 	}
 
+	// Reconstruct the proper local/remote output indexes from the HTLC's
+	// persisted output index depending on whose commitment we are
+	// generating.
+	var (
+		localOutputIndex  int32
+		remoteOutputIndex int32
+	)
+	if isLocal {
+		localOutputIndex = htlc.OutputIndex
+	} else {
+		remoteOutputIndex = htlc.OutputIndex
+	}
+
 	// With the scripts reconstructed (depending on if this is our commit
 	// vs theirs or a pending commit for the remote party), we can now
 	// re-create the original payment descriptor.
@@ -822,6 +845,8 @@ func (lc *LightningChannel) diskHtlcToPayDesc(feeRate chainfee.SatPerKWeight,
 		HtlcIndex:          htlc.HtlcIndex,
 		LogIndex:           htlc.LogIndex,
 		OnionBlob:          htlc.OnionBlob,
+		localOutputIndex:   localOutputIndex,
+		remoteOutputIndex:  remoteOutputIndex,
 		ourPkScript:        ourP2WSH,
 		ourWitnessScript:   ourWitnessScript,
 		theirPkScript:      theirP2WSH,
@@ -837,7 +862,8 @@ func (lc *LightningChannel) diskHtlcToPayDesc(feeRate chainfee.SatPerKWeight,
 // for each side.
 func (lc *LightningChannel) extractPayDescs(commitHeight uint64,
 	feeRate chainfee.SatPerKWeight, htlcs []channeldb.HTLC, localCommitKeys,
-	remoteCommitKeys *CommitmentKeyRing) ([]PaymentDescriptor, []PaymentDescriptor, error) {
+	remoteCommitKeys *CommitmentKeyRing, isLocal bool) ([]PaymentDescriptor,
+	[]PaymentDescriptor, error) {
 
 	var (
 		incomingHtlcs []PaymentDescriptor
@@ -855,6 +881,7 @@ func (lc *LightningChannel) extractPayDescs(commitHeight uint64,
 		payDesc, err := lc.diskHtlcToPayDesc(
 			feeRate, commitHeight, &htlc,
 			localCommitKeys, remoteCommitKeys,
+			isLocal,
 		)
 		if err != nil {
 			return incomingHtlcs, outgoingHtlcs, err
@@ -905,6 +932,7 @@ func (lc *LightningChannel) diskCommitToMemCommit(isLocal bool,
 		diskCommit.CommitHeight,
 		chainfee.SatPerKWeight(diskCommit.FeePerKw),
 		diskCommit.Htlcs, localCommitKeys, remoteCommitKeys,
+		isLocal,
 	)
 	if err != nil {
 		return nil, err
@@ -932,13 +960,6 @@ func (lc *LightningChannel) diskCommitToMemCommit(isLocal bool,
 		commit.dustLimit = lc.channelState.LocalChanCfg.DustLimit
 	} else {
 		commit.dustLimit = lc.channelState.RemoteChanCfg.DustLimit
-	}
-
-	// Finally, we'll re-populate the HTLC index for this state so we can
-	// properly locate each HTLC within the commitment transaction.
-	err = commit.populateHtlcIndexes(lc.channelState.ChanType)
-	if err != nil {
-		return nil, err
 	}
 
 	return commit, nil
@@ -2428,8 +2449,11 @@ func (lc *LightningChannel) fetchCommitmentView(remoteChain bool,
 	}
 
 	// Finally, we'll populate all the HTLC indexes so we can track the
-	// locations of each HTLC in the commitment state.
-	if err := c.populateHtlcIndexes(lc.channelState.ChanType); err != nil {
+	// locations of each HTLC in the commitment state. We pass in the sorted
+	// slice of CLTV deltas in order to properly locate HTLCs that otherwise
+	// have the same payment hash and amount.
+	err = c.populateHtlcIndexes(lc.channelState.ChanType, commitTx.cltvs)
+	if err != nil {
 		return nil, err
 	}
 
@@ -3214,6 +3238,11 @@ func (lc *LightningChannel) validateCommitmentSanity(theirLogCounter,
 				amtInFlight += entry.Amount
 				numInFlight++
 
+				// Check that the HTLC amount is positive.
+				if entry.Amount == 0 {
+					return ErrInvalidHTLCAmt
+				}
+
 				// Check that the value of the HTLC they added
 				// is above our minimum.
 				if entry.Amount < constraints.MinHTLC {
@@ -3373,7 +3402,7 @@ func (lc *LightningChannel) SignNextCommitment() (lnwire.Sig, []lnwire.Sig, []ch
 		close(cancelChan)
 		return sig, htlcSigs, nil, err
 	}
-	sig, err = lnwire.NewSigFromRawSignature(rawSig)
+	sig, err = lnwire.NewSigFromSignature(rawSig)
 	if err != nil {
 		close(cancelChan)
 		return sig, htlcSigs, nil, err
@@ -5036,17 +5065,21 @@ func (lc *LightningChannel) getSignedCommitTx() (*wire.MsgTx, error) {
 	// for the transaction.
 	localCommit := lc.channelState.LocalCommitment
 	commitTx := localCommit.CommitTx.Copy()
-	theirSig := append(localCommit.CommitSig, byte(txscript.SigHashAll))
 
-	// With this, we then generate the full witness so the caller can
-	// broadcast a fully signed transaction.
-	lc.signDesc.SigHashes = txscript.NewTxSigHashes(commitTx)
-	ourSigRaw, err := lc.Signer.SignOutputRaw(commitTx, lc.signDesc)
+	theirSig, err := btcec.ParseDERSignature(
+		localCommit.CommitSig, btcec.S256(),
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	ourSig := append(ourSigRaw, byte(txscript.SigHashAll))
+	// With this, we then generate the full witness so the caller can
+	// broadcast a fully signed transaction.
+	lc.signDesc.SigHashes = txscript.NewTxSigHashes(commitTx)
+	ourSig, err := lc.Signer.SignOutputRaw(commitTx, lc.signDesc)
+	if err != nil {
+		return nil, err
+	}
 
 	// With the final signature generated, create the witness stack
 	// required to spend from the multi-sig output.
@@ -5430,11 +5463,16 @@ func newOutgoingHtlcResolution(signer input.Signer,
 		InputIndex: 0,
 	}
 
+	htlcSig, err := btcec.ParseDERSignature(htlc.Signature, btcec.S256())
+	if err != nil {
+		return nil, err
+	}
+
 	// With the sign desc created, we can now construct the full witness
 	// for the timeout transaction, and populate it as well.
 	sigHashType := HtlcSigHashType(chanType)
 	timeoutWitness, err := input.SenderHtlcSpendTimeout(
-		htlc.Signature, sigHashType, signer, &timeoutSignDesc, timeoutTx,
+		htlcSig, sigHashType, signer, &timeoutSignDesc, timeoutTx,
 	)
 	if err != nil {
 		return nil, err
@@ -5556,14 +5594,18 @@ func newIncomingHtlcResolution(signer input.Signer,
 		InputIndex: 0,
 	}
 
+	htlcSig, err := btcec.ParseDERSignature(htlc.Signature, btcec.S256())
+	if err != nil {
+		return nil, err
+	}
+
 	// Next, we'll construct the full witness needed to satisfy the input of
 	// the success transaction. Don't specify the preimage yet. The preimage
 	// will be supplied by the contract resolver, either directly or when it
 	// becomes known.
 	sigHashType := HtlcSigHashType(chanType)
 	successWitness, err := input.ReceiverHtlcSpendRedeem(
-		htlc.Signature, sigHashType, nil, signer, &successSignDesc,
-		successTx,
+		htlcSig, sigHashType, nil, signer, &successSignDesc, successTx,
 	)
 	if err != nil {
 		return nil, err
@@ -5912,7 +5954,8 @@ func NewLocalForceCloseSummary(chanState *channeldb.OpenChannel, signer input.Si
 // settle any in flight.
 func (lc *LightningChannel) CreateCloseProposal(proposedFee btcutil.Amount,
 	localDeliveryScript []byte,
-	remoteDeliveryScript []byte) ([]byte, *chainhash.Hash, btcutil.Amount, error) {
+	remoteDeliveryScript []byte) (input.Signature, *chainhash.Hash,
+	btcutil.Amount, error) {
 
 	lc.Lock()
 	defer lc.Unlock()
@@ -5978,7 +6021,8 @@ func (lc *LightningChannel) CreateCloseProposal(proposedFee btcutil.Amount,
 //
 // NOTE: The passed local and remote sigs are expected to be fully complete
 // signatures including the proper sighash byte.
-func (lc *LightningChannel) CompleteCooperativeClose(localSig, remoteSig []byte,
+func (lc *LightningChannel) CompleteCooperativeClose(
+	localSig, remoteSig input.Signature,
 	localDeliveryScript, remoteDeliveryScript []byte,
 	proposedFee btcutil.Amount) (*wire.MsgTx, btcutil.Amount, error) {
 
@@ -6031,8 +6075,10 @@ func (lc *LightningChannel) CompleteCooperativeClose(localSig, remoteSig []byte,
 		SerializeCompressed()
 	theirKey := lc.channelState.RemoteChanCfg.MultiSigKey.PubKey.
 		SerializeCompressed()
-	witness := input.SpendMultiSig(lc.signDesc.WitnessScript, ourKey,
-		localSig, theirKey, remoteSig)
+	witness := input.SpendMultiSig(
+		lc.signDesc.WitnessScript, ourKey, localSig, theirKey,
+		remoteSig,
+	)
 	closeTx.TxIn[0].Witness = witness
 
 	// Validate the finalized transaction to ensure the output script is
@@ -6628,27 +6674,7 @@ func (lc *LightningChannel) ActiveHtlcs() []channeldb.HTLC {
 	lc.RLock()
 	defer lc.RUnlock()
 
-	// We'll only return HTLC's that are locked into *both* commitment
-	// transactions. So we'll iterate through their set of HTLC's to note
-	// which ones are present on their commitment.
-	remoteHtlcs := make(map[[32]byte]struct{})
-	for _, htlc := range lc.channelState.RemoteCommitment.Htlcs {
-		onionHash := sha256.Sum256(htlc.OnionBlob[:])
-		remoteHtlcs[onionHash] = struct{}{}
-	}
-
-	// Now that we know which HTLC's they have, we'll only mark the HTLC's
-	// as active if *we* know them as well.
-	activeHtlcs := make([]channeldb.HTLC, 0, len(remoteHtlcs))
-	for _, htlc := range lc.channelState.LocalCommitment.Htlcs {
-		if _, ok := remoteHtlcs[sha256.Sum256(htlc.OnionBlob[:])]; !ok {
-			continue
-		}
-
-		activeHtlcs = append(activeHtlcs, htlc)
-	}
-
-	return activeHtlcs
+	return lc.channelState.ActiveHtlcs()
 }
 
 // LocalChanReserve returns our local ChanReserve requirement for the remote party.
@@ -6665,14 +6691,6 @@ func (lc *LightningChannel) NextLocalHtlcIndex() (uint64, error) {
 	defer lc.RUnlock()
 
 	return lc.channelState.NextLocalHtlcIndex()
-}
-
-// RemoteCommitHeight returns the commitment height of the remote chain.
-func (lc *LightningChannel) RemoteCommitHeight() uint64 {
-	lc.RLock()
-	defer lc.RUnlock()
-
-	return lc.channelState.RemoteCommitment.CommitHeight
 }
 
 // FwdMinHtlc returns the minimum HTLC value required by the remote node, i.e.

@@ -324,8 +324,10 @@ var resultTestCases = []resultTestCase{
 		failure:       &lnwire.FailMPPTimeout{},
 
 		expectedResult: &interpretedResult{
-			finalFailureReason: &reasonError,
-			nodeFailure:        nil,
+			pairResults: map[DirectedNodePair]pairResult{
+				getTestPair(0, 1): successPairResult(100),
+			},
+			nodeFailure: nil,
 		},
 	},
 
@@ -341,9 +343,9 @@ var resultTestCases = []resultTestCase{
 		expectedResult: &interpretedResult{
 			pairResults: map[DirectedNodePair]pairResult{
 				getTestPair(0, 1): successPairResult(100),
+				getTestPair(1, 2): successPairResult(99),
 			},
-			finalFailureReason: &reasonError,
-			nodeFailure:        nil,
+			nodeFailure: nil,
 		},
 	},
 }

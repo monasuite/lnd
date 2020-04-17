@@ -37,6 +37,7 @@ import (
 	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwallet/btcwallet"
 	"github.com/monasuite/lnd/lnwallet/chainfee"
@@ -590,6 +591,7 @@ func testFundingTransactionLockedOutputs(miner *rpctest.Harness,
 		FundingFeePerKw:  feePerKw,
 		PushMSat:         0,
 		Flags:            lnwire.FFAnnounceChannel,
+		PendingChanID:    [32]byte{0, 1, 2, 3},
 	}
 	if _, err := alice.InitChannelReservation(req); err != nil {
 		t.Fatalf("unable to initialize funding reservation 1: %v", err)
@@ -612,6 +614,7 @@ func testFundingTransactionLockedOutputs(miner *rpctest.Harness,
 		FundingFeePerKw:  feePerKw,
 		PushMSat:         0,
 		Flags:            lnwire.FFAnnounceChannel,
+		PendingChanID:    [32]byte{1, 2, 3, 4},
 	}
 	failedReservation, err := alice.InitChannelReservation(failedReq)
 	if err == nil {
@@ -648,6 +651,7 @@ func testFundingCancellationNotEnoughFunds(miner *rpctest.Harness,
 		FundingFeePerKw:  feePerKw,
 		PushMSat:         0,
 		Flags:            lnwire.FFAnnounceChannel,
+		PendingChanID:    [32]byte{2, 3, 4, 5},
 	}
 	chanReservation, err := alice.InitChannelReservation(req)
 	if err != nil {
@@ -655,6 +659,7 @@ func testFundingCancellationNotEnoughFunds(miner *rpctest.Harness,
 	}
 
 	// Attempt to create another channel with 44 BTC, this should fail.
+	req.PendingChanID = [32]byte{3, 4, 5, 6}
 	_, err = alice.InitChannelReservation(req)
 	if _, ok := err.(*chanfunding.ErrInsufficientFunds); !ok {
 		t.Fatalf("coin selection succeeded should have insufficient funds: %v",
@@ -684,6 +689,7 @@ func testFundingCancellationNotEnoughFunds(miner *rpctest.Harness,
 	// attempting coin selection.
 
 	// Request to fund a new channel should now succeed.
+	req.PendingChanID = [32]byte{4, 5, 6, 7, 8}
 	if _, err := alice.InitChannelReservation(req); err != nil {
 		t.Fatalf("unable to initialize funding reservation: %v", err)
 	}
@@ -1585,7 +1591,7 @@ func txFromOutput(tx *wire.MsgTx, signer input.Signer, fromPubKey,
 		return nil, fmt.Errorf("unable to generate signature: %v", err)
 	}
 	witness := make([][]byte, 2)
-	witness[0] = append(spendSig, byte(txscript.SigHashAll))
+	witness[0] = append(spendSig.Serialize(), byte(txscript.SigHashAll))
 	witness[1] = fromPubKey.SerializeCompressed()
 	tx1.TxIn[0].Witness = witness
 
@@ -1970,7 +1976,7 @@ func testSignOutputUsingTweaks(r *rpctest.Harness,
 			t.Fatalf("unable to generate signature: %v", err)
 		}
 		witness := make([][]byte, 2)
-		witness[0] = append(spendSig, byte(txscript.SigHashAll))
+		witness[0] = append(spendSig.Serialize(), byte(txscript.SigHashAll))
 		witness[1] = tweakedKey.SerializeCompressed()
 		sweepTx.TxIn[0].Witness = witness
 
@@ -3057,18 +3063,22 @@ func runTests(t *testing.T, walletDriver *lnwallet.WalletDriver,
 			defer bitcoind.Process.Kill()
 
 			// Wait for the bitcoind instance to start up.
-			time.Sleep(time.Second)
 
 			host := fmt.Sprintf("127.0.0.1:%d", rpcPort)
-			chainConn, err := chain.NewBitcoindConn(
-				netParams, host, "weks", "weks", zmqBlockHost,
-				zmqTxHost, 100*time.Millisecond,
-			)
+			var chainConn *chain.BitcoindConn
+			err = wait.NoError(func() error {
+				chainConn, err = chain.NewBitcoindConn(
+					netParams, host, "weks", "weks",
+					zmqBlockHost, zmqTxHost,
+					100*time.Millisecond,
+				)
+				if err != nil {
+					return err
+				}
+
+				return chainConn.Start()
+			}, 10*time.Second)
 			if err != nil {
-				t.Fatalf("unable to establish connection to "+
-					"bitcoind: %v", err)
-			}
-			if err := chainConn.Start(); err != nil {
 				t.Fatalf("unable to establish connection to "+
 					"bitcoind: %v", err)
 			}

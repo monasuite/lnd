@@ -1,5 +1,3 @@
-// +build routerrpc
-
 package routerrpc
 
 import (
@@ -443,7 +441,7 @@ func (s *Server) trackPayment(paymentHash lntypes.Hash,
 	router := s.cfg.RouterBackend
 
 	// Subscribe to the outcome of this payment.
-	inFlight, resultChan, err := router.Tower.SubscribePayment(
+	subscription, err := router.Tower.SubscribePayment(
 		paymentHash,
 	)
 	switch {
@@ -452,124 +450,37 @@ func (s *Server) trackPayment(paymentHash lntypes.Hash,
 	case err != nil:
 		return err
 	}
+	defer subscription.Close()
 
-	// If it is in flight, send a state update to the client. Payment status
-	// update streams are expected to always send the current payment state
-	// immediately.
-	if inFlight {
-		err = stream.Send(&PaymentStatus{
-			State: PaymentState_IN_FLIGHT,
-		})
-		if err != nil {
-			return err
-		}
-	}
-
-	// Wait for the outcome of the payment. For payments that have
-	// completed, the result should already be waiting on the channel.
-	select {
-	case result := <-resultChan:
-		// Marshall result to rpc type.
-		var status PaymentStatus
-		if result.Success {
-			log.Debugf("Payment %v successfully completed",
-				paymentHash)
-
-			status.State = PaymentState_SUCCEEDED
-			status.Preimage = result.Preimage[:]
-		} else {
-			state, err := marshallFailureReason(
-				result.FailureReason,
-			)
-			if err != nil {
-				return err
+	// Stream updates back to the client. The first update is always the
+	// current state of the payment.
+	for {
+		select {
+		case item, ok := <-subscription.Updates:
+			if !ok {
+				// No more payment updates.
+				return nil
 			}
-			status.State = state
-		}
-
-		// Extract the last route from the given list of HTLCs. This
-		// will populate the legacy route field for backwards
-		// compatibility.
-		//
-		// NOTE: For now there will be at most one HTLC, this code
-		// should be revisted or the field removed when multiple HTLCs
-		// are permitted.
-		var legacyRoute *route.Route
-		for _, htlc := range result.HTLCs {
-			switch {
-			case htlc.Settle != nil:
-				legacyRoute = &htlc.Route
-
-			// Only display the route for failed payments if we got
-			// an incorrect payment details error, so that it can be
-			// used for probing or fee estimation.
-			case htlc.Failure != nil && result.FailureReason ==
-				channeldb.FailureReasonPaymentDetails:
-
-				legacyRoute = &htlc.Route
-			}
-		}
-		if legacyRoute != nil {
-			status.Route, err = router.MarshallRoute(legacyRoute)
-			if err != nil {
-				return err
-			}
-		}
-
-		// Marshal our list of HTLCs that have been tried for this
-		// payment.
-		htlcs := make([]*lnrpc.HTLCAttempt, 0, len(result.HTLCs))
-		for _, dbHtlc := range result.HTLCs {
-			htlc, err := router.MarshalHTLCAttempt(dbHtlc)
+			result := item.(*channeldb.MPPayment)
+			rpcPayment, err := router.MarshallPayment(result)
 			if err != nil {
 				return err
 			}
 
-			htlcs = append(htlcs, htlc)
+			// Send event to the client.
+			err = stream.Send(rpcPayment)
+			if err != nil {
+				return err
+			}
+
+		case <-s.quit:
+			return errServerShuttingDown
+
+		case <-stream.Context().Done():
+			log.Debugf("Payment status stream %v canceled", paymentHash)
+			return stream.Context().Err()
 		}
-		status.Htlcs = htlcs
-
-		// Send event to the client.
-		err = stream.Send(&status)
-		if err != nil {
-			return err
-		}
-
-	case <-s.quit:
-		return errServerShuttingDown
-
-	case <-stream.Context().Done():
-		log.Debugf("Payment status stream %v canceled", paymentHash)
-		return stream.Context().Err()
 	}
-
-	return nil
-}
-
-// marshallFailureReason marshalls the failure reason to the corresponding rpc
-// type.
-func marshallFailureReason(reason channeldb.FailureReason) (
-	PaymentState, error) {
-
-	switch reason {
-
-	case channeldb.FailureReasonTimeout:
-		return PaymentState_FAILED_TIMEOUT, nil
-
-	case channeldb.FailureReasonNoRoute:
-		return PaymentState_FAILED_NO_ROUTE, nil
-
-	case channeldb.FailureReasonError:
-		return PaymentState_FAILED_ERROR, nil
-
-	case channeldb.FailureReasonPaymentDetails:
-		return PaymentState_FAILED_INCORRECT_PAYMENT_DETAILS, nil
-
-	case channeldb.FailureReasonInsufficientBalance:
-		return PaymentState_FAILED_INSUFFICIENT_BALANCE, nil
-	}
-
-	return 0, errors.New("unknown failure reason")
 }
 
 // BuildRoute builds a route from a list of hop addresses.

@@ -201,9 +201,7 @@ func (n *testNode) SendMessageLazy(sync bool, msgs ...lnwire.Message) error {
 	return n.SendMessage(sync, msgs...)
 }
 
-func (n *testNode) WipeChannel(_ *wire.OutPoint) error {
-	return nil
-}
+func (n *testNode) WipeChannel(_ *wire.OutPoint) {}
 
 func (n *testNode) QuitSignal() <-chan struct{} {
 	return n.shutdownChannel
@@ -336,7 +334,9 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 		Wallet:       lnw,
 		Notifier:     chainNotifier,
 		FeeEstimator: estimator,
-		SignMessage: func(pubKey *btcec.PublicKey, msg []byte) (*btcec.Signature, error) {
+		SignMessage: func(pubKey *btcec.PublicKey,
+			msg []byte) (input.Signature, error) {
+
 			return testSig, nil
 		},
 		SendAnnouncement: func(msg lnwire.Message,
@@ -476,7 +476,7 @@ func recreateAliceFundingManager(t *testing.T, alice *testNode) {
 		Notifier:     oldCfg.Notifier,
 		FeeEstimator: oldCfg.FeeEstimator,
 		SignMessage: func(pubKey *btcec.PublicKey,
-			msg []byte) (*btcec.Signature, error) {
+			msg []byte) (input.Signature, error) {
 			return testSig, nil
 		},
 		SendAnnouncement: func(msg lnwire.Message,

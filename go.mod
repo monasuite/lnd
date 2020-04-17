@@ -7,11 +7,9 @@ require (
 	github.com/Yawning/aez v0.0.0-20180114000226-4dad034d9db2
 	github.com/btcsuite/btcd v0.20.1-beta
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f
-	github.com/btcsuite/btcutil v1.0.1
-	github.com/btcsuite/btcwallet v0.11.0
-	github.com/btcsuite/btcwallet/walletdb v1.3.0
+	github.com/btcsuite/btcutil v1.0.2
+	github.com/btcsuite/btcutil/psbt v1.0.2
 	github.com/btcsuite/fastsha256 v0.0.0-20160815193821-637e65642941
-	github.com/coreos/bbolt v1.3.3
 	github.com/davecgh/go-spew v1.1.1
 	github.com/go-errors/errors v1.0.1
 	github.com/golang/protobuf v1.3.2
@@ -39,7 +37,7 @@ require (
 	github.com/monaarchives/btcwallet v0.11.2
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
-	github.com/monaarchives/btcwallet/walletdb v1.3.0
+	github.com/monaarchives/btcwallet/walletdb v1.3.1
 	github.com/monaarchives/btcwallet/wtxmgr v1.0.0
 	github.com/monasuite/monad v0.21.1-beta
 	github.com/monasuite/monautil v1.0.1 // indirect
@@ -50,9 +48,8 @@ require (
 	github.com/rogpeppe/fastuuid v1.2.0 // indirect
 	github.com/tv42/zbase32 v0.0.0-20160707012821-501572607d02
 	github.com/urfave/cli v1.18.0
-	golang.org/x/crypto v0.0.0-20200323165209-0ec3e9974c59
-	golang.org/x/net v0.0.0-20191014212845-da9a3fd4c582
-	golang.org/x/text v0.3.2 // indirect
+	golang.org/x/crypto v0.0.0-20200214034016-1d94cc7ab1c6
+	golang.org/x/net v0.0.0-20190206173232-65e2d4e15006
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2
 	google.golang.org/genproto v0.0.0-20190201180003-4b09977fb922
 	google.golang.org/grpc v1.19.0
@@ -69,5 +66,9 @@ replace github.com/lightningnetwork/lnd/queue => ./queue
 replace github.com/lightningnetwork/lnd/cert => ./cert
 
 replace git.schwanenlied.me/yawning/bsaes.git => github.com/Yawning/bsaes v0.0.0-20180720073208-c0276d75487e
+
+// Pin this version that we know works explicitly, even though the
+// btcsuite/btcutil package requests a newer version.
+replace golang.org/x/crypto => golang.org/x/crypto v0.0.0-20190211182817-74369b46fc67
 
 go 1.12

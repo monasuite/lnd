@@ -13,10 +13,11 @@ func TestRequestRoute(t *testing.T) {
 		height = 10
 	)
 
-	findPath := func(g *graphParams, r *RestrictParams,
-		cfg *PathFindingConfig, source, target route.Vertex,
-		amt lnwire.MilliSatoshi, finalHtlcExpiry int32) (
-		[]*channeldb.ChannelEdgePolicy, error) {
+	findPath := func(
+		g *graphParams,
+		r *RestrictParams, cfg *PathFindingConfig,
+		source, target route.Vertex, amt lnwire.MilliSatoshi,
+		finalHtlcExpiry int32) ([]*channeldb.ChannelEdgePolicy, error) {
 
 		// We expect find path to receive a cltv limit excluding the
 		// final cltv delta (including the block padding).
@@ -37,11 +38,14 @@ func TestRequestRoute(t *testing.T) {
 		return path, nil
 	}
 
-	sessionSource := &SessionSource{
-		SelfNode: &channeldb.LightningNode{},
-		MissionControl: &MissionControl{
-			cfg: &MissionControlConfig{},
-		},
+	cltvLimit := uint32(30)
+	finalCltvDelta := uint16(8)
+
+	payment := &LightningPayment{
+		CltvLimit:      cltvLimit,
+		FinalCLTVDelta: finalCltvDelta,
+		Amount:         1000,
+		FeeLimit:       1000,
 	}
 
 	session := &paymentSession{
@@ -50,19 +54,19 @@ func TestRequestRoute(t *testing.T) {
 
 			return nil, nil
 		},
-		sessionSource: sessionSource,
-		pathFinder:    findPath,
+		payment:    payment,
+		pathFinder: findPath,
+		missionControl: &MissionControl{
+			cfg: &MissionControlConfig{},
+		},
+		getRoutingGraph: func() (routingGraph, func(), error) {
+			return &sessionGraph{}, func() {}, nil
+		},
 	}
 
-	cltvLimit := uint32(30)
-	finalCltvDelta := uint16(8)
-
-	payment := &LightningPayment{
-		CltvLimit:      cltvLimit,
-		FinalCLTVDelta: finalCltvDelta,
-	}
-
-	route, err := session.RequestRoute(payment, height, finalCltvDelta)
+	route, err := session.RequestRoute(
+		payment.Amount, payment.FeeLimit, 0, height,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,4 +77,12 @@ func TestRequestRoute(t *testing.T) {
 		t.Fatalf("unexpected total time lock of %v",
 			route.TotalTimeLock)
 	}
+}
+
+type sessionGraph struct {
+	routingGraph
+}
+
+func (g *sessionGraph) sourceNode() route.Vertex {
+	return route.Vertex{}
 }

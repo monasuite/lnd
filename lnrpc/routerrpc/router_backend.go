@@ -547,6 +547,14 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 	}
 	payIntent.CltvLimit = cltvLimit
 
+	// Take max htlcs from the request. Map zero to one for backwards
+	// compatibility.
+	maxShards := rpcPayReq.MaxShards
+	if maxShards == 0 {
+		maxShards = 1
+	}
+	payIntent.MaxShards = maxShards
+
 	// Take fee limit from request.
 	payIntent.FeeLimit, err = lnrpc.UnmarshallAmt(
 		rpcPayReq.FeeLimitSat, rpcPayReq.FeeLimitMsat,
@@ -650,6 +658,7 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		)
 		payIntent.DestFeatures = payReq.Features
 		payIntent.PaymentAddr = payReq.PaymentAddr
+		payIntent.PaymentRequest = []byte(rpcPayReq.PaymentRequest)
 	} else {
 		// Otherwise, If the payment request field was not specified
 		// (and a custom route wasn't specified), construct the payment
@@ -687,18 +696,6 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		}
 
 		payIntent.DestFeatures = features
-	}
-
-	// Currently, within the bootstrap phase of the network, we limit the
-	// largest payment size allotted to (2^32) - 1 mSAT or 4.29 million
-	// satoshis.
-	if payIntent.Amount > r.MaxPaymentMSat {
-		// In this case, we'll send an error to the caller, but
-		// continue our loop for the next payment.
-		return payIntent, fmt.Errorf("payment of %v is too large, "+
-			"max payment allowed is %v", payIntent.Amount,
-			r.MaxPaymentMSat)
-
 	}
 
 	// Check for disallowed payments to self.
@@ -1092,4 +1089,122 @@ func marshallChannelUpdate(update *lnwire.ChannelUpdate) *lnrpc.ChannelUpdate {
 		HtlcMaximumMsat: uint64(update.HtlcMaximumMsat),
 		ExtraOpaqueData: update.ExtraOpaqueData,
 	}
+}
+
+// MarshallPayment marshall a payment to its rpc representation.
+func (r *RouterBackend) MarshallPayment(payment *channeldb.MPPayment) (
+	*lnrpc.Payment, error) {
+
+	// Fetch the payment's preimage and the total paid in fees.
+	var (
+		fee      lnwire.MilliSatoshi
+		preimage lntypes.Preimage
+	)
+	for _, htlc := range payment.HTLCs {
+		// If any of the htlcs have settled, extract a valid
+		// preimage.
+		if htlc.Settle != nil {
+			preimage = htlc.Settle.Preimage
+			fee += htlc.Route.TotalFees()
+		}
+	}
+
+	msatValue := int64(payment.Info.Value)
+	satValue := int64(payment.Info.Value.ToSatoshis())
+
+	status, err := convertPaymentStatus(payment.Status)
+	if err != nil {
+		return nil, err
+	}
+
+	htlcs := make([]*lnrpc.HTLCAttempt, 0, len(payment.HTLCs))
+	for _, dbHTLC := range payment.HTLCs {
+		htlc, err := r.MarshalHTLCAttempt(dbHTLC)
+		if err != nil {
+			return nil, err
+		}
+
+		htlcs = append(htlcs, htlc)
+	}
+
+	paymentHash := payment.Info.PaymentHash
+	creationTimeNS := MarshalTimeNano(payment.Info.CreationTime)
+
+	failureReason, err := marshallPaymentFailureReason(
+		payment.FailureReason,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &lnrpc.Payment{
+		PaymentHash:     hex.EncodeToString(paymentHash[:]),
+		Value:           satValue,
+		ValueMsat:       msatValue,
+		ValueSat:        satValue,
+		CreationDate:    payment.Info.CreationTime.Unix(),
+		CreationTimeNs:  creationTimeNS,
+		Fee:             int64(fee.ToSatoshis()),
+		FeeSat:          int64(fee.ToSatoshis()),
+		FeeMsat:         int64(fee),
+		PaymentPreimage: hex.EncodeToString(preimage[:]),
+		PaymentRequest:  string(payment.Info.PaymentRequest),
+		Status:          status,
+		Htlcs:           htlcs,
+		PaymentIndex:    payment.SequenceNum,
+		FailureReason:   failureReason,
+	}, nil
+}
+
+// convertPaymentStatus converts a channeldb.PaymentStatus to the type expected
+// by the RPC.
+func convertPaymentStatus(dbStatus channeldb.PaymentStatus) (
+	lnrpc.Payment_PaymentStatus, error) {
+
+	switch dbStatus {
+	case channeldb.StatusUnknown:
+		return lnrpc.Payment_UNKNOWN, nil
+
+	case channeldb.StatusInFlight:
+		return lnrpc.Payment_IN_FLIGHT, nil
+
+	case channeldb.StatusSucceeded:
+		return lnrpc.Payment_SUCCEEDED, nil
+
+	case channeldb.StatusFailed:
+		return lnrpc.Payment_FAILED, nil
+
+	default:
+		return 0, fmt.Errorf("unhandled payment status %v", dbStatus)
+	}
+}
+
+// marshallPaymentFailureReason marshalls the failure reason to the corresponding rpc
+// type.
+func marshallPaymentFailureReason(reason *channeldb.FailureReason) (
+	lnrpc.PaymentFailureReason, error) {
+
+	if reason == nil {
+		return lnrpc.PaymentFailureReason_FAILURE_REASON_NONE, nil
+	}
+
+	switch *reason {
+
+	case channeldb.FailureReasonTimeout:
+		return lnrpc.PaymentFailureReason_FAILURE_REASON_TIMEOUT, nil
+
+	case channeldb.FailureReasonNoRoute:
+		return lnrpc.PaymentFailureReason_FAILURE_REASON_NO_ROUTE, nil
+
+	case channeldb.FailureReasonError:
+		return lnrpc.PaymentFailureReason_FAILURE_REASON_ERROR, nil
+
+	case channeldb.FailureReasonPaymentDetails:
+		return lnrpc.PaymentFailureReason_FAILURE_REASON_INCORRECT_PAYMENT_DETAILS, nil
+
+	case channeldb.FailureReasonInsufficientBalance:
+		return lnrpc.PaymentFailureReason_FAILURE_REASON_INSUFFICIENT_BALANCE, nil
+	}
+
+	return 0, errors.New("unknown failure reason")
 }

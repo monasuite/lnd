@@ -134,8 +134,8 @@ type ChannelReservation struct {
 	theirFundingInputScripts []*input.Script
 
 	// Our signature for their version of the commitment transaction.
-	ourCommitmentSig   []byte
-	theirCommitmentSig []byte
+	ourCommitmentSig   input.Signature
+	theirCommitmentSig input.Signature
 
 	ourContribution   *ChannelContribution
 	theirContribution *ChannelContribution
@@ -471,6 +471,37 @@ func (r *ChannelReservation) ProcessContribution(theirContribution *ChannelContr
 	return <-errChan
 }
 
+// IsPsbt returns true if there is a PSBT funding intent mapped to this
+// reservation.
+func (r *ChannelReservation) IsPsbt() bool {
+	_, ok := r.fundingIntent.(*chanfunding.PsbtIntent)
+	return ok
+}
+
+// ProcessPsbt continues a previously paused funding flow that involves PSBT to
+// construct the funding transaction. This method can be called once the PSBT is
+// finalized and the signed transaction is available.
+func (r *ChannelReservation) ProcessPsbt() error {
+	errChan := make(chan error, 1)
+
+	r.wallet.msgChan <- &continueContributionMsg{
+		pendingFundingID: r.reservationID,
+		err:              errChan,
+	}
+
+	return <-errChan
+}
+
+// RemoteCanceled informs the PSBT funding state machine that the remote peer
+// has canceled the pending reservation, likely due to a timeout.
+func (r *ChannelReservation) RemoteCanceled() {
+	psbtIntent, ok := r.fundingIntent.(*chanfunding.PsbtIntent)
+	if !ok {
+		return
+	}
+	psbtIntent.RemoteCanceled()
+}
+
 // ProcessSingleContribution verifies, and records the initiator's contribution
 // to this pending single funder channel. Internally, no further action is
 // taken other than recording the initiator's contribution to the single funder
@@ -507,7 +538,9 @@ func (r *ChannelReservation) TheirContribution() *ChannelContribution {
 //
 // NOTE: These signatures will only be populated after a call to
 // .ProcessContribution()
-func (r *ChannelReservation) OurSignatures() ([]*input.Script, []byte) {
+func (r *ChannelReservation) OurSignatures() ([]*input.Script,
+	input.Signature) {
+
 	r.RLock()
 	defer r.RUnlock()
 	return r.ourFundingInputScripts, r.ourCommitmentSig
@@ -527,7 +560,7 @@ func (r *ChannelReservation) OurSignatures() ([]*input.Script, []byte) {
 // confirmations. Once the method unblocks, a LightningChannel instance is
 // returned, marking the channel available for updates.
 func (r *ChannelReservation) CompleteReservation(fundingInputScripts []*input.Script,
-	commitmentSig []byte) (*channeldb.OpenChannel, error) {
+	commitmentSig input.Signature) (*channeldb.OpenChannel, error) {
 
 	// TODO(roasbeef): add flag for watch or not?
 	errChan := make(chan error, 1)
@@ -554,7 +587,7 @@ func (r *ChannelReservation) CompleteReservation(fundingInputScripts []*input.Sc
 // called as a response to a single funder channel, only a commitment signature
 // will be populated.
 func (r *ChannelReservation) CompleteReservationSingle(fundingPoint *wire.OutPoint,
-	commitSig []byte) (*channeldb.OpenChannel, error) {
+	commitSig input.Signature) (*channeldb.OpenChannel, error) {
 
 	errChan := make(chan error, 1)
 	completeChan := make(chan *channeldb.OpenChannel, 1)
@@ -577,7 +610,9 @@ func (r *ChannelReservation) CompleteReservationSingle(fundingPoint *wire.OutPoi
 //
 // NOTE: These attributes will be unpopulated before a call to
 // .CompleteReservation().
-func (r *ChannelReservation) TheirSignatures() ([]*input.Script, []byte) {
+func (r *ChannelReservation) TheirSignatures() ([]*input.Script,
+	input.Signature) {
+
 	r.RLock()
 	defer r.RUnlock()
 	return r.theirFundingInputScripts, r.theirCommitmentSig

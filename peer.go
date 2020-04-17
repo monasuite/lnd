@@ -425,6 +425,19 @@ func (p *peer) Start() error {
 		}
 	}
 
+	// Node announcements don't propagate very well throughout the network
+	// as there isn't a way to efficiently query for them through their
+	// timestamp, mostly affecting nodes that were offline during the time
+	// of broadcast. We'll resend our node announcement to the remote peer
+	// as a best-effort delivery such that it can also propagate to their
+	// peers. To ensure they can successfully process it in most cases,
+	// we'll only resend it as long as we have at least one confirmed
+	// advertised channel with the remote peer.
+	//
+	// TODO(wilmer): Remove this once we're able to query for node
+	// announcements through their timestamps.
+	p.maybeSendNodeAnn(activeChans)
+
 	return nil
 }
 
@@ -491,13 +504,9 @@ func (p *peer) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		// Skip adding any permanently irreconcilable channels to the
 		// htlcswitch.
 		switch {
-		case dbChan.HasChanStatus(channeldb.ChanStatusBorked):
-			fallthrough
-		case dbChan.HasChanStatus(channeldb.ChanStatusCommitBroadcasted):
-			fallthrough
-		case dbChan.HasChanStatus(channeldb.ChanStatusCoopBroadcasted):
-			fallthrough
-		case dbChan.HasChanStatus(channeldb.ChanStatusLocalDataLoss):
+		case !dbChan.HasChanStatus(channeldb.ChanStatusDefault) &&
+			!dbChan.HasChanStatus(channeldb.ChanStatusRestored):
+
 			peerLog.Warnf("ChannelPoint(%v) has status %v, won't "+
 				"start.", chanPoint, dbChan.ChanStatus())
 
@@ -660,6 +669,7 @@ func (p *peer) addLink(chanPoint *wire.OutPoint,
 		SyncStates:              syncStates,
 		BatchTicker:             ticker.New(50 * time.Millisecond),
 		FwdPkgGCTicker:          ticker.New(time.Minute),
+		PendingCommitTicker:     ticker.New(time.Minute),
 		BatchSize:               10,
 		UnsafeReplay:            cfg.UnsafeReplay,
 		MinFeeUpdateTimeout:     htlcswitch.DefaultMinLinkFeeUpdateTimeout,
@@ -686,6 +696,37 @@ func (p *peer) addLink(chanPoint *wire.OutPoint,
 	// this channel can be used to dispatch local payments and also
 	// passively forward payments.
 	return p.server.htlcSwitch.AddLink(link)
+}
+
+// maybeSendNodeAnn sends our node announcement to the remote peer if at least
+// one confirmed advertised channel exists with them.
+func (p *peer) maybeSendNodeAnn(channels []*channeldb.OpenChannel) {
+	hasConfirmedPublicChan := false
+	for _, channel := range channels {
+		if channel.IsPending {
+			continue
+		}
+		if channel.ChannelFlags&lnwire.FFAnnounceChannel == 0 {
+			continue
+		}
+
+		hasConfirmedPublicChan = true
+		break
+	}
+	if !hasConfirmedPublicChan {
+		return
+	}
+
+	ourNodeAnn, err := p.server.genNodeAnnouncement(false)
+	if err != nil {
+		srvrLog.Debugf("Unable to retrieve node announcement: %v", err)
+		return
+	}
+
+	if err := p.SendMessageLazy(false, &ourNodeAnn); err != nil {
+		srvrLog.Debugf("Unable to resend node announcement to %x: %v",
+			p.pubKeyBytes, err)
+	}
 }
 
 // WaitForDisconnect waits until the peer has disconnected. A peer may be
@@ -2401,13 +2442,7 @@ func (p *peer) handleLocalCloseReq(req *htlcswitch.ChanClose) {
 		// TODO(roasbeef): no longer need with newer beach logic?
 		peerLog.Infof("ChannelPoint(%v) has been breached, wiping "+
 			"channel", req.ChanPoint)
-		if err := p.WipeChannel(req.ChanPoint); err != nil {
-			peerLog.Infof("Unable to wipe channel after detected "+
-				"breach: %v", err)
-			req.Err <- err
-			return
-		}
-		return
+		p.WipeChannel(req.ChanPoint)
 	}
 }
 
@@ -2434,11 +2469,7 @@ func (p *peer) handleLinkFailure(failure linkFailureReport) {
 	// link and cancel back any adds in its mailboxes such that we can
 	// safely force close without the link being added again and updates
 	// being applied.
-	if err := p.WipeChannel(&failure.chanPoint); err != nil {
-		peerLog.Errorf("Unable to wipe link for chanpoint=%v",
-			failure.chanPoint)
-		return
-	}
+	p.WipeChannel(&failure.chanPoint)
 
 	// If the error encountered was severe enough, we'll now force close the
 	// channel to prevent readding it to the switch in the future.
@@ -2490,11 +2521,7 @@ func (p *peer) finalizeChanClosure(chanCloser *channelCloser) {
 
 	// First, we'll clear all indexes related to the channel in question.
 	chanPoint := chanCloser.cfg.channel.ChannelPoint()
-	if err := p.WipeChannel(chanPoint); err != nil {
-		if closeReq != nil {
-			closeReq.Err <- err
-		}
-	}
+	p.WipeChannel(chanPoint)
 
 	// Next, we'll launch a goroutine which will request to be notified by
 	// the ChainNotifier once the closure transaction obtains a single
@@ -2584,7 +2611,7 @@ func waitForChanToClose(bestHeight uint32, notifier chainntnfs.ChainNotifier,
 
 // WipeChannel removes the passed channel point from all indexes associated with
 // the peer, and the switch.
-func (p *peer) WipeChannel(chanPoint *wire.OutPoint) error {
+func (p *peer) WipeChannel(chanPoint *wire.OutPoint) {
 	chanID := lnwire.NewChanIDFromOutPoint(chanPoint)
 
 	p.activeChanMtx.Lock()
@@ -2594,8 +2621,6 @@ func (p *peer) WipeChannel(chanPoint *wire.OutPoint) error {
 	// Instruct the HtlcSwitch to close this link as the channel is no
 	// longer active.
 	p.server.htlcSwitch.RemoveLink(chanID)
-
-	return nil
 }
 
 // handleInitMsg handles the incoming init message which contains global and

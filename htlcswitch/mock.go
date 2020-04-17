@@ -177,6 +177,8 @@ func initSwitchWithDB(startingHeight uint32, db *channeldb.DB) (*Switch, error) 
 		LogEventTicker: ticker.NewForce(DefaultLogInterval),
 		AckEventTicker: ticker.NewForce(DefaultAckInterval),
 		HtlcNotifier:   &mockHTLCNotifier{},
+		Clock:          clock.NewDefaultClock(),
+		HTLCExpiry:     time.Hour,
 	}
 
 	return New(cfg, startingHeight)
@@ -602,9 +604,7 @@ func (s *mockServer) AddNewChannel(channel *channeldb.OpenChannel,
 	return nil
 }
 
-func (s *mockServer) WipeChannel(*wire.OutPoint) error {
-	return nil
-}
+func (s *mockServer) WipeChannel(*wire.OutPoint) {}
 
 func (s *mockServer) LocalFeatures() *lnwire.FeatureVector {
 	return nil
@@ -854,7 +854,9 @@ type mockSigner struct {
 	key *btcec.PrivateKey
 }
 
-func (m *mockSigner) SignOutputRaw(tx *wire.MsgTx, signDesc *input.SignDescriptor) ([]byte, error) {
+func (m *mockSigner) SignOutputRaw(tx *wire.MsgTx,
+	signDesc *input.SignDescriptor) (input.Signature, error) {
+
 	amt := signDesc.Output.Value
 	witnessScript := signDesc.WitnessScript
 	privKey := m.key
@@ -879,7 +881,7 @@ func (m *mockSigner) SignOutputRaw(tx *wire.MsgTx, signDesc *input.SignDescripto
 		return nil, err
 	}
 
-	return sig[:len(sig)-1], nil
+	return btcec.ParseDERSignature(sig[:len(sig)-1], btcec.S256())
 }
 func (m *mockSigner) ComputeInputScript(tx *wire.MsgTx, signDesc *input.SignDescriptor) (*input.Script, error) {
 
