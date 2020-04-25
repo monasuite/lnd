@@ -1,6 +1,10 @@
 package routing
 
 import (
+	"fmt"
+
+	"github.com/btcsuite/btclog"
+	"github.com/monasuite/lnd/build"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing/route"
@@ -25,6 +29,10 @@ const (
 	// errNoPathFound is returned when a path to the target destination does
 	// not exist in the graph.
 	errNoPathFound
+
+	// errInsufficientLocalBalance is returned when none of the local
+	// channels have enough balance for the payment.
+	errInsufficientBalance
 
 	// errEmptyPaySession is returned when the empty payment session is
 	// queried for a route.
@@ -53,6 +61,9 @@ func (e noRouteError) Error() string {
 	case errEmptyPaySession:
 		return "empty payment session"
 
+	case errInsufficientBalance:
+		return "insufficient local balance"
+
 	default:
 		return "unknown no-route error"
 	}
@@ -68,6 +79,9 @@ func (e noRouteError) FailureReason() channeldb.FailureReason {
 		errEmptyPaySession:
 
 		return channeldb.FailureReasonNoRoute
+
+	case errInsufficientBalance:
+		return channeldb.FailureReasonInsufficientBalance
 
 	default:
 		return channeldb.FailureReasonError
@@ -124,6 +138,36 @@ type paymentSession struct {
 	// specified in the payment is one, under no circumstances splitting
 	// will happen and this value remains unused.
 	minShardAmt lnwire.MilliSatoshi
+
+	// log is a payment session-specific logger.
+	log btclog.Logger
+}
+
+// newPaymentSession instantiates a new payment session.
+func newPaymentSession(p *LightningPayment,
+	getBandwidthHints func() (map[uint64]lnwire.MilliSatoshi, error),
+	getRoutingGraph func() (routingGraph, func(), error),
+	missionControl MissionController, pathFindingConfig PathFindingConfig) (
+	*paymentSession, error) {
+
+	edges, err := RouteHintsToEdges(p.RouteHints, p.Target)
+	if err != nil {
+		return nil, err
+	}
+
+	logPrefix := fmt.Sprintf("PaymentSession(%x):", p.PaymentHash)
+
+	return &paymentSession{
+		additionalEdges:   edges,
+		getBandwidthHints: getBandwidthHints,
+		payment:           p,
+		pathFinder:        findPath,
+		getRoutingGraph:   getRoutingGraph,
+		pathFindingConfig: pathFindingConfig,
+		missionControl:    missionControl,
+		minShardAmt:       DefaultShardMinAmt,
+		log:               build.NewPrefixLog(logPrefix, log),
+	}, nil
 }
 
 // RequestRoute returns a route which is likely to be capable for successfully
@@ -182,8 +226,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 			return nil, err
 		}
 
-		log.Debugf("PaymentSession for %x: trying pathfinding with %v",
-			p.payment.PaymentHash, maxAmt)
+		p.log.Debugf("pathfinding for amt=%v", maxAmt)
 
 		// Get a routing graph.
 		routingGraph, cleanup, err := p.getRoutingGraph()
@@ -210,9 +253,22 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 
 		switch {
 		case err == errNoPathFound:
+			// Don't split if this is a legacy payment without mpp
+			// record.
+			if p.payment.PaymentAddr == nil {
+				p.log.Debugf("not splitting because payment " +
+					"address is unspecified")
+
+				return nil, errNoPathFound
+			}
+
 			// No splitting if this is the last shard.
-			isLastShard := activeShards+1 >= p.payment.MaxShards
+			isLastShard := activeShards+1 >= p.payment.MaxParts
 			if isLastShard {
+				p.log.Debugf("not splitting because shard "+
+					"limit %v has been reached",
+					p.payment.MaxParts)
+
 				return nil, errNoPathFound
 			}
 
@@ -222,11 +278,25 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 
 			// Put a lower bound on the minimum shard size.
 			if maxAmt < p.minShardAmt {
+				p.log.Debugf("not splitting because minimum "+
+					"shard amount %v has been reached",
+					p.minShardAmt)
+
 				return nil, errNoPathFound
 			}
 
 			// Go pathfinding.
 			continue
+
+		// If there isn't enough local bandwidth, there is no point in
+		// splitting. It won't be possible to create a complete set in
+		// any case, but the sent out partial payments would be held by
+		// the receiver until the mpp timeout.
+		case err == errInsufficientBalance:
+			p.log.Debug("not splitting because local balance " +
+				"is insufficient")
+
+			return nil, err
 
 		case err != nil:
 			return nil, err

@@ -12,12 +12,14 @@ require (
 	github.com/btcsuite/fastsha256 v0.0.0-20160815193821-637e65642941
 	github.com/davecgh/go-spew v1.1.1
 	github.com/go-errors/errors v1.0.1
-	github.com/golang/protobuf v1.3.2
+	github.com/go-openapi/strfmt v0.19.5 // indirect
+	github.com/golang/protobuf v1.3.1
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/grpc-ecosystem/grpc-gateway v1.8.6
 	github.com/jackpal/gateway v1.0.5
 	github.com/jackpal/go-nat-pmp v0.0.0-20170405195558-28a68d0c24ad
+	github.com/jedib0t/go-pretty v4.3.0+incompatible
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/jrick/logrotate v1.0.0
 	github.com/juju/clock v0.0.0-20190205081909-9c5c9712527c // indirect
@@ -30,9 +32,10 @@ require (
 	github.com/kkdai/bstream v1.0.0
 	github.com/lightninglabs/protobuf-hex-display v1.3.3-0.20191212020323-b444784ce75d
 	github.com/lightningnetwork/lightning-onion v1.0.1
-	github.com/lightningnetwork/lnd/cert v1.0.1
+	github.com/lightningnetwork/lnd/cert v1.0.2
 	github.com/lightningnetwork/lnd/queue v1.0.3
 	github.com/lightningnetwork/lnd/ticker v1.0.0
+	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
 	github.com/monaarchives/btcwallet v0.11.2
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
@@ -50,6 +53,7 @@ require (
 	github.com/urfave/cli v1.18.0
 	golang.org/x/crypto v0.0.0-20200214034016-1d94cc7ab1c6
 	golang.org/x/net v0.0.0-20190206173232-65e2d4e15006
+	golang.org/x/sys v0.0.0-20200116001909-b77594299b42 // indirect
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2
 	google.golang.org/genproto v0.0.0-20190201180003-4b09977fb922
 	google.golang.org/grpc v1.19.0
