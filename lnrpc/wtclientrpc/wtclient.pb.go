@@ -8,8 +8,6 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
-	codes "google.golang.org/grpc/codes"
-	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -729,11 +727,11 @@ var fileDescriptor_b5f4e7d95a641af2 = []byte{
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ context.Context
-var _ grpc.ClientConnInterface
+var _ grpc.ClientConn
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-const _ = grpc.SupportPackageIsVersion6
+const _ = grpc.SupportPackageIsVersion4
 
 // WatchtowerClientClient is the client API for WatchtowerClient service.
 //
@@ -762,10 +760,10 @@ type WatchtowerClientClient interface {
 }
 
 type watchtowerClientClient struct {
-	cc grpc.ClientConnInterface
+	cc *grpc.ClientConn
 }
 
-func NewWatchtowerClientClient(cc grpc.ClientConnInterface) WatchtowerClientClient {
+func NewWatchtowerClientClient(cc *grpc.ClientConn) WatchtowerClientClient {
 	return &watchtowerClientClient{cc}
 }
 
@@ -845,29 +843,6 @@ type WatchtowerClientServer interface {
 	Stats(context.Context, *StatsRequest) (*StatsResponse, error)
 	// Policy returns the active watchtower client policy configuration.
 	Policy(context.Context, *PolicyRequest) (*PolicyResponse, error)
-}
-
-// UnimplementedWatchtowerClientServer can be embedded to have forward compatible implementations.
-type UnimplementedWatchtowerClientServer struct {
-}
-
-func (*UnimplementedWatchtowerClientServer) AddTower(ctx context.Context, req *AddTowerRequest) (*AddTowerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AddTower not implemented")
-}
-func (*UnimplementedWatchtowerClientServer) RemoveTower(ctx context.Context, req *RemoveTowerRequest) (*RemoveTowerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RemoveTower not implemented")
-}
-func (*UnimplementedWatchtowerClientServer) ListTowers(ctx context.Context, req *ListTowersRequest) (*ListTowersResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListTowers not implemented")
-}
-func (*UnimplementedWatchtowerClientServer) GetTowerInfo(ctx context.Context, req *GetTowerInfoRequest) (*Tower, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetTowerInfo not implemented")
-}
-func (*UnimplementedWatchtowerClientServer) Stats(ctx context.Context, req *StatsRequest) (*StatsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Stats not implemented")
-}
-func (*UnimplementedWatchtowerClientServer) Policy(ctx context.Context, req *PolicyRequest) (*PolicyResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Policy not implemented")
 }
 
 func RegisterWatchtowerClientServer(s *grpc.Server, srv WatchtowerClientServer) {

@@ -8,8 +8,6 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
-	codes "google.golang.org/grpc/codes"
-	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -433,11 +431,11 @@ var fileDescriptor_e0b9dc347a92e084 = []byte{
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ context.Context
-var _ grpc.ClientConnInterface
+var _ grpc.ClientConn
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-const _ = grpc.SupportPackageIsVersion6
+const _ = grpc.SupportPackageIsVersion4
 
 // AutopilotClient is the client API for Autopilot service.
 //
@@ -462,10 +460,10 @@ type AutopilotClient interface {
 }
 
 type autopilotClient struct {
-	cc grpc.ClientConnInterface
+	cc *grpc.ClientConn
 }
 
-func NewAutopilotClient(cc grpc.ClientConnInterface) AutopilotClient {
+func NewAutopilotClient(cc *grpc.ClientConn) AutopilotClient {
 	return &autopilotClient{cc}
 }
 
@@ -523,23 +521,6 @@ type AutopilotServer interface {
 	//SetScores attempts to set the scores used by the running autopilot agent,
 	//if the external scoring heuristic is enabled.
 	SetScores(context.Context, *SetScoresRequest) (*SetScoresResponse, error)
-}
-
-// UnimplementedAutopilotServer can be embedded to have forward compatible implementations.
-type UnimplementedAutopilotServer struct {
-}
-
-func (*UnimplementedAutopilotServer) Status(ctx context.Context, req *StatusRequest) (*StatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Status not implemented")
-}
-func (*UnimplementedAutopilotServer) ModifyStatus(ctx context.Context, req *ModifyStatusRequest) (*ModifyStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ModifyStatus not implemented")
-}
-func (*UnimplementedAutopilotServer) QueryScores(ctx context.Context, req *QueryScoresRequest) (*QueryScoresResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method QueryScores not implemented")
-}
-func (*UnimplementedAutopilotServer) SetScores(ctx context.Context, req *SetScoresRequest) (*SetScoresResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SetScores not implemented")
 }
 
 func RegisterAutopilotServer(s *grpc.Server, srv AutopilotServer) {

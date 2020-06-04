@@ -8,8 +8,6 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
-	codes "google.golang.org/grpc/codes"
-	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -199,11 +197,11 @@ var fileDescriptor_494312204cefa0e6 = []byte{
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ context.Context
-var _ grpc.ClientConnInterface
+var _ grpc.ClientConn
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-const _ = grpc.SupportPackageIsVersion6
+const _ = grpc.SupportPackageIsVersion4
 
 // VersionerClient is the client API for Versioner service.
 //
@@ -213,10 +211,10 @@ type VersionerClient interface {
 }
 
 type versionerClient struct {
-	cc grpc.ClientConnInterface
+	cc *grpc.ClientConn
 }
 
-func NewVersionerClient(cc grpc.ClientConnInterface) VersionerClient {
+func NewVersionerClient(cc *grpc.ClientConn) VersionerClient {
 	return &versionerClient{cc}
 }
 
@@ -232,14 +230,6 @@ func (c *versionerClient) GetVersion(ctx context.Context, in *VersionRequest, op
 // VersionerServer is the server API for Versioner service.
 type VersionerServer interface {
 	GetVersion(context.Context, *VersionRequest) (*Version, error)
-}
-
-// UnimplementedVersionerServer can be embedded to have forward compatible implementations.
-type UnimplementedVersionerServer struct {
-}
-
-func (*UnimplementedVersionerServer) GetVersion(ctx context.Context, req *VersionRequest) (*Version, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetVersion not implemented")
 }
 
 func RegisterVersionerServer(s *grpc.Server, srv VersionerServer) {
