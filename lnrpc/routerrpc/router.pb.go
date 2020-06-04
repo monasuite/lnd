@@ -247,10 +247,15 @@ type SendPaymentRequest struct {
 	//
 	//The fields fee_limit_sat and fee_limit_msat are mutually exclusive.
 	FeeLimitMsat int64 `protobuf:"varint,13,opt,name=fee_limit_msat,json=feeLimitMsat,proto3" json:"fee_limit_msat,omitempty"`
-	//*
-	//The channel id of the channel that must be taken to the first hop. If zero,
+	//
+	//Deprecated, use outgoing_chan_ids. The channel id of the channel that must
+	//be taken to the first hop. If zero, any channel may be used (unless
+	//outgoing_chan_ids are set).
+	OutgoingChanId uint64 `protobuf:"varint,8,opt,name=outgoing_chan_id,json=outgoingChanId,proto3" json:"outgoing_chan_id,omitempty"` // Deprecated: Do not use.
+	//
+	//The channel ids of the channels are allowed for the first hop. If empty,
 	//any channel may be used.
-	OutgoingChanId uint64 `protobuf:"varint,8,opt,name=outgoing_chan_id,json=outgoingChanId,proto3" json:"outgoing_chan_id,omitempty"`
+	OutgoingChanIds []uint64 `protobuf:"varint,19,rep,packed,name=outgoing_chan_ids,json=outgoingChanIds,proto3" json:"outgoing_chan_ids,omitempty"`
 	//*
 	//The pubkey of the last hop of the route. If empty, any hop may be used.
 	LastHopPubkey []byte `protobuf:"bytes,14,opt,name=last_hop_pubkey,json=lastHopPubkey,proto3" json:"last_hop_pubkey,omitempty"`
@@ -379,11 +384,19 @@ func (m *SendPaymentRequest) GetFeeLimitMsat() int64 {
 	return 0
 }
 
+// Deprecated: Do not use.
 func (m *SendPaymentRequest) GetOutgoingChanId() uint64 {
 	if m != nil {
 		return m.OutgoingChanId
 	}
 	return 0
+}
+
+func (m *SendPaymentRequest) GetOutgoingChanIds() []uint64 {
+	if m != nil {
+		return m.OutgoingChanIds
+	}
+	return nil
 }
 
 func (m *SendPaymentRequest) GetLastHopPubkey() []byte {

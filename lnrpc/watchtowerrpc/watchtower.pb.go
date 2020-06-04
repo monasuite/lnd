@@ -8,6 +8,8 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -137,11 +139,11 @@ var fileDescriptor_9f019c0e859ad3d6 = []byte{
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ context.Context
-var _ grpc.ClientConn
+var _ grpc.ClientConnInterface
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-const _ = grpc.SupportPackageIsVersion4
+const _ = grpc.SupportPackageIsVersion6
 
 // WatchtowerClient is the client API for Watchtower service.
 //
@@ -155,10 +157,10 @@ type WatchtowerClient interface {
 }
 
 type watchtowerClient struct {
-	cc *grpc.ClientConn
+	cc grpc.ClientConnInterface
 }
 
-func NewWatchtowerClient(cc *grpc.ClientConn) WatchtowerClient {
+func NewWatchtowerClient(cc grpc.ClientConnInterface) WatchtowerClient {
 	return &watchtowerClient{cc}
 }
 
@@ -178,6 +180,14 @@ type WatchtowerServer interface {
 	//including its public key and URIs where the server is currently
 	//listening for clients.
 	GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error)
+}
+
+// UnimplementedWatchtowerServer can be embedded to have forward compatible implementations.
+type UnimplementedWatchtowerServer struct {
+}
+
+func (*UnimplementedWatchtowerServer) GetInfo(ctx context.Context, req *GetInfoRequest) (*GetInfoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetInfo not implemented")
 }
 
 func RegisterWatchtowerServer(s *grpc.Server, srv WatchtowerServer) {

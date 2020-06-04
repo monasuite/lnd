@@ -5,7 +5,7 @@ require (
 	github.com/NebulousLabs/fastrand v0.0.0-20181203155948-6fb6489aac4e // indirect
 	github.com/NebulousLabs/go-upnp v0.0.0-20180202185039-29b680b06c82
 	github.com/Yawning/aez v0.0.0-20180114000226-4dad034d9db2
-	github.com/btcsuite/btcd v0.20.1-beta
+	github.com/btcsuite/btcd v0.20.1-beta.0.20200515232429-9f0179fd2c46
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f
 	github.com/btcsuite/btcutil v1.0.2
 	github.com/btcsuite/btcutil/psbt v1.0.2
@@ -37,11 +37,11 @@ require (
 	github.com/lightningnetwork/lnd/ticker v1.0.0
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
-	github.com/monaarchives/btcwallet v0.11.2
+	github.com/monaarchives/btcwallet v0.11.3
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
 	github.com/monaarchives/btcwallet/walletdb v1.3.1
-	github.com/monaarchives/btcwallet/wtxmgr v1.0.0
+	github.com/monaarchives/btcwallet/wtxmgr v1.1.0
 	github.com/monasuite/monad v0.21.1-beta
 	github.com/monasuite/monautil v1.0.1 // indirect
 	github.com/monasuite/neutrino v0.11.2
@@ -49,9 +49,10 @@ require (
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/prometheus/client_golang v0.9.3
 	github.com/rogpeppe/fastuuid v1.2.0 // indirect
+	github.com/stretchr/testify v1.3.0
 	github.com/tv42/zbase32 v0.0.0-20160707012821-501572607d02
 	github.com/urfave/cli v1.18.0
-	golang.org/x/crypto v0.0.0-20200214034016-1d94cc7ab1c6
+	golang.org/x/crypto v0.0.0-20200510223506-06a226fb4e37
 	golang.org/x/net v0.0.0-20190206173232-65e2d4e15006
 	golang.org/x/sys v0.0.0-20200116001909-b77594299b42 // indirect
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2

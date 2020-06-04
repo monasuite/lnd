@@ -8,6 +8,8 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -826,11 +828,11 @@ var fileDescriptor_4ecd772f6c7ffacf = []byte{
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ context.Context
-var _ grpc.ClientConn
+var _ grpc.ClientConnInterface
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-const _ = grpc.SupportPackageIsVersion4
+const _ = grpc.SupportPackageIsVersion6
 
 // SignerClient is the client API for Signer service.
 //
@@ -884,10 +886,10 @@ type SignerClient interface {
 }
 
 type signerClient struct {
-	cc *grpc.ClientConn
+	cc grpc.ClientConnInterface
 }
 
-func NewSignerClient(cc *grpc.ClientConn) SignerClient {
+func NewSignerClient(cc grpc.ClientConnInterface) SignerClient {
 	return &signerClient{cc}
 }
 
@@ -983,6 +985,26 @@ type SignerServer interface {
 	//The resulting shared public key is serialized in the compressed format and
 	//hashed with sha256, resulting in the final key length of 256bit.
 	DeriveSharedKey(context.Context, *SharedKeyRequest) (*SharedKeyResponse, error)
+}
+
+// UnimplementedSignerServer can be embedded to have forward compatible implementations.
+type UnimplementedSignerServer struct {
+}
+
+func (*UnimplementedSignerServer) SignOutputRaw(ctx context.Context, req *SignReq) (*SignResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SignOutputRaw not implemented")
+}
+func (*UnimplementedSignerServer) ComputeInputScript(ctx context.Context, req *SignReq) (*InputScriptResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ComputeInputScript not implemented")
+}
+func (*UnimplementedSignerServer) SignMessage(ctx context.Context, req *SignMessageReq) (*SignMessageResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SignMessage not implemented")
+}
+func (*UnimplementedSignerServer) VerifyMessage(ctx context.Context, req *VerifyMessageReq) (*VerifyMessageResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method VerifyMessage not implemented")
+}
+func (*UnimplementedSignerServer) DeriveSharedKey(ctx context.Context, req *SharedKeyRequest) (*SharedKeyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeriveSharedKey not implemented")
 }
 
 func RegisterSignerServer(s *grpc.Server, srv SignerServer) {

@@ -28,6 +28,9 @@ github.com/btcsuite/btcd v0.0.0-20190629003639-c26ffa870fd8/go.mod h1:3J08xEfcug
 github.com/btcsuite/btcd v0.0.0-20190824003749-130ea5bddde3/go.mod h1:3J08xEfcugPacsc34/LKRU2yO7YmuT8yt28J8k2+rrI=
 github.com/btcsuite/btcd v0.20.1-beta h1:Ik4hyJqN8Jfyv3S4AGBOmyouMsYE3EdYODkMbQjwPGw=
 github.com/btcsuite/btcd v0.20.1-beta/go.mod h1:wVuoA8VJLEcwgqHBwHmzLRazpKxTv13Px/pDuV7OomQ=
+github.com/btcsuite/btcd v0.20.1-beta.0.20200513120220-b470eee47728/go.mod h1:wVuoA8VJLEcwgqHBwHmzLRazpKxTv13Px/pDuV7OomQ=
+github.com/btcsuite/btcd v0.20.1-beta.0.20200515232429-9f0179fd2c46 h1:QyTpiR5nQe94vza2qkvf7Ns8XX2Rjh/vdIhO3RzGj4o=
+github.com/btcsuite/btcd v0.20.1-beta.0.20200515232429-9f0179fd2c46/go.mod h1:Yktc19YNjh/Iz2//CX0vfRTS4IJKM/RKO5YZ9Fn+Pgo=
 github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f h1:bAs4lUbRJpnnkd9VhRV3jjAVU7DJVjMaK+IsvSeZvFo=
 github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f/go.mod h1:TdznJufoqS23FtqVCzL0ZqgP5MqXbb4fg/WgDys70nA=
 github.com/btcsuite/btcutil v0.0.0-20180706230648-ab6388e0c60a/go.mod h1:+5NJ2+qvTyV9exUAL/rxXi3DcLg2Ts+ymUAY5y4NvMg=
@@ -49,6 +52,8 @@ github.com/btcsuite/btcwallet/walletdb v1.3.1 h1:lW1Ac3F1jJY4K11P+YQtRNcP5jFk27A
 github.com/btcsuite/btcwallet/walletdb v1.3.1/go.mod h1:9cwc1Yyg4uvd4ZdfdoMnALji+V9gfWSMfxEdLdR5Vwc=
 github.com/btcsuite/btcwallet/wtxmgr v1.0.0 h1:aIHgViEmZmZfe0tQQqF1xyd2qBqFWxX5vZXkkbjtbeA=
 github.com/btcsuite/btcwallet/wtxmgr v1.0.0/go.mod h1:vc4gBprll6BP0UJ+AIGDaySoc7MdAmZf8kelfNb8CFY=
+github.com/btcsuite/btcwallet/wtxmgr v1.1.1-0.20200515224913-e0e62245ecbe h1:yQbJVYfsKbdqDQNLxd4hhiLSiMkIygefW5mSHMsdKpc=
+github.com/btcsuite/btcwallet/wtxmgr v1.1.1-0.20200515224913-e0e62245ecbe/go.mod h1:OwC0W0HhUszbWdvJvH6xvgabKSJ0lXl11YbmmqF9YXQ=
 github.com/btcsuite/fastsha256 v0.0.0-20160815193821-637e65642941 h1:kij1x2aL7VE6gtx8KMIt8PGPgI5GV9LgtHFG5KaEMPY=
 github.com/btcsuite/fastsha256 v0.0.0-20160815193821-637e65642941/go.mod h1:QcFA8DZHtuIAdYKCq/BzELOaznRsCvwf4zTPmaYwaig=
 github.com/btcsuite/go-socks v0.0.0-20170105172521-4720035b7bfd h1:R/opQEbFEy9JGkIguV40SvRY1uliPX8ifOvi6ICsFCw=
@@ -181,6 +186,8 @@ github.com/monaarchives/btcwallet v0.11.1 h1:79FelvTzNkrb2dfqdKfz6njhqzf02ddw7fO
 github.com/monaarchives/btcwallet v0.11.1/go.mod h1:bIKA2+CMJkm8UU0dqt924TKlwrQGNvptJu1TiQFc4ro=
 github.com/monaarchives/btcwallet v0.11.2 h1:YIxS92r5IqlrV9qBQIv2lff5SEUvt9CrTAkPVHqWNy8=
 github.com/monaarchives/btcwallet v0.11.2/go.mod h1:Z+ANHsGQmEnWdDcfarLlphEoMCvCML6Nh0147wdZE5g=
+github.com/monaarchives/btcwallet v0.11.3 h1:2H8P3qqg0nGn50L4yzPDCssGhbYx8PfnxIr/kD2yfR0=
+github.com/monaarchives/btcwallet v0.11.3/go.mod h1:jCsLW376eyrpaJSUjA0gnXzJjQgJd5f8aCwF4UT1Sv4=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0 h1:ksF3WKNj2SJX3yVWUuANQlS23Xe+9jpY1rrWlp9SalU=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0/go.mod h1:AtTKdIUCYgF07/DoNnJKJ8Sde4TN7nxS3AcqTf59Ea4=
 github.com/monaarchives/btcwallet/wallet/txrules v1.0.0 h1:4I2V23buSnS1fv91oZlZ3kKOrCGsBf15YwLX1vu9mSI=
@@ -197,6 +204,8 @@ github.com/monaarchives/btcwallet/walletdb v1.3.1 h1:09qAYKLAyE3EcARL0eOVWKHvl05
 github.com/monaarchives/btcwallet/walletdb v1.3.1/go.mod h1:36eHRDquWOXxu/zPvc7pvUvh68kRu3GXVZuZDT2yuaw=
 github.com/monaarchives/btcwallet/wtxmgr v1.0.0 h1:nB2/aPMTZ8E7aFANWgOPTKUrFmtwGP9qfpNO5z8CdGM=
 github.com/monaarchives/btcwallet/wtxmgr v1.0.0/go.mod h1:XqMElePwLqnOJAd1MzG54vVo5Byo9NMutl6WNYfG79U=
+github.com/monaarchives/btcwallet/wtxmgr v1.1.0 h1:eTzy4XNn2O3yHxIfd1yQV4NGGbcJi+ZHB9N62qQo94k=
+github.com/monaarchives/btcwallet/wtxmgr v1.1.0/go.mod h1:zwLzq0T0emlCc2DuiysbaDF7vniOTPsbOpxoxGHictc=
 github.com/monasuite/monad v0.0.0-20190606163121-f0d2a15b1f44 h1:nt10k6BDn/XVz4pGSaFDvWsUGiFT4mabuyvpWRpgkKM=
 github.com/monasuite/monad v0.0.0-20190606163121-f0d2a15b1f44/go.mod h1:ioPgaQSqFuc4H3OHqpXcYKKnPxC8wmg2sGHgrWssO+s=
 github.com/monasuite/monad v0.0.0-20190614102927-b024b3975103 h1:pMdNXrhEwQSnXkfqeus7Odt/+vEKlR8TA5Acs/xyINs=

@@ -11,6 +11,7 @@ import (
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/record"
+	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -305,6 +306,9 @@ func TestInvoiceAddTimeSeries(t *testing.T) {
 		t.Fatalf("unable to make test db: %v", err)
 	}
 
+	_, err = db.InvoicesAddedSince(0)
+	assert.Nil(t, err)
+
 	// We'll start off by creating 20 random invoices, and inserting them
 	// into the database.
 	const numInvoices = 20
@@ -371,6 +375,9 @@ func TestInvoiceAddTimeSeries(t *testing.T) {
 				spew.Sdump(query.resp), spew.Sdump(resp))
 		}
 	}
+
+	_, err = db.InvoicesSettledSince(0)
+	assert.Nil(t, err)
 
 	var settledInvoices []Invoice
 	var settleIndex uint64 = 1

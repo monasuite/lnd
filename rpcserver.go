@@ -68,23 +68,7 @@ import (
 	"gopkg.in/macaroon-bakery.v2/bakery"
 )
 
-const (
-	// maxBtcPaymentMSat is the maximum allowed Bitcoin payment currently
-	// permitted as defined in BOLT-0002.
-	maxBtcPaymentMSat = lnwire.MilliSatoshi(math.MaxUint32)
-
-	// maxMonaPaymentMSat is the maximum allowed Monacoin payment currently
-	// permitted.
-	maxMonaPaymentMSat = lnwire.MilliSatoshi(math.MaxUint32) *
-		btcToMonaConversionRate
-)
-
 var (
-	// MaxPaymentMSat is the maximum allowed payment currently permitted as
-	// defined in BOLT-002. This value depends on which chain is active.
-	// It is set to the value under the Bitcoin chain as default.
-	MaxPaymentMSat = maxBtcPaymentMSat
-
 	// defaultAcceptorTimeout is the time after which an RPCAcceptor will time
 	// out and return false if it hasn't yet received a response.
 	//
@@ -542,8 +526,7 @@ func newRPCServer(s *server, macService *macaroons.Service,
 	}
 	graph := s.chanDB.ChannelGraph()
 	routerBackend := &routerrpc.RouterBackend{
-		MaxPaymentMSat: MaxPaymentMSat,
-		SelfNode:       selfNode.PubKeyBytes,
+		SelfNode: selfNode.PubKeyBytes,
 		FetchChannelCapacity: func(chanID uint64) (btcutil.Amount,
 			error) {
 
@@ -594,6 +577,7 @@ func newRPCServer(s *server, macService *macaroons.Service,
 		s.htlcSwitch, activeNetParams.Params, s.chanRouter,
 		routerBackend, s.nodeSigner, s.chanDB, s.sweeper, tower,
 		s.towerClient, cfg.net.ResolveTCPAddr, genInvoiceFeatures,
+		rpcsLog,
 	)
 	if err != nil {
 		return nil, err
@@ -3300,11 +3284,37 @@ func createRPCOpenChannel(r *rpcServer, graph *channeldb.ChannelGraph,
 		channel.PushAmountSat = uint64(localBalance.ToSatoshis())
 	}
 
-	outpoint := dbChannel.FundingOutpoint
+	if len(dbChannel.LocalShutdownScript) > 0 {
+		_, addresses, _, err := txscript.ExtractPkScriptAddrs(
+			dbChannel.LocalShutdownScript, activeNetParams.Params,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// We only expect one upfront shutdown address for a channel. If
+		// LocalShutdownScript is non-zero, there should be one payout
+		// address set.
+		if len(addresses) != 1 {
+			return nil, fmt.Errorf("expected one upfront shutdown "+
+				"address, got: %v", len(addresses))
+		}
+
+		channel.CloseAddress = addresses[0].String()
+	}
+
+	// If the server hasn't fully started yet, it's possible that the
+	// channel event store hasn't either, so it won't be able to consume any
+	// requests until then. To prevent blocking, we'll just omit the uptime
+	// related fields for now.
+	if !r.server.Started() {
+		return channel, nil
+	}
 
 	// Get the lifespan observed by the channel event store. If the channel is
 	// not known to the channel event store, return early because we cannot
 	// calculate any further uptime information.
+	outpoint := dbChannel.FundingOutpoint
 	startTime, endTime, err := r.server.chanEventStore.GetLifespan(outpoint)
 	switch err {
 	case chanfitness.ErrChannelNotFound:
@@ -3336,25 +3346,6 @@ func createRPCOpenChannel(r *rpcServer, graph *channeldb.ChannelGraph,
 		return nil, err
 	}
 	channel.Uptime = int64(uptime.Seconds())
-
-	if len(dbChannel.LocalShutdownScript) > 0 {
-		_, addresses, _, err := txscript.ExtractPkScriptAddrs(
-			dbChannel.LocalShutdownScript, activeNetParams.Params,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		// We only expect one upfront shutdown address for a channel. If
-		// LocalShutdownScript is non-zero, there should be one payout address
-		// set.
-		if len(addresses) != 1 {
-			return nil, fmt.Errorf("expected one upfront shutdown address, "+
-				"got: %v", len(addresses))
-		}
-
-		channel.CloseAddress = addresses[0].String()
-	}
 
 	return channel, nil
 }
@@ -3685,18 +3676,18 @@ func (r *rpcServer) unmarshallSendToRouteRequest(
 // hints), or we'll get a fully populated route from the user that we'll pass
 // directly to the channel router for dispatching.
 type rpcPaymentIntent struct {
-	msat              lnwire.MilliSatoshi
-	feeLimit          lnwire.MilliSatoshi
-	cltvLimit         uint32
-	dest              route.Vertex
-	rHash             [32]byte
-	cltvDelta         uint16
-	routeHints        [][]zpay32.HopHint
-	outgoingChannelID *uint64
-	lastHop           *route.Vertex
-	destFeatures      *lnwire.FeatureVector
-	paymentAddr       *[32]byte
-	payReq            []byte
+	msat               lnwire.MilliSatoshi
+	feeLimit           lnwire.MilliSatoshi
+	cltvLimit          uint32
+	dest               route.Vertex
+	rHash              [32]byte
+	cltvDelta          uint16
+	routeHints         [][]zpay32.HopHint
+	outgoingChannelIDs []uint64
+	lastHop            *route.Vertex
+	destFeatures       *lnwire.FeatureVector
+	paymentAddr        *[32]byte
+	payReq             []byte
 
 	destCustomRecords record.CustomSet
 
@@ -3732,9 +3723,12 @@ func (r *rpcServer) extractPaymentIntent(rpcPayReq *rpcPaymentRequest) (rpcPayme
 	}
 
 	// If there are no routes specified, pass along a outgoing channel
-	// restriction if specified.
+	// restriction if specified. The main server rpc does not support
+	// multiple channel restrictions.
 	if rpcPayReq.OutgoingChanId != 0 {
-		payIntent.outgoingChannelID = &rpcPayReq.OutgoingChanId
+		payIntent.outgoingChannelIDs = []uint64{
+			rpcPayReq.OutgoingChanId,
+		}
 	}
 
 	// Pass along a last hop restriction if specified.
@@ -3907,18 +3901,6 @@ func (r *rpcServer) extractPaymentIntent(rpcPayReq *rpcPaymentRequest) (rpcPayme
 		return payIntent, err
 	}
 
-	// Currently, within the bootstrap phase of the network, we limit the
-	// largest payment size allotted to (2^32) - 1 mSAT or 4.29 million
-	// satoshis.
-	if payIntent.msat > MaxPaymentMSat {
-		// In this case, we'll send an error to the caller, but
-		// continue our loop for the next payment.
-		return payIntent, fmt.Errorf("payment of %v is too large, "+
-			"max payment allowed is %v", payIntent.msat,
-			MaxPaymentMSat)
-
-	}
-
 	return payIntent, nil
 }
 
@@ -3949,20 +3931,20 @@ func (r *rpcServer) dispatchPaymentIntent(
 	// router, otherwise we'll create a payment session to execute it.
 	if payIntent.route == nil {
 		payment := &routing.LightningPayment{
-			Target:            payIntent.dest,
-			Amount:            payIntent.msat,
-			FinalCLTVDelta:    payIntent.cltvDelta,
-			FeeLimit:          payIntent.feeLimit,
-			CltvLimit:         payIntent.cltvLimit,
-			PaymentHash:       payIntent.rHash,
-			RouteHints:        payIntent.routeHints,
-			OutgoingChannelID: payIntent.outgoingChannelID,
-			LastHop:           payIntent.lastHop,
-			PaymentRequest:    payIntent.payReq,
-			PayAttemptTimeout: routing.DefaultPayAttemptTimeout,
-			DestCustomRecords: payIntent.destCustomRecords,
-			DestFeatures:      payIntent.destFeatures,
-			PaymentAddr:       payIntent.paymentAddr,
+			Target:             payIntent.dest,
+			Amount:             payIntent.msat,
+			FinalCLTVDelta:     payIntent.cltvDelta,
+			FeeLimit:           payIntent.feeLimit,
+			CltvLimit:          payIntent.cltvLimit,
+			PaymentHash:        payIntent.rHash,
+			RouteHints:         payIntent.routeHints,
+			OutgoingChannelIDs: payIntent.outgoingChannelIDs,
+			LastHop:            payIntent.lastHop,
+			PaymentRequest:     payIntent.payReq,
+			PayAttemptTimeout:  routing.DefaultPayAttemptTimeout,
+			DestCustomRecords:  payIntent.destCustomRecords,
+			DestFeatures:       payIntent.destFeatures,
+			PaymentAddr:        payIntent.paymentAddr,
 
 			// Don't enable multi-part payments on the main rpc.
 			// Users need to use routerrpc for that.
@@ -4450,9 +4432,12 @@ func (r *rpcServer) ListInvoices(ctx context.Context,
 func (r *rpcServer) SubscribeInvoices(req *lnrpc.InvoiceSubscription,
 	updateStream lnrpc.Lightning_SubscribeInvoicesServer) error {
 
-	invoiceClient := r.server.invoices.SubscribeNotifications(
+	invoiceClient, err := r.server.invoices.SubscribeNotifications(
 		req.AddIndex, req.SettleIndex,
 	)
+	if err != nil {
+		return err
+	}
 	defer invoiceClient.Cancel()
 
 	for {
@@ -5190,7 +5175,7 @@ func (r *rpcServer) ListPayments(ctx context.Context,
 	for _, payment := range paymentsQuerySlice.Payments {
 		payment := payment
 
-		rpcPayment, err := r.routerBackend.MarshallPayment(&payment)
+		rpcPayment, err := r.routerBackend.MarshallPayment(payment)
 		if err != nil {
 			return nil, err
 		}
