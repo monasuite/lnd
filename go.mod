@@ -37,23 +37,22 @@ require (
 	github.com/lightningnetwork/lnd/ticker v1.0.0
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
-	github.com/monaarchives/btcwallet v0.11.3
+	github.com/monaarchives/btcwallet v0.12.0
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
 	github.com/monaarchives/btcwallet/walletdb v1.3.1
 	github.com/monaarchives/btcwallet/wtxmgr v1.1.0
-	github.com/monasuite/monad v0.21.1-beta
-	github.com/monasuite/monautil v1.0.1 // indirect
-	github.com/monasuite/neutrino v0.11.2
+	github.com/monasuite/monad v0.22.1-beta
+	github.com/monasuite/neutrino v0.12.0
 	github.com/onsi/ginkgo v1.8.0 // indirect
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/prometheus/client_golang v0.9.3
 	github.com/rogpeppe/fastuuid v1.2.0 // indirect
-	github.com/stretchr/testify v1.3.0
+	github.com/stretchr/testify v1.4.0
 	github.com/tv42/zbase32 v0.0.0-20160707012821-501572607d02
 	github.com/urfave/cli v1.18.0
 	golang.org/x/crypto v0.0.0-20200510223506-06a226fb4e37
-	golang.org/x/net v0.0.0-20190206173232-65e2d4e15006
+	golang.org/x/net v0.0.0-20190404232315-eb5bcb51f2a3
 	golang.org/x/sys v0.0.0-20200116001909-b77594299b42 // indirect
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2
 	google.golang.org/genproto v0.0.0-20190201180003-4b09977fb922
