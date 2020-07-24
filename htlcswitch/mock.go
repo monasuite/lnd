@@ -20,10 +20,10 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/go-errors/errors"
 	sphinx "github.com/lightningnetwork/lightning-onion"
+	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/input"
@@ -699,6 +699,11 @@ func newMockChannelLink(htlcSwitch *Switch, chanID lnwire.ChannelID,
 
 func (f *mockChannelLink) HandleSwitchPacket(pkt *htlcPacket) error {
 	f.mailBox.AddPacket(pkt)
+	return nil
+}
+
+func (f *mockChannelLink) HandleLocalAddPacket(pkt *htlcPacket) error {
+	_ = f.mailBox.AddPacket(pkt)
 	return nil
 }
 

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/monasuite/lnd/clock"
+	"github.com/lightningnetwork/lnd/clock"
 	"github.com/monasuite/lnd/lnwire"
 )
 

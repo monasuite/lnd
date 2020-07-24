@@ -8,8 +8,8 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/clock"
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/lnwallet"
 )
 

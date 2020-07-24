@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/queue"
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/zpay32"
 )

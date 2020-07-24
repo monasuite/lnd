@@ -30,6 +30,7 @@ import (
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lncfg"
 	"github.com/monasuite/lnd/lnpeer"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lnwallet"
@@ -417,10 +418,11 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 		},
 		ZombieSweeperInterval:         1 * time.Hour,
 		ReservationTimeout:            1 * time.Nanosecond,
-		MaxPendingChannels:            DefaultMaxPendingChannels,
+		MaxPendingChannels:            lncfg.DefaultMaxPendingChannels,
 		NotifyOpenChannelEvent:        evt.NotifyOpenChannelEvent,
 		OpenChannelPredicate:          chainedAcceptor,
 		NotifyPendingOpenChannelEvent: evt.NotifyPendingOpenChannelEvent,
+		RegisteredChains:              newChainRegistry(),
 	}
 
 	for _, op := range options {
@@ -3087,11 +3089,9 @@ func TestGetUpfrontShutdownScript(t *testing.T) {
 				}
 			}
 
-			// Set the command line option in config as needed.
-			cfg = &config{EnableUpfrontShutdown: test.localEnabled}
-
 			addr, err := getUpfrontShutdownScript(
-				&mockPeer, test.upfrontScript, test.getScript,
+				test.localEnabled, &mockPeer, test.upfrontScript,
+				test.getScript,
 			)
 			if err != test.expectedErr {
 				t.Fatalf("got: %v, expected error: %v", err, test.expectedErr)

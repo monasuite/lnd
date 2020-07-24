@@ -9,8 +9,8 @@ import (
 
 	"github.com/btcsuite/btcutil"
 	"github.com/go-errors/errors"
+	"github.com/lightningnetwork/lnd/clock"
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwire"

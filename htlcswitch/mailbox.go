@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/monasuite/lnd/clock"
+	"github.com/lightningnetwork/lnd/clock"
 	"github.com/monasuite/lnd/lnwire"
 )
 

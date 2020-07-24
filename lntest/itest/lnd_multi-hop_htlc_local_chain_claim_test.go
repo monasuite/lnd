@@ -10,6 +10,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/monasuite/lnd"
+	"github.com/monasuite/lnd/lncfg"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lnrpc/invoicesrpc"
 	"github.com/monasuite/lnd/lntest"
@@ -136,7 +137,7 @@ func testMultiHopHtlcLocalChainClaim(net *lntest.NetworkHarness, t *harnessTest,
 	// We'll now mine enough blocks so Carol decides that she needs to go
 	// on-chain to claim the HTLC as Bob has been inactive.
 	numBlocks := padCLTV(uint32(invoiceReq.CltvExpiry -
-		lnd.DefaultIncomingBroadcastDelta))
+		lncfg.DefaultIncomingBroadcastDelta))
 
 	if _, err := net.Miner.Node.Generate(numBlocks); err != nil {
 		t.Fatalf("unable to generate blocks")

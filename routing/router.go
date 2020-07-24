@@ -15,10 +15,10 @@ import (
 	"github.com/go-errors/errors"
 
 	sphinx "github.com/lightningnetwork/lightning-onion"
+	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/channeldb/kvdb"
-	"github.com/monasuite/lnd/clock"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/lntypes"

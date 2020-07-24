@@ -10,6 +10,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/monasuite/lnd"
+	"github.com/monasuite/lnd/lncfg"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lnrpc/invoicesrpc"
 	"github.com/monasuite/lnd/lntest"
@@ -118,7 +119,7 @@ func testMultiHopReceiverChainClaim(net *lntest.NetworkHarness, t *harnessTest,
 	// chain in order to sweep her HTLC since the value is high enough.
 	// TODO(roasbeef): modify once go to chain policy changes
 	numBlocks := padCLTV(uint32(
-		invoiceReq.CltvExpiry - lnd.DefaultIncomingBroadcastDelta,
+		invoiceReq.CltvExpiry - lncfg.DefaultIncomingBroadcastDelta,
 	))
 	if _, err := net.Miner.Node.Generate(numBlocks); err != nil {
 		t.Fatalf("unable to generate blocks")
