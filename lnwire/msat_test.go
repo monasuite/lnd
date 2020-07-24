@@ -56,9 +56,9 @@ func TestMilliSatoshiConversion(t *testing.T) {
 			btcAmount:  50,
 		},
 		{
-			mSatAmount: 21 * 1e6 * 1e8 * 1e3,
-			satAmount:  21 * 1e6 * 1e8,
-			btcAmount:  21 * 1e6,
+			mSatAmount: 105.12 * 1e6 * 1e8 * 1e3,
+			satAmount:  105.12 * 1e6 * 1e8,
+			btcAmount:  105.12 * 1e6,
 		},
 	}
 
