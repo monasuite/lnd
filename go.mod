@@ -31,7 +31,6 @@ require (
 	github.com/kkdai/bstream v1.0.0
 	github.com/lightninglabs/protobuf-hex-display v1.3.3-0.20191212020323-b444784ce75d
 	github.com/lightningnetwork/lightning-onion v1.0.1
-	github.com/lightningnetwork/lnd v0.0.2
 	github.com/lightningnetwork/lnd/cert v1.0.2
 	github.com/lightningnetwork/lnd/clock v1.0.1
 	github.com/lightningnetwork/lnd/queue v1.0.4
@@ -49,8 +48,6 @@ require (
 	github.com/onsi/ginkgo v1.8.0 // indirect
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/prometheus/client_golang v0.9.3
-	github.com/roasbeef/btcd v0.0.0-20180418012700-a03db407e40d // indirect
-	github.com/roasbeef/btcutil v0.0.0-20180406014609-dfb640c57141 // indirect
 	github.com/rogpeppe/fastuuid v1.2.0 // indirect
 	github.com/stretchr/testify v1.5.1
 	github.com/tv42/zbase32 v0.0.0-20160707012821-501572607d02
