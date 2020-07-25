@@ -184,6 +184,8 @@ github.com/monaarchives/btcwallet v0.11.3 h1:2H8P3qqg0nGn50L4yzPDCssGhbYx8PfnxIr
 github.com/monaarchives/btcwallet v0.11.3/go.mod h1:jCsLW376eyrpaJSUjA0gnXzJjQgJd5f8aCwF4UT1Sv4=
 github.com/monaarchives/btcwallet v0.12.0 h1:Qrm7RtkRsbCXkeCpzMNxCeS+2VhyQRV2oab2aufXWII=
 github.com/monaarchives/btcwallet v0.12.0/go.mod h1:O+By89hMj/YfQYAFX3LjanD6ooGjyYij/hN/z09uOv0=
+github.com/monaarchives/btcwallet v0.12.1 h1:7TBiKtI/Qt1i321SBBy7z3RDc875NHSgHVVqCqHap/Q=
+github.com/monaarchives/btcwallet v0.12.1/go.mod h1:O+By89hMj/YfQYAFX3LjanD6ooGjyYij/hN/z09uOv0=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0 h1:ksF3WKNj2SJX3yVWUuANQlS23Xe+9jpY1rrWlp9SalU=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0/go.mod h1:AtTKdIUCYgF07/DoNnJKJ8Sde4TN7nxS3AcqTf59Ea4=
 github.com/monaarchives/btcwallet/wallet/txrules v1.0.0 h1:4I2V23buSnS1fv91oZlZ3kKOrCGsBf15YwLX1vu9mSI=
