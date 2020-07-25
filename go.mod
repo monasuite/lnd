@@ -38,7 +38,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/mattn/goveralls v0.0.6 // indirect
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
-	github.com/monaarchives/btcwallet v0.12.1
+	github.com/monaarchives/btcwallet v0.12.0
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
 	github.com/monaarchives/btcwallet/walletdb v1.3.3
