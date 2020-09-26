@@ -10,11 +10,11 @@ require (
 	github.com/btcsuite/btcutil v1.0.2
 	github.com/btcsuite/btcutil/psbt v1.0.2
 	github.com/davecgh/go-spew v1.1.1
-	github.com/envoyproxy/go-control-plane v0.9.4 // indirect
+	github.com/envoyproxy/go-control-plane v0.9.1 // indirect
 	github.com/go-errors/errors v1.0.1
 	github.com/go-openapi/strfmt v0.19.5 // indirect
-	github.com/golang/protobuf v1.3.2
-	github.com/google/go-cmp v0.4.0 // indirect
+	github.com/golang/protobuf v1.4.1
+	github.com/google/go-cmp v0.5.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/grpc-ecosystem/grpc-gateway v1.8.6
@@ -40,12 +40,13 @@ require (
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/mattn/goveralls v0.0.6 // indirect
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
+	github.com/modern-go/reflect2 v1.0.1 // indirect
 	github.com/monaarchives/btcwallet v0.12.2
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
 	github.com/monaarchives/btcwallet/walletdb v1.3.3
 	github.com/monaarchives/btcwallet/wtxmgr v1.2.0
-	github.com/monasuite/monad v0.22.1-beta
+	github.com/monasuite/monad v0.22.1-beta.0.20200923041908-5682eaeb0bcc
 	github.com/monasuite/neutrino v0.12.0
 	github.com/onsi/ginkgo v1.8.0 // indirect
 	github.com/onsi/gomega v1.5.0 // indirect
@@ -57,12 +58,12 @@ require (
 	go.etcd.io/bbolt v1.3.5 // indirect
 	golang.org/x/crypto v0.0.0-20200709230013-948cd5f35899
 	golang.org/x/net v0.0.0-20200707034311-ab3426394381
-	golang.org/x/sys v0.0.0-20200724161237-0e2f3a69832c // indirect
+	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd // indirect
 	golang.org/x/text v0.3.3 // indirect
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2
-	golang.org/x/tools v0.0.0-20200724172932-b5fc9d354d99 // indirect
-	google.golang.org/genproto v0.0.0-20190819201941-24fa4b261c55
-	google.golang.org/grpc v1.28.0-pre
+	google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013
+	google.golang.org/grpc v1.27.0
+	google.golang.org/protobuf v1.25.0
 	gopkg.in/errgo.v1 v1.0.1 // indirect
 	gopkg.in/macaroon-bakery.v2 v2.0.1
 	gopkg.in/macaroon.v2 v2.0.0
@@ -82,5 +83,11 @@ replace git.schwanenlied.me/yawning/bsaes.git => github.com/Yawning/bsaes v0.0.0
 // Pin this version that we know works explicitly, even though the
 // btcsuite/btcutil package requests a newer version.
 replace golang.org/x/crypto => golang.org/x/crypto v0.0.0-20190211182817-74369b46fc67
+
+replace github.com/monasuite/monad => ../monad
+
+replace github.com/monasuite/monawallet => ../monawallet
+
+replace github.com/monasuite/neutrino => ../neutrino
 
 go 1.12
