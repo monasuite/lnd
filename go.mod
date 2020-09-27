@@ -13,11 +13,11 @@ require (
 	github.com/envoyproxy/go-control-plane v0.9.1 // indirect
 	github.com/go-errors/errors v1.0.1
 	github.com/go-openapi/strfmt v0.19.5 // indirect
-	github.com/golang/protobuf v1.4.1
+	github.com/golang/protobuf v1.3.2
 	github.com/google/go-cmp v0.5.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
-	github.com/grpc-ecosystem/grpc-gateway v1.8.6
+	github.com/grpc-ecosystem/grpc-gateway v1.14.3
 	github.com/jackpal/gateway v1.0.5
 	github.com/jackpal/go-nat-pmp v0.0.0-20170405195558-28a68d0c24ad
 	github.com/jedib0t/go-pretty v4.3.0+incompatible
@@ -46,8 +46,8 @@ require (
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
 	github.com/monaarchives/btcwallet/walletdb v1.3.3
 	github.com/monaarchives/btcwallet/wtxmgr v1.2.0
-	github.com/monasuite/monad v0.22.1-beta.0.20200923041908-5682eaeb0bcc
-	github.com/monasuite/neutrino v0.12.0
+	github.com/monasuite/monad v0.22.1-beta.0.20200926094437-03946a039f77
+	github.com/monasuite/neutrino v0.12.1-0.20200927073505-9d461c2ebf8d
 	github.com/onsi/ginkgo v1.8.0 // indirect
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/prometheus/client_golang v0.9.3
@@ -61,9 +61,8 @@ require (
 	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd // indirect
 	golang.org/x/text v0.3.3 // indirect
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2
-	google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013
-	google.golang.org/grpc v1.27.0
-	google.golang.org/protobuf v1.25.0
+	google.golang.org/genproto v0.0.0-20190927181202-20e1ac93f88c
+	google.golang.org/grpc v1.24.0
 	gopkg.in/errgo.v1 v1.0.1 // indirect
 	gopkg.in/macaroon-bakery.v2 v2.0.1
 	gopkg.in/macaroon.v2 v2.0.0
@@ -83,11 +82,5 @@ replace git.schwanenlied.me/yawning/bsaes.git => github.com/Yawning/bsaes v0.0.0
 // Pin this version that we know works explicitly, even though the
 // btcsuite/btcutil package requests a newer version.
 replace golang.org/x/crypto => golang.org/x/crypto v0.0.0-20190211182817-74369b46fc67
-
-replace github.com/monasuite/monad => ../monad
-
-replace github.com/monasuite/monawallet => ../monawallet
-
-replace github.com/monasuite/neutrino => ../neutrino
 
 go 1.12
