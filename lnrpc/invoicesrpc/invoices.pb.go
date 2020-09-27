@@ -10,8 +10,6 @@ import (
 	lnrpc "github.com/monasuite/lnd/lnrpc"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	grpc "google.golang.org/grpc"
-	codes "google.golang.org/grpc/codes"
-	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -557,23 +555,6 @@ type InvoicesServer interface {
 	//SettleInvoice settles an accepted invoice. If the invoice is already
 	//settled, this call will succeed.
 	SettleInvoice(context.Context, *SettleInvoiceMsg) (*SettleInvoiceResp, error)
-}
-
-// UnimplementedInvoicesServer can be embedded to have forward compatible implementations.
-type UnimplementedInvoicesServer struct {
-}
-
-func (*UnimplementedInvoicesServer) SubscribeSingleInvoice(req *SubscribeSingleInvoiceRequest, srv Invoices_SubscribeSingleInvoiceServer) error {
-	return status.Errorf(codes.Unimplemented, "method SubscribeSingleInvoice not implemented")
-}
-func (*UnimplementedInvoicesServer) CancelInvoice(ctx context.Context, req *CancelInvoiceMsg) (*CancelInvoiceResp, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CancelInvoice not implemented")
-}
-func (*UnimplementedInvoicesServer) AddHoldInvoice(ctx context.Context, req *AddHoldInvoiceRequest) (*AddHoldInvoiceResp, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AddHoldInvoice not implemented")
-}
-func (*UnimplementedInvoicesServer) SettleInvoice(ctx context.Context, req *SettleInvoiceMsg) (*SettleInvoiceResp, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SettleInvoice not implemented")
 }
 
 func RegisterInvoicesServer(s *grpc.Server, srv InvoicesServer) {

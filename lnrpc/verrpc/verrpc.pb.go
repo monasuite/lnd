@@ -8,8 +8,6 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
-	codes "google.golang.org/grpc/codes"
-	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -232,14 +230,6 @@ func (c *versionerClient) GetVersion(ctx context.Context, in *VersionRequest, op
 // VersionerServer is the server API for Versioner service.
 type VersionerServer interface {
 	GetVersion(context.Context, *VersionRequest) (*Version, error)
-}
-
-// UnimplementedVersionerServer can be embedded to have forward compatible implementations.
-type UnimplementedVersionerServer struct {
-}
-
-func (*UnimplementedVersionerServer) GetVersion(ctx context.Context, req *VersionRequest) (*Version, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetVersion not implemented")
 }
 
 func RegisterVersionerServer(s *grpc.Server, srv VersionerServer) {

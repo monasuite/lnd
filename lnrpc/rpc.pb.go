@@ -9,8 +9,6 @@ import (
 	proto "github.com/golang/protobuf/proto"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	grpc "google.golang.org/grpc"
-	codes "google.golang.org/grpc/codes"
-	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -12892,23 +12890,6 @@ type WalletUnlockerServer interface {
 	ChangePassword(context.Context, *ChangePasswordRequest) (*ChangePasswordResponse, error)
 }
 
-// UnimplementedWalletUnlockerServer can be embedded to have forward compatible implementations.
-type UnimplementedWalletUnlockerServer struct {
-}
-
-func (*UnimplementedWalletUnlockerServer) GenSeed(ctx context.Context, req *GenSeedRequest) (*GenSeedResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GenSeed not implemented")
-}
-func (*UnimplementedWalletUnlockerServer) InitWallet(ctx context.Context, req *InitWalletRequest) (*InitWalletResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method InitWallet not implemented")
-}
-func (*UnimplementedWalletUnlockerServer) UnlockWallet(ctx context.Context, req *UnlockWalletRequest) (*UnlockWalletResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method UnlockWallet not implemented")
-}
-func (*UnimplementedWalletUnlockerServer) ChangePassword(ctx context.Context, req *ChangePasswordRequest) (*ChangePasswordResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ChangePassword not implemented")
-}
-
 func RegisterWalletUnlockerServer(s *grpc.Server, srv WalletUnlockerServer) {
 	s.RegisterService(&_WalletUnlocker_serviceDesc, srv)
 }
@@ -14410,176 +14391,6 @@ type LightningServer interface {
 	//write permissions. No first-party caveats are added since this can be done
 	//offline.
 	BakeMacaroon(context.Context, *BakeMacaroonRequest) (*BakeMacaroonResponse, error)
-}
-
-// UnimplementedLightningServer can be embedded to have forward compatible implementations.
-type UnimplementedLightningServer struct {
-}
-
-func (*UnimplementedLightningServer) WalletBalance(ctx context.Context, req *WalletBalanceRequest) (*WalletBalanceResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method WalletBalance not implemented")
-}
-func (*UnimplementedLightningServer) ChannelBalance(ctx context.Context, req *ChannelBalanceRequest) (*ChannelBalanceResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ChannelBalance not implemented")
-}
-func (*UnimplementedLightningServer) GetTransactions(ctx context.Context, req *GetTransactionsRequest) (*TransactionDetails, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetTransactions not implemented")
-}
-func (*UnimplementedLightningServer) EstimateFee(ctx context.Context, req *EstimateFeeRequest) (*EstimateFeeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method EstimateFee not implemented")
-}
-func (*UnimplementedLightningServer) SendCoins(ctx context.Context, req *SendCoinsRequest) (*SendCoinsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SendCoins not implemented")
-}
-func (*UnimplementedLightningServer) ListUnspent(ctx context.Context, req *ListUnspentRequest) (*ListUnspentResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListUnspent not implemented")
-}
-func (*UnimplementedLightningServer) SubscribeTransactions(req *GetTransactionsRequest, srv Lightning_SubscribeTransactionsServer) error {
-	return status.Errorf(codes.Unimplemented, "method SubscribeTransactions not implemented")
-}
-func (*UnimplementedLightningServer) SendMany(ctx context.Context, req *SendManyRequest) (*SendManyResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SendMany not implemented")
-}
-func (*UnimplementedLightningServer) NewAddress(ctx context.Context, req *NewAddressRequest) (*NewAddressResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method NewAddress not implemented")
-}
-func (*UnimplementedLightningServer) SignMessage(ctx context.Context, req *SignMessageRequest) (*SignMessageResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SignMessage not implemented")
-}
-func (*UnimplementedLightningServer) VerifyMessage(ctx context.Context, req *VerifyMessageRequest) (*VerifyMessageResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method VerifyMessage not implemented")
-}
-func (*UnimplementedLightningServer) ConnectPeer(ctx context.Context, req *ConnectPeerRequest) (*ConnectPeerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ConnectPeer not implemented")
-}
-func (*UnimplementedLightningServer) DisconnectPeer(ctx context.Context, req *DisconnectPeerRequest) (*DisconnectPeerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DisconnectPeer not implemented")
-}
-func (*UnimplementedLightningServer) ListPeers(ctx context.Context, req *ListPeersRequest) (*ListPeersResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListPeers not implemented")
-}
-func (*UnimplementedLightningServer) SubscribePeerEvents(req *PeerEventSubscription, srv Lightning_SubscribePeerEventsServer) error {
-	return status.Errorf(codes.Unimplemented, "method SubscribePeerEvents not implemented")
-}
-func (*UnimplementedLightningServer) GetInfo(ctx context.Context, req *GetInfoRequest) (*GetInfoResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetInfo not implemented")
-}
-func (*UnimplementedLightningServer) PendingChannels(ctx context.Context, req *PendingChannelsRequest) (*PendingChannelsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PendingChannels not implemented")
-}
-func (*UnimplementedLightningServer) ListChannels(ctx context.Context, req *ListChannelsRequest) (*ListChannelsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListChannels not implemented")
-}
-func (*UnimplementedLightningServer) SubscribeChannelEvents(req *ChannelEventSubscription, srv Lightning_SubscribeChannelEventsServer) error {
-	return status.Errorf(codes.Unimplemented, "method SubscribeChannelEvents not implemented")
-}
-func (*UnimplementedLightningServer) ClosedChannels(ctx context.Context, req *ClosedChannelsRequest) (*ClosedChannelsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ClosedChannels not implemented")
-}
-func (*UnimplementedLightningServer) OpenChannelSync(ctx context.Context, req *OpenChannelRequest) (*ChannelPoint, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method OpenChannelSync not implemented")
-}
-func (*UnimplementedLightningServer) OpenChannel(req *OpenChannelRequest, srv Lightning_OpenChannelServer) error {
-	return status.Errorf(codes.Unimplemented, "method OpenChannel not implemented")
-}
-func (*UnimplementedLightningServer) FundingStateStep(ctx context.Context, req *FundingTransitionMsg) (*FundingStateStepResp, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method FundingStateStep not implemented")
-}
-func (*UnimplementedLightningServer) ChannelAcceptor(srv Lightning_ChannelAcceptorServer) error {
-	return status.Errorf(codes.Unimplemented, "method ChannelAcceptor not implemented")
-}
-func (*UnimplementedLightningServer) CloseChannel(req *CloseChannelRequest, srv Lightning_CloseChannelServer) error {
-	return status.Errorf(codes.Unimplemented, "method CloseChannel not implemented")
-}
-func (*UnimplementedLightningServer) AbandonChannel(ctx context.Context, req *AbandonChannelRequest) (*AbandonChannelResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AbandonChannel not implemented")
-}
-func (*UnimplementedLightningServer) SendPayment(srv Lightning_SendPaymentServer) error {
-	return status.Errorf(codes.Unimplemented, "method SendPayment not implemented")
-}
-func (*UnimplementedLightningServer) SendPaymentSync(ctx context.Context, req *SendRequest) (*SendResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SendPaymentSync not implemented")
-}
-func (*UnimplementedLightningServer) SendToRoute(srv Lightning_SendToRouteServer) error {
-	return status.Errorf(codes.Unimplemented, "method SendToRoute not implemented")
-}
-func (*UnimplementedLightningServer) SendToRouteSync(ctx context.Context, req *SendToRouteRequest) (*SendResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SendToRouteSync not implemented")
-}
-func (*UnimplementedLightningServer) AddInvoice(ctx context.Context, req *Invoice) (*AddInvoiceResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AddInvoice not implemented")
-}
-func (*UnimplementedLightningServer) ListInvoices(ctx context.Context, req *ListInvoiceRequest) (*ListInvoiceResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListInvoices not implemented")
-}
-func (*UnimplementedLightningServer) LookupInvoice(ctx context.Context, req *PaymentHash) (*Invoice, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method LookupInvoice not implemented")
-}
-func (*UnimplementedLightningServer) SubscribeInvoices(req *InvoiceSubscription, srv Lightning_SubscribeInvoicesServer) error {
-	return status.Errorf(codes.Unimplemented, "method SubscribeInvoices not implemented")
-}
-func (*UnimplementedLightningServer) DecodePayReq(ctx context.Context, req *PayReqString) (*PayReq, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DecodePayReq not implemented")
-}
-func (*UnimplementedLightningServer) ListPayments(ctx context.Context, req *ListPaymentsRequest) (*ListPaymentsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListPayments not implemented")
-}
-func (*UnimplementedLightningServer) DeleteAllPayments(ctx context.Context, req *DeleteAllPaymentsRequest) (*DeleteAllPaymentsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteAllPayments not implemented")
-}
-func (*UnimplementedLightningServer) DescribeGraph(ctx context.Context, req *ChannelGraphRequest) (*ChannelGraph, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DescribeGraph not implemented")
-}
-func (*UnimplementedLightningServer) GetNodeMetrics(ctx context.Context, req *NodeMetricsRequest) (*NodeMetricsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetNodeMetrics not implemented")
-}
-func (*UnimplementedLightningServer) GetChanInfo(ctx context.Context, req *ChanInfoRequest) (*ChannelEdge, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetChanInfo not implemented")
-}
-func (*UnimplementedLightningServer) GetNodeInfo(ctx context.Context, req *NodeInfoRequest) (*NodeInfo, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetNodeInfo not implemented")
-}
-func (*UnimplementedLightningServer) QueryRoutes(ctx context.Context, req *QueryRoutesRequest) (*QueryRoutesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method QueryRoutes not implemented")
-}
-func (*UnimplementedLightningServer) GetNetworkInfo(ctx context.Context, req *NetworkInfoRequest) (*NetworkInfo, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetNetworkInfo not implemented")
-}
-func (*UnimplementedLightningServer) StopDaemon(ctx context.Context, req *StopRequest) (*StopResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method StopDaemon not implemented")
-}
-func (*UnimplementedLightningServer) SubscribeChannelGraph(req *GraphTopologySubscription, srv Lightning_SubscribeChannelGraphServer) error {
-	return status.Errorf(codes.Unimplemented, "method SubscribeChannelGraph not implemented")
-}
-func (*UnimplementedLightningServer) DebugLevel(ctx context.Context, req *DebugLevelRequest) (*DebugLevelResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DebugLevel not implemented")
-}
-func (*UnimplementedLightningServer) FeeReport(ctx context.Context, req *FeeReportRequest) (*FeeReportResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method FeeReport not implemented")
-}
-func (*UnimplementedLightningServer) UpdateChannelPolicy(ctx context.Context, req *PolicyUpdateRequest) (*PolicyUpdateResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method UpdateChannelPolicy not implemented")
-}
-func (*UnimplementedLightningServer) ForwardingHistory(ctx context.Context, req *ForwardingHistoryRequest) (*ForwardingHistoryResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ForwardingHistory not implemented")
-}
-func (*UnimplementedLightningServer) ExportChannelBackup(ctx context.Context, req *ExportChannelBackupRequest) (*ChannelBackup, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ExportChannelBackup not implemented")
-}
-func (*UnimplementedLightningServer) ExportAllChannelBackups(ctx context.Context, req *ChanBackupExportRequest) (*ChanBackupSnapshot, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ExportAllChannelBackups not implemented")
-}
-func (*UnimplementedLightningServer) VerifyChanBackup(ctx context.Context, req *ChanBackupSnapshot) (*VerifyChanBackupResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method VerifyChanBackup not implemented")
-}
-func (*UnimplementedLightningServer) RestoreChannelBackups(ctx context.Context, req *RestoreChanBackupRequest) (*RestoreBackupResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RestoreChannelBackups not implemented")
-}
-func (*UnimplementedLightningServer) SubscribeChannelBackups(req *ChannelBackupSubscription, srv Lightning_SubscribeChannelBackupsServer) error {
-	return status.Errorf(codes.Unimplemented, "method SubscribeChannelBackups not implemented")
-}
-func (*UnimplementedLightningServer) BakeMacaroon(ctx context.Context, req *BakeMacaroonRequest) (*BakeMacaroonResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BakeMacaroon not implemented")
 }
 
 func RegisterLightningServer(s *grpc.Server, srv LightningServer) {
