@@ -12,6 +12,7 @@
 4.7. [Protobuf Compilation](#Protobuf)<br />
 4.8. [Additional Style Constraints On Top of gofmt](ExtraGoFmtStyle)<br />
 4.9. [Pointing to Remote Dependant Branches in Go Modules](ModulesReplace)<br />
+4.10. [Use of Log Levels](#LogLevels)<br />
 5. [Code Approval Process](#CodeApproval)<br />
 5.1. [Code Review](#CodeReview)<br />
 5.2. [Rework Code (if needed)](#CodeRework)<br />
@@ -166,6 +167,8 @@ A quick summary of test practices follows:
   [`networkHarness`framework](https://github.com/monasuite/lnd/blob/master/lntest/harness.go)
   contained within `lnd`. For example integration tests, see
   [`lnd_test.go`](https://github.com/monasuite/lnd/blob/master/lnd_test.go#L181). 
+- The itest log files are automatically scanned for `[ERR]` lines. There
+  shouldn't be any of those in the logs, see [Use of Log Levels](#LogLevels).
 
 Throughout the process of contributing to `lnd`, you'll likely also be
 extensively using the commands within our `Makefile`. As a result, we recommend
@@ -452,29 +455,14 @@ _exact same_ version of `protoc`. As of the writing of this article, the `lnd`
 project uses [v3.4.0](https://github.com/google/protobuf/releases/tag/v3.4.0)
 of `protoc`.
 
-The following commit hashes of related projects are also required in order to
-generate identical compiled protos and related files:
-   * grpc-ecosystem/grpc-gateway: `f2862b476edcef83412c7af8687c9cd8e4097c0f`
-   * golang/protobuf: `ab9f9a6dab164b7d1246e0e688b0ab7b94d8553e`
+The following two libraries must be installed with the exact commit hash as
+described in [lnrpc README](https://github.com/lightningnetwork/lnd/blob/master/lnrpc/README.md)
+otherwise the CI pipeline on Travis will fail:
+- grpc-ecosystem/grpc-gateway
+- golang/protobuf
 
 For detailed instructions on how to compile modifications to `lnd`'s `protobuf`
 definitions, check out the [lnrpc README](https://github.com/monasuite/lnd/blob/master/lnrpc/README.md).
-
-Additionally, in order to maintain a uniform display of the RPC responses
-rendered by `lncli`, all added or modified `protof` definitions, _must_ attach
-the proper `json_name` option for all fields. An example of such an option can
-be found within the definition of the `DebugLevelResponse` struct:
-
-```protobuf
-message DebugLevelResponse {
-    string sub_systems = 1 [ json_name = "sub_systems" ];
-}
-
-```
-
-Notice how the `json_name` field option corresponds with the name of the field
-itself, and uses a `snake_case` style of name formatting. All added or modified
-`proto` fields should adhere to the format above.
 
 <a name="ExtraGoFmtStyle" />
 
@@ -485,7 +473,7 @@ set of linting scripts run by `make lint`. These include `gofmt`. In addition
 to `gofmt` we've opted to enforce the following style guidelines.
 
    * ALL columns (on a best effort basis) should be wrapped to 80 line columns.
-     Editors should be set to treat a tab as 4 spaces.
+     Editors should be set to treat a tab as 8 spaces.
    * When wrapping a line that contains a function call as the unwrapped line
      exceeds the column limit, the close paren should be placed on its own
      line. Additionally, all arguments should begin in a new line after the
@@ -526,6 +514,16 @@ Here's an example replacing the `lightning-onion` version checked into `lnd` wit
 ```
  go mod edit -replace=github.com/lightningnetwork/lightning-onion@v0.0.0-20180605012408-ac4d9da8f1d6=github.com/roasbeef/lightning-onion@2e5ae87696046298365ab43bcd1cf3a7a1d69695
 ```
+
+<a name="LogLevels" />
+
+#### 4.10 Use of Log Levels
+
+There are six log levels available: `trace`, `debug`, `info`, `warn`, `error` and `critical`.
+
+Only use `error` for internal errors that are never expected to happen during
+normal operation. No event triggered by external sources (rpc, chain backend,
+etc) should lead to an `error` log.
 
 <a name="CodeApproval" />
 

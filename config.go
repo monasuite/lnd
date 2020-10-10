@@ -58,6 +58,7 @@ const (
 	defaultChanStatusSampleInterval      = time.Minute
 	defaultChanEnableTimeout             = 19 * time.Minute
 	defaultChanDisableTimeout            = 20 * time.Minute
+	defaultHeightHintCacheQueryDisable   = false
 	defaultMaxLogFiles                   = 3
 	defaultMaxLogFileSize                = 10
 	defaultMinBackoff                    = time.Second
@@ -72,10 +73,19 @@ const (
 
 	// minTimeLockDelta is the minimum timelock we require for incoming
 	// HTLCs on our channels.
-	minTimeLockDelta = 4
+	minTimeLockDelta = routing.MinCLTVDelta
+
+	// defaultAcceptorTimeout is the time after which an RPCAcceptor will time
+	// out and return false if it hasn't yet received a response.
+	defaultAcceptorTimeout = 15 * time.Second
 
 	defaultAlias = ""
 	defaultColor = "#3399FF"
+
+	// defaultHostSampleInterval is the default amount of time that the
+	// HostAnnouncer will wait between DNS resolutions to check if the
+	// backing IP of a host has changed.
+	defaultHostSampleInterval = time.Minute * 5
 )
 
 var (
@@ -116,6 +126,8 @@ var (
 	// estimatesmartfee RPC call.
 	defaultBitcoindEstimateMode = "CONSERVATIVE"
 	bitcoindEstimateModes       = [2]string{"ECONOMICAL", defaultBitcoindEstimateMode}
+
+	defaultSphinxDbName = "sphinxreplay.db"
 )
 
 // Config defines the configuration options for lnd.
@@ -136,13 +148,14 @@ type Config struct {
 	TLSExtraDomains []string `long:"tlsextradomain" description:"Adds an extra domain to the generated certificate"`
 	TLSAutoRefresh  bool     `long:"tlsautorefresh" description:"Re-generate TLS certificate and key if the IPs or domains are changed"`
 
-	NoMacaroons    bool   `long:"no-macaroons" description:"Disable macaroon authentication"`
-	AdminMacPath   string `long:"adminmacaroonpath" description:"Path to write the admin macaroon for lnd's RPC and REST services if it doesn't exist"`
-	ReadMacPath    string `long:"readonlymacaroonpath" description:"Path to write the read-only macaroon for lnd's RPC and REST services if it doesn't exist"`
-	InvoiceMacPath string `long:"invoicemacaroonpath" description:"Path to the invoice-only macaroon for lnd's RPC and REST services if it doesn't exist"`
-	LogDir         string `long:"logdir" description:"Directory to log output."`
-	MaxLogFiles    int    `long:"maxlogfiles" description:"Maximum logfiles to keep (0 for no rotation)"`
-	MaxLogFileSize int    `long:"maxlogfilesize" description:"Maximum logfile size in MB"`
+	NoMacaroons     bool          `long:"no-macaroons" description:"Disable macaroon authentication"`
+	AdminMacPath    string        `long:"adminmacaroonpath" description:"Path to write the admin macaroon for lnd's RPC and REST services if it doesn't exist"`
+	ReadMacPath     string        `long:"readonlymacaroonpath" description:"Path to write the read-only macaroon for lnd's RPC and REST services if it doesn't exist"`
+	InvoiceMacPath  string        `long:"invoicemacaroonpath" description:"Path to the invoice-only macaroon for lnd's RPC and REST services if it doesn't exist"`
+	LogDir          string        `long:"logdir" description:"Directory to log output."`
+	MaxLogFiles     int           `long:"maxlogfiles" description:"Maximum logfiles to keep (0 for no rotation)"`
+	MaxLogFileSize  int           `long:"maxlogfilesize" description:"Maximum logfile size in MB"`
+	AcceptorTimeout time.Duration `long:"acceptortimeout" description:"Time after which an RPCAcceptor will time out and return false if it hasn't yet received a response"`
 
 	// We'll parse these 'raw' string arguments into real net.Addrs in the
 	// loadConfig function. We need to expose the 'raw' strings so the
@@ -152,8 +165,10 @@ type Config struct {
 	RawRESTListeners []string `long:"restlisten" description:"Add an interface/port/socket to listen for REST connections"`
 	RawListeners     []string `long:"listen" description:"Add an interface/port to listen for peer connections"`
 	RawExternalIPs   []string `long:"externalip" description:"Add an ip:port to the list of local addresses we claim to listen on to peers. If a port is not specified, the default (9735) will be used regardless of other parameters"`
+	ExternalHosts    []string `long:"externalhosts" description:"A set of hosts that should be periodically resolved to announce IPs for"`
 	RPCListeners     []net.Addr
 	RESTListeners    []net.Addr
+	RestCORS         []string `long:"restcors" description:"Add an ip:port/hostname to allow cross origin access from. To allow all origins, set as \"*\"."`
 	Listeners        []net.Addr
 	ExternalIPs      []net.Addr
 	DisableListen    bool          `long:"nolisten" description:"Disable listening for incoming peer connections"`
@@ -192,17 +207,17 @@ type Config struct {
 
 	NoNetBootstrap bool `long:"nobootstrap" description:"If true, then automatic network bootstrapping will not be attempted."`
 
-	NoSeedBackup bool `long:"noseedbackup" description:"If true, NO SEED WILL BE EXPOSED AND THE WALLET WILL BE ENCRYPTED USING THE DEFAULT PASSPHRASE -- EVER. THIS FLAG IS ONLY FOR TESTING AND IS BEING DEPRECATED."`
+	NoSeedBackup bool `long:"noseedbackup" description:"If true, NO SEED WILL BE EXPOSED -- EVER, AND THE WALLET WILL BE ENCRYPTED USING THE DEFAULT PASSPHRASE. THIS FLAG IS ONLY FOR TESTING AND SHOULD NEVER BE USED ON MAINNET."`
 
 	PaymentsExpirationGracePeriod time.Duration `long:"payments-expiration-grace-period" description:"A period to wait before force closing channels with outgoing htlcs that have timed-out and are a result of this node initiated payments."`
 	TrickleDelay                  int           `long:"trickledelay" description:"Time in milliseconds between each release of announcements to the network"`
 	ChanEnableTimeout             time.Duration `long:"chan-enable-timeout" description:"The duration that a peer connection must be stable before attempting to send a channel update to reenable or cancel a pending disables of the peer's channels on the network."`
 	ChanDisableTimeout            time.Duration `long:"chan-disable-timeout" description:"The duration that must elapse after first detecting that an already active channel is actually inactive and sending channel update disabling it to the network. The pending disable can be canceled if the peer reconnects and becomes stable for chan-enable-timeout before the disable update is sent."`
 	ChanStatusSampleInterval      time.Duration `long:"chan-status-sample-interval" description:"The polling interval between attempts to detect if an active channel has become inactive due to its peer going offline."`
-
-	Alias       string `long:"alias" description:"The node alias. Used as a moniker by peers and intelligence services"`
-	Color       string `long:"color" description:"The color of the node in hex format (i.e. '#3399FF'). Used to customize node appearance in intelligence services"`
-	MinChanSize int64  `long:"minchansize" description:"The smallest channel size (in satoshis) that we should accept. Incoming channels smaller than this will be rejected"`
+	HeightHintCacheQueryDisable   bool          `long:"height-hint-cache-query-disable" description:"Disable queries from the height-hint cache to try to recover channels stuck in the pending close state. Disabling height hint queries may cause longer chain rescans, resulting in a performance hit. Unset this after channels are unstuck so you can get better performance again."`
+	Alias                         string        `long:"alias" description:"The node alias. Used as a moniker by peers and intelligence services"`
+	Color                         string        `long:"color" description:"The color of the node in hex format (i.e. '#3399FF'). Used to customize node appearance in intelligence services"`
+	MinChanSize                   int64         `long:"minchansize" description:"The smallest channel size (in satoshis) that we should accept. Incoming channels smaller than this will be rejected"`
 
 	NumGraphSyncPeers      int           `long:"numgraphsyncpeers" description:"The number of peers that we should receive new graph updates from. This option can be tuned to save bandwidth for light clients or routing nodes."`
 	HistoricalSyncInterval time.Duration `long:"historicalsyncinterval" description:"The polling interval between historical graph sync attempts. Each historical graph sync attempt ensures we reconcile with the remote peer's graph from the genesis block."`
@@ -227,6 +242,8 @@ type Config struct {
 
 	AcceptKeySend bool `long:"accept-keysend" description:"If true, spontaneous payments through keysend will be accepted. [experimental]"`
 
+	KeysendHoldTime time.Duration `long:"keysend-hold-time" description:"If non-zero, keysend payments are accepted but not immediately settled. If the payment isn't settled manually after the specified time, it is canceled automatically. [experimental]"`
+
 	Routing *routing.Conf `group:"routing" namespace:"routing"`
 
 	Workers *lncfg.Workers `group:"workers" namespace:"workers"`
@@ -242,6 +259,8 @@ type Config struct {
 	ProtocolOptions *lncfg.ProtocolOptions `group:"protocol" namespace:"protocol"`
 
 	AllowCircularRoute bool `long:"allow-circular-route" description:"If true, our node will allow htlc forwards that arrive and depart on the same channel."`
+
+	DB *lncfg.DB `group:"db" namespace:"db"`
 
 	// LogWriter is the root logger that all of the daemon's subloggers are
 	// hooked up to.
@@ -260,15 +279,16 @@ type Config struct {
 // DefaultConfig returns all default values for the Config struct.
 func DefaultConfig() Config {
 	return Config{
-		LndDir:         DefaultLndDir,
-		ConfigFile:     DefaultConfigFile,
-		DataDir:        defaultDataDir,
-		DebugLevel:     defaultLogLevel,
-		TLSCertPath:    defaultTLSCertPath,
-		TLSKeyPath:     defaultTLSKeyPath,
-		LogDir:         defaultLogDir,
-		MaxLogFiles:    defaultMaxLogFiles,
-		MaxLogFileSize: defaultMaxLogFileSize,
+		LndDir:          DefaultLndDir,
+		ConfigFile:      DefaultConfigFile,
+		DataDir:         defaultDataDir,
+		DebugLevel:      defaultLogLevel,
+		TLSCertPath:     defaultTLSCertPath,
+		TLSKeyPath:      defaultTLSKeyPath,
+		LogDir:          defaultLogDir,
+		MaxLogFiles:     defaultMaxLogFiles,
+		MaxLogFileSize:  defaultMaxLogFileSize,
+		AcceptorTimeout: defaultAcceptorTimeout,
 		Bitcoin: &lncfg.Chain{
 			MinHTLCIn:     defaultBitcoinMinHTLCInMSat,
 			MinHTLCOut:    defaultBitcoinMinHTLCOutMSat,
@@ -293,7 +313,7 @@ func DefaultConfig() Config {
 			BaseFee:       defaultMonacoinBaseFeeMSat,
 			FeeRate:       defaultMonacoinFeeRate,
 			TimeLockDelta: defaultMonacoinTimeLockDelta,
-			Node:          "monad",
+			Node:          "ltcd",
 		},
 		MonadMode: &lncfg.Btcd{
 			Dir:     defaultMonadDir,
@@ -330,6 +350,7 @@ func DefaultConfig() Config {
 		ChanStatusSampleInterval:      defaultChanStatusSampleInterval,
 		ChanEnableTimeout:             defaultChanEnableTimeout,
 		ChanDisableTimeout:            defaultChanDisableTimeout,
+		HeightHintCacheQueryDisable:   defaultHeightHintCacheQueryDisable,
 		Alias:                         defaultAlias,
 		Color:                         defaultColor,
 		MinChanSize:                   int64(minChanFundingSize),
@@ -357,6 +378,7 @@ func DefaultConfig() Config {
 		MaxOutgoingCltvExpiry:   htlcswitch.DefaultMaxOutgoingCltvExpiry,
 		MaxChannelFeeAllocation: htlcswitch.DefaultMaxLinkFeeAllocation,
 		LogWriter:               build.NewRotatingLogWriter(),
+		DB:                      lncfg.DefaultDB(),
 		registeredChains:        newChainRegistry(),
 	}
 }
@@ -587,6 +609,14 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 	}
 	cfg.Tor.Control = control.String()
 
+	// Ensure that tor socks host:port is not equal to tor control
+	// host:port. This would lead to lnd not starting up properly.
+	if cfg.Tor.SOCKS == cfg.Tor.Control {
+		str := "%s: tor.socks and tor.control can not use " +
+			"the same host:port"
+		return nil, fmt.Errorf(str, funcName)
+	}
+
 	switch {
 	case cfg.Tor.V2 && cfg.Tor.V3:
 		return nil, errors.New("either tor.v2 or tor.v3 can be set, " +
@@ -638,6 +668,10 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 	if cfg.DisableListen && cfg.NAT {
 		return nil, errors.New("NAT traversal cannot be used when " +
 			"listening is disabled")
+	}
+	if cfg.NAT && len(cfg.ExternalHosts) != 0 {
+		return nil, errors.New("NAT support and externalhosts are " +
+			"mutually exclusive, only one should be selected")
 	}
 
 	// Determine the active chain configuration and its parameters.
@@ -1068,11 +1102,20 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 			"minbackoff")
 	}
 
+	// Newer versions of lnd added a new sub-config for bolt-specific
+	// parameters. However we want to also allow existing users to use the
+	// value on the top-level config. If the outer config value is set,
+	// then we'll use that directly.
+	if cfg.SyncFreelist {
+		cfg.DB.Bolt.SyncFreelist = cfg.SyncFreelist
+	}
+
 	// Validate the subconfigs for workers, caches, and the tower client.
 	err = lncfg.Validate(
 		cfg.Workers,
 		cfg.Caches,
 		cfg.WtClient,
+		cfg.DB,
 	)
 	if err != nil {
 		return nil, err
@@ -1083,11 +1126,23 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 	// the wallet.
 	_, err = parseHexColor(cfg.Color)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to parse node color: %v", err)
+		return nil, fmt.Errorf("unable to parse node color: %v", err)
 	}
 
 	// All good, return the sanitized result.
 	return &cfg, err
+}
+
+// localDatabaseDir returns the default directory where the
+// local bolt db files are stored.
+func (c *Config) localDatabaseDir() string {
+	return filepath.Join(c.DataDir,
+		defaultGraphSubDirname,
+		normalizeNetwork(activeNetParams.Name))
+}
+
+func (c *Config) networkName() string {
+	return normalizeNetwork(activeNetParams.Name)
 }
 
 // CleanAndExpandPath expands environment variables and leading ~ in the

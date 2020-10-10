@@ -28,74 +28,6 @@ var _ status.Status
 var _ = runtime.String
 var _ = utilities.NewDoubleArray
 
-var (
-	filter_WalletUnlocker_GenSeed_0 = &utilities.DoubleArray{Encoding: map[string]int{}, Base: []int(nil), Check: []int(nil)}
-)
-
-func request_WalletUnlocker_GenSeed_0(ctx context.Context, marshaler runtime.Marshaler, client WalletUnlockerClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq GenSeedRequest
-	var metadata runtime.ServerMetadata
-
-	if err := runtime.PopulateQueryParameters(&protoReq, req.URL.Query(), filter_WalletUnlocker_GenSeed_0); err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
-	}
-
-	msg, err := client.GenSeed(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
-	return msg, metadata, err
-
-}
-
-func request_WalletUnlocker_InitWallet_0(ctx context.Context, marshaler runtime.Marshaler, client WalletUnlockerClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq InitWalletRequest
-	var metadata runtime.ServerMetadata
-
-	newReader, berr := utilities.IOReaderFactory(req.Body)
-	if berr != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", berr)
-	}
-	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
-	}
-
-	msg, err := client.InitWallet(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
-	return msg, metadata, err
-
-}
-
-func request_WalletUnlocker_UnlockWallet_0(ctx context.Context, marshaler runtime.Marshaler, client WalletUnlockerClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq UnlockWalletRequest
-	var metadata runtime.ServerMetadata
-
-	newReader, berr := utilities.IOReaderFactory(req.Body)
-	if berr != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", berr)
-	}
-	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
-	}
-
-	msg, err := client.UnlockWallet(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
-	return msg, metadata, err
-
-}
-
-func request_WalletUnlocker_ChangePassword_0(ctx context.Context, marshaler runtime.Marshaler, client WalletUnlockerClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq ChangePasswordRequest
-	var metadata runtime.ServerMetadata
-
-	newReader, berr := utilities.IOReaderFactory(req.Body)
-	if berr != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", berr)
-	}
-	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
-	}
-
-	msg, err := client.ChangePassword(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
-	return msg, metadata, err
-
-}
-
 func request_Lightning_WalletBalance_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq WalletBalanceRequest
 	var metadata runtime.ServerMetadata
@@ -114,9 +46,17 @@ func request_Lightning_ChannelBalance_0(ctx context.Context, marshaler runtime.M
 
 }
 
+var (
+	filter_Lightning_GetTransactions_0 = &utilities.DoubleArray{Encoding: map[string]int{}, Base: []int(nil), Check: []int(nil)}
+)
+
 func request_Lightning_GetTransactions_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq GetTransactionsRequest
 	var metadata runtime.ServerMetadata
+
+	if err := runtime.PopulateQueryParameters(&protoReq, req.URL.Query(), filter_Lightning_GetTransactions_0); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
 
 	msg, err := client.GetTransactions(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
@@ -170,6 +110,48 @@ func request_Lightning_ListUnspent_0(ctx context.Context, marshaler runtime.Mars
 	}
 
 	msg, err := client.ListUnspent(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+var (
+	filter_Lightning_SubscribeTransactions_0 = &utilities.DoubleArray{Encoding: map[string]int{}, Base: []int(nil), Check: []int(nil)}
+)
+
+func request_Lightning_SubscribeTransactions_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (Lightning_SubscribeTransactionsClient, runtime.ServerMetadata, error) {
+	var protoReq GetTransactionsRequest
+	var metadata runtime.ServerMetadata
+
+	if err := runtime.PopulateQueryParameters(&protoReq, req.URL.Query(), filter_Lightning_SubscribeTransactions_0); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	stream, err := client.SubscribeTransactions(ctx, &protoReq)
+	if err != nil {
+		return nil, metadata, err
+	}
+	header, err := stream.Header()
+	if err != nil {
+		return nil, metadata, err
+	}
+	metadata.HeaderMD = header
+	return stream, metadata, nil
+
+}
+
+func request_Lightning_SendMany_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq SendManyRequest
+	var metadata runtime.ServerMetadata
+
+	newReader, berr := utilities.IOReaderFactory(req.Body)
+	if berr != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", berr)
+	}
+	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	msg, err := client.SendMany(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
@@ -286,11 +268,37 @@ func request_Lightning_ListPeers_0(ctx context.Context, marshaler runtime.Marsha
 
 }
 
+func request_Lightning_SubscribePeerEvents_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (Lightning_SubscribePeerEventsClient, runtime.ServerMetadata, error) {
+	var protoReq PeerEventSubscription
+	var metadata runtime.ServerMetadata
+
+	stream, err := client.SubscribePeerEvents(ctx, &protoReq)
+	if err != nil {
+		return nil, metadata, err
+	}
+	header, err := stream.Header()
+	if err != nil {
+		return nil, metadata, err
+	}
+	metadata.HeaderMD = header
+	return stream, metadata, nil
+
+}
+
 func request_Lightning_GetInfo_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq GetInfoRequest
 	var metadata runtime.ServerMetadata
 
 	msg, err := client.GetInfo(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func request_Lightning_GetRecoveryInfo_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq GetRecoveryInfoRequest
+	var metadata runtime.ServerMetadata
+
+	msg, err := client.GetRecoveryInfo(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
@@ -318,6 +326,23 @@ func request_Lightning_ListChannels_0(ctx context.Context, marshaler runtime.Mar
 
 	msg, err := client.ListChannels(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
+
+}
+
+func request_Lightning_SubscribeChannelEvents_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (Lightning_SubscribeChannelEventsClient, runtime.ServerMetadata, error) {
+	var protoReq ChannelEventSubscription
+	var metadata runtime.ServerMetadata
+
+	stream, err := client.SubscribeChannelEvents(ctx, &protoReq)
+	if err != nil {
+		return nil, metadata, err
+	}
+	header, err := stream.Header()
+	if err != nil {
+		return nil, metadata, err
+	}
+	metadata.HeaderMD = header
+	return stream, metadata, nil
 
 }
 
@@ -351,6 +376,48 @@ func request_Lightning_OpenChannelSync_0(ctx context.Context, marshaler runtime.
 	}
 
 	msg, err := client.OpenChannelSync(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func request_Lightning_OpenChannel_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (Lightning_OpenChannelClient, runtime.ServerMetadata, error) {
+	var protoReq OpenChannelRequest
+	var metadata runtime.ServerMetadata
+
+	newReader, berr := utilities.IOReaderFactory(req.Body)
+	if berr != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", berr)
+	}
+	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	stream, err := client.OpenChannel(ctx, &protoReq)
+	if err != nil {
+		return nil, metadata, err
+	}
+	header, err := stream.Header()
+	if err != nil {
+		return nil, metadata, err
+	}
+	metadata.HeaderMD = header
+	return stream, metadata, nil
+
+}
+
+func request_Lightning_FundingStateStep_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq FundingTransitionMsg
+	var metadata runtime.ServerMetadata
+
+	newReader, berr := utilities.IOReaderFactory(req.Body)
+	if berr != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", berr)
+	}
+	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	msg, err := client.FundingStateStep(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
@@ -787,6 +854,57 @@ func request_Lightning_GetNetworkInfo_0(ctx context.Context, marshaler runtime.M
 
 }
 
+func request_Lightning_StopDaemon_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq StopRequest
+	var metadata runtime.ServerMetadata
+
+	newReader, berr := utilities.IOReaderFactory(req.Body)
+	if berr != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", berr)
+	}
+	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	msg, err := client.StopDaemon(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func request_Lightning_SubscribeChannelGraph_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (Lightning_SubscribeChannelGraphClient, runtime.ServerMetadata, error) {
+	var protoReq GraphTopologySubscription
+	var metadata runtime.ServerMetadata
+
+	stream, err := client.SubscribeChannelGraph(ctx, &protoReq)
+	if err != nil {
+		return nil, metadata, err
+	}
+	header, err := stream.Header()
+	if err != nil {
+		return nil, metadata, err
+	}
+	metadata.HeaderMD = header
+	return stream, metadata, nil
+
+}
+
+func request_Lightning_DebugLevel_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq DebugLevelRequest
+	var metadata runtime.ServerMetadata
+
+	newReader, berr := utilities.IOReaderFactory(req.Body)
+	if berr != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", berr)
+	}
+	if err := marshaler.NewDecoder(newReader()).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	msg, err := client.DebugLevel(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
 func request_Lightning_FeeReport_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq FeeReportRequest
 	var metadata runtime.ServerMetadata
@@ -919,6 +1037,23 @@ func request_Lightning_RestoreChannelBackups_0(ctx context.Context, marshaler ru
 
 }
 
+func request_Lightning_SubscribeChannelBackups_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (Lightning_SubscribeChannelBackupsClient, runtime.ServerMetadata, error) {
+	var protoReq ChannelBackupSubscription
+	var metadata runtime.ServerMetadata
+
+	stream, err := client.SubscribeChannelBackups(ctx, &protoReq)
+	if err != nil {
+		return nil, metadata, err
+	}
+	header, err := stream.Header()
+	if err != nil {
+		return nil, metadata, err
+	}
+	metadata.HeaderMD = header
+	return stream, metadata, nil
+
+}
+
 func request_Lightning_BakeMacaroon_0(ctx context.Context, marshaler runtime.Marshaler, client LightningClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq BakeMacaroonRequest
 	var metadata runtime.ServerMetadata
@@ -935,147 +1070,6 @@ func request_Lightning_BakeMacaroon_0(ctx context.Context, marshaler runtime.Mar
 	return msg, metadata, err
 
 }
-
-// RegisterWalletUnlockerHandlerFromEndpoint is same as RegisterWalletUnlockerHandler but
-// automatically dials to "endpoint" and closes the connection when "ctx" gets done.
-func RegisterWalletUnlockerHandlerFromEndpoint(ctx context.Context, mux *runtime.ServeMux, endpoint string, opts []grpc.DialOption) (err error) {
-	conn, err := grpc.Dial(endpoint, opts...)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			if cerr := conn.Close(); cerr != nil {
-				grpclog.Infof("Failed to close conn to %s: %v", endpoint, cerr)
-			}
-			return
-		}
-		go func() {
-			<-ctx.Done()
-			if cerr := conn.Close(); cerr != nil {
-				grpclog.Infof("Failed to close conn to %s: %v", endpoint, cerr)
-			}
-		}()
-	}()
-
-	return RegisterWalletUnlockerHandler(ctx, mux, conn)
-}
-
-// RegisterWalletUnlockerHandler registers the http handlers for service WalletUnlocker to "mux".
-// The handlers forward requests to the grpc endpoint over "conn".
-func RegisterWalletUnlockerHandler(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error {
-	return RegisterWalletUnlockerHandlerClient(ctx, mux, NewWalletUnlockerClient(conn))
-}
-
-// RegisterWalletUnlockerHandlerClient registers the http handlers for service WalletUnlocker
-// to "mux". The handlers forward requests to the grpc endpoint over the given implementation of "WalletUnlockerClient".
-// Note: the gRPC framework executes interceptors within the gRPC handler. If the passed in "WalletUnlockerClient"
-// doesn't go through the normal gRPC flow (creating a gRPC client etc.) then it will be up to the passed in
-// "WalletUnlockerClient" to call the correct interceptors.
-func RegisterWalletUnlockerHandlerClient(ctx context.Context, mux *runtime.ServeMux, client WalletUnlockerClient) error {
-
-	mux.Handle("GET", pattern_WalletUnlocker_GenSeed_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
-		ctx, cancel := context.WithCancel(req.Context())
-		defer cancel()
-		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req)
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-		resp, md, err := request_WalletUnlocker_GenSeed_0(rctx, inboundMarshaler, client, req, pathParams)
-		ctx = runtime.NewServerMetadataContext(ctx, md)
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-
-		forward_WalletUnlocker_GenSeed_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
-
-	})
-
-	mux.Handle("POST", pattern_WalletUnlocker_InitWallet_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
-		ctx, cancel := context.WithCancel(req.Context())
-		defer cancel()
-		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req)
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-		resp, md, err := request_WalletUnlocker_InitWallet_0(rctx, inboundMarshaler, client, req, pathParams)
-		ctx = runtime.NewServerMetadataContext(ctx, md)
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-
-		forward_WalletUnlocker_InitWallet_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
-
-	})
-
-	mux.Handle("POST", pattern_WalletUnlocker_UnlockWallet_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
-		ctx, cancel := context.WithCancel(req.Context())
-		defer cancel()
-		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req)
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-		resp, md, err := request_WalletUnlocker_UnlockWallet_0(rctx, inboundMarshaler, client, req, pathParams)
-		ctx = runtime.NewServerMetadataContext(ctx, md)
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-
-		forward_WalletUnlocker_UnlockWallet_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
-
-	})
-
-	mux.Handle("POST", pattern_WalletUnlocker_ChangePassword_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
-		ctx, cancel := context.WithCancel(req.Context())
-		defer cancel()
-		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req)
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-		resp, md, err := request_WalletUnlocker_ChangePassword_0(rctx, inboundMarshaler, client, req, pathParams)
-		ctx = runtime.NewServerMetadataContext(ctx, md)
-		if err != nil {
-			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
-			return
-		}
-
-		forward_WalletUnlocker_ChangePassword_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
-
-	})
-
-	return nil
-}
-
-var (
-	pattern_WalletUnlocker_GenSeed_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "genseed"}, ""))
-
-	pattern_WalletUnlocker_InitWallet_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "initwallet"}, ""))
-
-	pattern_WalletUnlocker_UnlockWallet_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "unlockwallet"}, ""))
-
-	pattern_WalletUnlocker_ChangePassword_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "changepassword"}, ""))
-)
-
-var (
-	forward_WalletUnlocker_GenSeed_0 = runtime.ForwardResponseMessage
-
-	forward_WalletUnlocker_InitWallet_0 = runtime.ForwardResponseMessage
-
-	forward_WalletUnlocker_UnlockWallet_0 = runtime.ForwardResponseMessage
-
-	forward_WalletUnlocker_ChangePassword_0 = runtime.ForwardResponseMessage
-)
 
 // RegisterLightningHandlerFromEndpoint is same as RegisterLightningHandler but
 // automatically dials to "endpoint" and closes the connection when "ctx" gets done.
@@ -1235,6 +1229,46 @@ func RegisterLightningHandlerClient(ctx context.Context, mux *runtime.ServeMux, 
 
 	})
 
+	mux.Handle("GET", pattern_Lightning_SubscribeTransactions_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_SubscribeTransactions_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_SubscribeTransactions_0(ctx, mux, outboundMarshaler, w, req, func() (proto.Message, error) { return resp.Recv() }, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("POST", pattern_Lightning_SendMany_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_SendMany_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_SendMany_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
 	mux.Handle("GET", pattern_Lightning_NewAddress_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -1355,6 +1389,26 @@ func RegisterLightningHandlerClient(ctx context.Context, mux *runtime.ServeMux, 
 
 	})
 
+	mux.Handle("GET", pattern_Lightning_SubscribePeerEvents_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_SubscribePeerEvents_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_SubscribePeerEvents_0(ctx, mux, outboundMarshaler, w, req, func() (proto.Message, error) { return resp.Recv() }, mux.GetForwardResponseOptions()...)
+
+	})
+
 	mux.Handle("GET", pattern_Lightning_GetInfo_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -1372,6 +1426,26 @@ func RegisterLightningHandlerClient(ctx context.Context, mux *runtime.ServeMux, 
 		}
 
 		forward_Lightning_GetInfo_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Lightning_GetRecoveryInfo_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_GetRecoveryInfo_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_GetRecoveryInfo_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -1415,6 +1489,26 @@ func RegisterLightningHandlerClient(ctx context.Context, mux *runtime.ServeMux, 
 
 	})
 
+	mux.Handle("GET", pattern_Lightning_SubscribeChannelEvents_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_SubscribeChannelEvents_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_SubscribeChannelEvents_0(ctx, mux, outboundMarshaler, w, req, func() (proto.Message, error) { return resp.Recv() }, mux.GetForwardResponseOptions()...)
+
+	})
+
 	mux.Handle("GET", pattern_Lightning_ClosedChannels_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -1452,6 +1546,46 @@ func RegisterLightningHandlerClient(ctx context.Context, mux *runtime.ServeMux, 
 		}
 
 		forward_Lightning_OpenChannelSync_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("POST", pattern_Lightning_OpenChannel_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_OpenChannel_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_OpenChannel_0(ctx, mux, outboundMarshaler, w, req, func() (proto.Message, error) { return resp.Recv() }, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("POST", pattern_Lightning_FundingStateStep_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_FundingStateStep_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_FundingStateStep_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -1795,6 +1929,66 @@ func RegisterLightningHandlerClient(ctx context.Context, mux *runtime.ServeMux, 
 
 	})
 
+	mux.Handle("POST", pattern_Lightning_StopDaemon_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_StopDaemon_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_StopDaemon_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("GET", pattern_Lightning_SubscribeChannelGraph_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_SubscribeChannelGraph_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_SubscribeChannelGraph_0(ctx, mux, outboundMarshaler, w, req, func() (proto.Message, error) { return resp.Recv() }, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("POST", pattern_Lightning_DebugLevel_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_DebugLevel_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_DebugLevel_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
 	mux.Handle("GET", pattern_Lightning_FeeReport_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -1935,6 +2129,26 @@ func RegisterLightningHandlerClient(ctx context.Context, mux *runtime.ServeMux, 
 
 	})
 
+	mux.Handle("GET", pattern_Lightning_SubscribeChannelBackups_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		rctx, err := runtime.AnnotateContext(ctx, mux, req)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_Lightning_SubscribeChannelBackups_0(rctx, inboundMarshaler, client, req, pathParams)
+		ctx = runtime.NewServerMetadataContext(ctx, md)
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_Lightning_SubscribeChannelBackups_0(ctx, mux, outboundMarshaler, w, req, func() (proto.Message, error) { return resp.Recv() }, mux.GetForwardResponseOptions()...)
+
+	})
+
 	mux.Handle("POST", pattern_Lightning_BakeMacaroon_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -1971,6 +2185,10 @@ var (
 
 	pattern_Lightning_ListUnspent_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "utxos"}, ""))
 
+	pattern_Lightning_SubscribeTransactions_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "transactions", "subscribe"}, ""))
+
+	pattern_Lightning_SendMany_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "transactions", "many"}, ""))
+
 	pattern_Lightning_NewAddress_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "newaddress"}, ""))
 
 	pattern_Lightning_SignMessage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "signmessage"}, ""))
@@ -1983,15 +2201,25 @@ var (
 
 	pattern_Lightning_ListPeers_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "peers"}, ""))
 
+	pattern_Lightning_SubscribePeerEvents_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "peers", "subscribe"}, ""))
+
 	pattern_Lightning_GetInfo_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "getinfo"}, ""))
+
+	pattern_Lightning_GetRecoveryInfo_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "getrecoveryinfo"}, ""))
 
 	pattern_Lightning_PendingChannels_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "channels", "pending"}, ""))
 
 	pattern_Lightning_ListChannels_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "channels"}, ""))
 
+	pattern_Lightning_SubscribeChannelEvents_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "channels", "subscribe"}, ""))
+
 	pattern_Lightning_ClosedChannels_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "channels", "closed"}, ""))
 
 	pattern_Lightning_OpenChannelSync_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "channels"}, ""))
+
+	pattern_Lightning_OpenChannel_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "channels", "stream"}, ""))
+
+	pattern_Lightning_FundingStateStep_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "funding", "step"}, ""))
 
 	pattern_Lightning_CloseChannel_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 1, 0, 4, 1, 5, 3}, []string{"v1", "channels", "channel_point.funding_txid_str", "channel_point.output_index"}, ""))
 
@@ -2027,6 +2255,12 @@ var (
 
 	pattern_Lightning_GetNetworkInfo_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "graph", "info"}, ""))
 
+	pattern_Lightning_StopDaemon_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "stop"}, ""))
+
+	pattern_Lightning_SubscribeChannelGraph_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"v1", "graph", "subscribe"}, ""))
+
+	pattern_Lightning_DebugLevel_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "debuglevel"}, ""))
+
 	pattern_Lightning_FeeReport_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "fees"}, ""))
 
 	pattern_Lightning_UpdateChannelPolicy_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "chanpolicy"}, ""))
@@ -2040,6 +2274,8 @@ var (
 	pattern_Lightning_VerifyChanBackup_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"v1", "channels", "backup", "verify"}, ""))
 
 	pattern_Lightning_RestoreChannelBackups_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"v1", "channels", "backup", "restore"}, ""))
+
+	pattern_Lightning_SubscribeChannelBackups_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"v1", "channels", "backup", "subscribe"}, ""))
 
 	pattern_Lightning_BakeMacaroon_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1}, []string{"v1", "macaroon"}, ""))
 )
@@ -2057,6 +2293,10 @@ var (
 
 	forward_Lightning_ListUnspent_0 = runtime.ForwardResponseMessage
 
+	forward_Lightning_SubscribeTransactions_0 = runtime.ForwardResponseStream
+
+	forward_Lightning_SendMany_0 = runtime.ForwardResponseMessage
+
 	forward_Lightning_NewAddress_0 = runtime.ForwardResponseMessage
 
 	forward_Lightning_SignMessage_0 = runtime.ForwardResponseMessage
@@ -2069,15 +2309,25 @@ var (
 
 	forward_Lightning_ListPeers_0 = runtime.ForwardResponseMessage
 
+	forward_Lightning_SubscribePeerEvents_0 = runtime.ForwardResponseStream
+
 	forward_Lightning_GetInfo_0 = runtime.ForwardResponseMessage
+
+	forward_Lightning_GetRecoveryInfo_0 = runtime.ForwardResponseMessage
 
 	forward_Lightning_PendingChannels_0 = runtime.ForwardResponseMessage
 
 	forward_Lightning_ListChannels_0 = runtime.ForwardResponseMessage
 
+	forward_Lightning_SubscribeChannelEvents_0 = runtime.ForwardResponseStream
+
 	forward_Lightning_ClosedChannels_0 = runtime.ForwardResponseMessage
 
 	forward_Lightning_OpenChannelSync_0 = runtime.ForwardResponseMessage
+
+	forward_Lightning_OpenChannel_0 = runtime.ForwardResponseStream
+
+	forward_Lightning_FundingStateStep_0 = runtime.ForwardResponseMessage
 
 	forward_Lightning_CloseChannel_0 = runtime.ForwardResponseStream
 
@@ -2113,6 +2363,12 @@ var (
 
 	forward_Lightning_GetNetworkInfo_0 = runtime.ForwardResponseMessage
 
+	forward_Lightning_StopDaemon_0 = runtime.ForwardResponseMessage
+
+	forward_Lightning_SubscribeChannelGraph_0 = runtime.ForwardResponseStream
+
+	forward_Lightning_DebugLevel_0 = runtime.ForwardResponseMessage
+
 	forward_Lightning_FeeReport_0 = runtime.ForwardResponseMessage
 
 	forward_Lightning_UpdateChannelPolicy_0 = runtime.ForwardResponseMessage
@@ -2126,6 +2382,8 @@ var (
 	forward_Lightning_VerifyChanBackup_0 = runtime.ForwardResponseMessage
 
 	forward_Lightning_RestoreChannelBackups_0 = runtime.ForwardResponseMessage
+
+	forward_Lightning_SubscribeChannelBackups_0 = runtime.ForwardResponseStream
 
 	forward_Lightning_BakeMacaroon_0 = runtime.ForwardResponseMessage
 )

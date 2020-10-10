@@ -135,10 +135,10 @@ type ChannelLinkConfig struct {
 	Switch *Switch
 
 	// ForwardPackets attempts to forward the batch of htlcs through the
-	// switch, any failed packets will be returned to the provided
-	// ChannelLink. The link's quit signal should be provided to allow
+	// switch. The function returns and error in case it fails to send one or
+	// more packets. The link's quit signal should be provided to allow
 	// cancellation of forwarding during link shutdown.
-	ForwardPackets func(chan struct{}, ...*htlcPacket) chan error
+	ForwardPackets func(chan struct{}, ...*htlcPacket) error
 
 	// DecodeHopIterators facilitates batched decoding of HTLC Sphinx onion
 	// blobs, which are then used to inform how to forward an HTLC.
@@ -647,7 +647,7 @@ func (l *channelLink) syncChanStates() error {
 	}
 
 	if err := l.cfg.Peer.SendMessage(true, localChanSyncMsg); err != nil {
-		return fmt.Errorf("Unable to send chan sync message for "+
+		return fmt.Errorf("unable to send chan sync message for "+
 			"ChannelPoint(%v): %v", l.channel.ChannelPoint(), err)
 	}
 
@@ -2731,6 +2731,7 @@ func (l *channelLink) processRemoteAdds(fwdPkg *channeldb.FwdPkg,
 					obfuscator:      obfuscator,
 					incomingTimeout: pd.Timeout,
 					outgoingTimeout: fwdInfo.OutgoingCTLV,
+					customRecords:   pld.CustomRecords(),
 				}
 				switchPackets = append(
 					switchPackets, updatePacket,
@@ -2794,6 +2795,7 @@ func (l *channelLink) processRemoteAdds(fwdPkg *channeldb.FwdPkg,
 					obfuscator:      obfuscator,
 					incomingTimeout: pd.Timeout,
 					outgoingTimeout: fwdInfo.OutgoingCTLV,
+					customRecords:   pld.CustomRecords(),
 				}
 
 				fwdPkg.FwdFilter.Set(idx)
@@ -2971,8 +2973,10 @@ func (l *channelLink) forwardBatch(packets ...*htlcPacket) {
 		filteredPkts = append(filteredPkts, pkt)
 	}
 
-	errChan := l.cfg.ForwardPackets(l.quit, filteredPkts...)
-	go handleBatchFwdErrs(errChan, l.log)
+	if err := l.cfg.ForwardPackets(l.quit, filteredPkts...); err != nil {
+		log.Errorf("Unhandled error while reforwarding htlc "+
+			"settle/fail over htlcswitch: %v", err)
+	}
 }
 
 // sendHTLCError functions cancels HTLC and send cancel message back to the

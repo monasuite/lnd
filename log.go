@@ -25,9 +25,11 @@ import (
 	"github.com/monasuite/lnd/lnrpc/verrpc"
 	"github.com/monasuite/lnd/lnrpc/walletrpc"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chancloser"
 	"github.com/monasuite/lnd/lnwallet/chanfunding"
 	"github.com/monasuite/lnd/monitoring"
 	"github.com/monasuite/lnd/netann"
+	"github.com/monasuite/lnd/peer"
 	"github.com/monasuite/lnd/peernotifier"
 	"github.com/monasuite/lnd/routing"
 	"github.com/monasuite/lnd/routing/localchans"
@@ -74,7 +76,6 @@ var (
 	// function should always be called as soon as possible to finish
 	// setting them up properly with a root logger.
 	ltndLog = addLndPkgLogger("LTND")
-	peerLog = addLndPkgLogger("PEER")
 	rpcsLog = addLndPkgLogger("RPCS")
 	srvrLog = addLndPkgLogger("SRVR")
 	fndgLog = addLndPkgLogger("FNDG")

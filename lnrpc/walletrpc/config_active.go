@@ -3,6 +3,7 @@
 package walletrpc
 
 import (
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwallet/chainfee"
@@ -37,6 +38,13 @@ type Config struct {
 	// any relevant requests to.
 	Wallet lnwallet.WalletController
 
+	// CoinSelectionLocker allows the caller to perform an operation, which
+	// is synchronized with all coin selection attempts. This can be used
+	// when an operation requires that all coin selection operations cease
+	// forward progress. Think of this as an exclusive lock on coin
+	// selection operations.
+	CoinSelectionLocker sweep.CoinSelectionLocker
+
 	// KeyRing is an interface that the WalletKit will use to derive any
 	// keys due to incoming client requests.
 	KeyRing keychain.KeyRing
@@ -48,4 +56,7 @@ type Config struct {
 	// Chain is an interface that the WalletKit will use to determine state
 	// about the backing chain of the wallet.
 	Chain lnwallet.BlockChainIO
+
+	// ChainParams are the parameters of the wallet's backing chain.
+	ChainParams *chaincfg.Params
 }

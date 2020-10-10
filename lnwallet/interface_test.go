@@ -37,6 +37,7 @@ import (
 	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/labels"
 	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwallet/btcwallet"
@@ -44,6 +45,7 @@ import (
 	"github.com/monasuite/lnd/lnwallet/chanfunding"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/neutrino"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -173,7 +175,9 @@ func sendCoins(t *testing.T, miner *rpctest.Harness,
 
 	t.Helper()
 
-	tx, err := sender.SendOutputs([]*wire.TxOut{output}, 2500)
+	tx, err := sender.SendOutputs(
+		[]*wire.TxOut{output}, 2500, labels.External,
+	)
 	if err != nil {
 		t.Fatalf("unable to send transaction: %v", err)
 	}
@@ -206,7 +210,7 @@ func assertTxInWallet(t *testing.T, w *lnwallet.LightningWallet,
 	// We'll fetch all of our transaction and go through each one until
 	// finding the expected transaction with its expected confirmation
 	// status.
-	txs, err := w.ListTransactionDetails()
+	txs, err := w.ListTransactionDetails(0, btcwallet.UnconfirmedHeight)
 	if err != nil {
 		t.Fatalf("unable to retrieve transactions: %v", err)
 	}
@@ -359,6 +363,51 @@ func createTestWallet(tempTestDir string, miningNode *rpctest.Harness,
 	}
 
 	return wallet, nil
+}
+
+func testGetRecoveryInfo(miner *rpctest.Harness,
+	alice, bob *lnwallet.LightningWallet, t *testing.T) {
+
+	// alice's wallet is in recovery mode
+	expectedRecoveryMode := true
+	expectedProgress := float64(1)
+
+	isRecoveryMode, progress, err := alice.GetRecoveryInfo()
+	require.NoError(t, err, "unable to get alice's recovery info")
+
+	require.Equal(t,
+		expectedRecoveryMode, isRecoveryMode, "recovery mode incorrect",
+	)
+	require.Equal(t, expectedProgress, progress, "progress incorrect")
+
+	// Generate 5 blocks and check the recovery process again.
+	const numBlocksMined = 5
+	_, err = miner.Node.Generate(numBlocksMined)
+	require.NoError(t, err, "unable to mine blocks")
+
+	// Check the recovery process. Once synced, the progress should be 1.
+	err = waitForWalletSync(miner, alice)
+	require.NoError(t, err, "Couldn't sync Alice's wallet")
+
+	isRecoveryMode, progress, err = alice.GetRecoveryInfo()
+	require.NoError(t, err, "unable to get alice's recovery info")
+
+	require.Equal(t,
+		expectedRecoveryMode, isRecoveryMode, "recovery mode incorrect",
+	)
+	require.Equal(t, expectedProgress, progress, "progress incorrect")
+
+	// bob's wallet is not in recovery mode
+	expectedRecoveryMode = false
+	expectedProgress = float64(0)
+
+	isRecoveryMode, progress, err = bob.GetRecoveryInfo()
+	require.NoError(t, err, "unable to get bob's recovery info")
+
+	require.Equal(t,
+		expectedRecoveryMode, isRecoveryMode, "recovery mode incorrect",
+	)
+	require.Equal(t, expectedProgress, progress, "progress incorrect")
 }
 
 func testDualFundingReservationWorkflow(miner *rpctest.Harness,
@@ -529,7 +578,8 @@ func testDualFundingReservationWorkflow(miner *rpctest.Harness,
 	}
 
 	// Let Alice publish the funding transaction.
-	if err := alice.PublishTransaction(fundingTx); err != nil {
+	err = alice.PublishTransaction(fundingTx, "")
+	if err != nil {
 		t.Fatalf("unable to publish funding tx: %v", err)
 	}
 
@@ -753,7 +803,7 @@ func testReservationInitiatorBalanceBelowDustCancel(miner *rpctest.Harness,
 		t.Fatalf("initialization should have failed due to " +
 			"insufficient local amount")
 
-	case !strings.Contains(err.Error(), "Funder balance too small"):
+	case !strings.Contains(err.Error(), "funder balance too small"):
 		t.Fatalf("incorrect error: %v", err)
 	}
 }
@@ -1024,7 +1074,8 @@ func testSingleFunderReservationWorkflow(miner *rpctest.Harness,
 	}
 
 	// Let Alice publish the funding transaction.
-	if err := alice.PublishTransaction(fundingTx); err != nil {
+	err = alice.PublishTransaction(fundingTx, "")
+	if err != nil {
 		t.Fatalf("unable to publish funding tx: %v", err)
 	}
 
@@ -1101,6 +1152,12 @@ func testListTransactionDetails(miner *rpctest.Harness,
 		txids[*txid] = struct{}{}
 	}
 
+	// Get the miner's current best block height before we mine blocks.
+	_, startHeight, err := miner.Node.GetBestBlock()
+	if err != nil {
+		t.Fatalf("cannot get best block: %v", err)
+	}
+
 	// Generate 10 blocks to mine all the transactions created above.
 	const numBlocksMined = 10
 	blocks, err := miner.Node.Generate(numBlocksMined)
@@ -1108,12 +1165,22 @@ func testListTransactionDetails(miner *rpctest.Harness,
 		t.Fatalf("unable to mine blocks: %v", err)
 	}
 
-	// Next, fetch all the current transaction details.
+	// Our new best block height should be our start height + the number of
+	// blocks we just mined.
+	chainTip := startHeight + numBlocksMined
+
+	// Next, fetch all the current transaction details. We should find all
+	// of our transactions between our start height before we generated
+	// blocks, and our end height, which is the chain tip. This query does
+	// not include unconfirmed transactions, since all of our transactions
+	// should be confirmed.
 	err = waitForWalletSync(miner, alice)
 	if err != nil {
 		t.Fatalf("Couldn't sync Alice's wallet: %v", err)
 	}
-	txDetails, err := alice.ListTransactionDetails()
+	txDetails, err := alice.ListTransactionDetails(
+		startHeight, chainTip,
+	)
 	if err != nil {
 		t.Fatalf("unable to fetch tx details: %v", err)
 	}
@@ -1201,7 +1268,9 @@ func testListTransactionDetails(miner *rpctest.Harness,
 		t.Fatalf("unable to make output script: %v", err)
 	}
 	burnOutput := wire.NewTxOut(outputAmt, outputScript)
-	burnTX, err := alice.SendOutputs([]*wire.TxOut{burnOutput}, 2500)
+	burnTX, err := alice.SendOutputs(
+		[]*wire.TxOut{burnOutput}, 2500, labels.External,
+	)
 	if err != nil {
 		t.Fatalf("unable to create burn tx: %v", err)
 	}
@@ -1219,10 +1288,13 @@ func testListTransactionDetails(miner *rpctest.Harness,
 		t.Fatalf("Couldn't sync Alice's wallet: %v", err)
 	}
 
-	// We should be able to find the transaction above in the set of
-	// returned transactions, and it should have a confirmation of -1,
-	// indicating that it's not yet mined.
-	txDetails, err = alice.ListTransactionDetails()
+	// Query our wallet for transactions from the chain tip, including
+	// unconfirmed transactions. The transaction above should be included
+	// with a confirmation height of 0, indicating that it has not been
+	// mined yet.
+	txDetails, err = alice.ListTransactionDetails(
+		chainTip, btcwallet.UnconfirmedHeight,
+	)
 	if err != nil {
 		t.Fatalf("unable to fetch tx details: %v", err)
 	}
@@ -1259,18 +1331,27 @@ func testListTransactionDetails(miner *rpctest.Harness,
 		t.Fatalf("unable to find mempool tx in tx details!")
 	}
 
-	burnBlock, err := miner.Node.Generate(1)
+	// Generate one block for our transaction to confirm in.
+	var numBlocks int32 = 1
+	burnBlock, err := miner.Node.Generate(uint32(numBlocks))
 	if err != nil {
 		t.Fatalf("unable to mine block: %v", err)
 	}
 
+	// Progress our chain tip by the number of blocks we have just mined.
+	chainTip += numBlocks
+
 	// Fetch the transaction details again, the new transaction should be
-	// shown as debiting from the wallet's balance.
+	// shown as debiting from the wallet's balance. Start and end height
+	// are inclusive, so we use chainTip for both parameters to get only
+	// transactions from the last block.
 	err = waitForWalletSync(miner, alice)
 	if err != nil {
 		t.Fatalf("Couldn't sync Alice's wallet: %v", err)
 	}
-	txDetails, err = alice.ListTransactionDetails()
+	txDetails, err = alice.ListTransactionDetails(
+		chainTip, chainTip,
+	)
 	if err != nil {
 		t.Fatalf("unable to fetch tx details: %v", err)
 	}
@@ -1301,6 +1382,30 @@ func testListTransactionDetails(miner *rpctest.Harness,
 	}
 	if !burnTxFound {
 		t.Fatal("tx burning btc not found")
+	}
+
+	// Generate a block which has no wallet transactions in it.
+	chainTip += numBlocks
+	_, err = miner.Node.Generate(uint32(numBlocks))
+	if err != nil {
+		t.Fatalf("unable to mine block: %v", err)
+	}
+
+	err = waitForWalletSync(miner, alice)
+	if err != nil {
+		t.Fatalf("Couldn't sync Alice's wallet: %v", err)
+	}
+
+	// Query for transactions only in the latest block. We do not expect
+	// any transactions to be returned.
+	txDetails, err = alice.ListTransactionDetails(
+		chainTip, chainTip,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(txDetails) != 0 {
+		t.Fatalf("expected 0 transactions, got: %v", len(txDetails))
 	}
 }
 
@@ -1438,7 +1543,9 @@ func testTransactionSubscriptions(miner *rpctest.Harness,
 		t.Fatalf("unable to make output script: %v", err)
 	}
 	burnOutput := wire.NewTxOut(outputAmt, outputScript)
-	tx, err := alice.SendOutputs([]*wire.TxOut{burnOutput}, 2500)
+	tx, err := alice.SendOutputs(
+		[]*wire.TxOut{burnOutput}, 2500, labels.External,
+	)
 	if err != nil {
 		t.Fatalf("unable to create burn tx: %v", err)
 	}
@@ -1629,7 +1736,9 @@ func newTx(t *testing.T, r *rpctest.Harness, pubKey *btcec.PublicKey,
 		Value:    btcutil.SatoshiPerBitcoin,
 		PkScript: keyScript,
 	}
-	tx, err := alice.SendOutputs([]*wire.TxOut{newOutput}, 2500)
+	tx, err := alice.SendOutputs(
+		[]*wire.TxOut{newOutput}, 2500, labels.External,
+	)
 	if err != nil {
 		t.Fatalf("unable to create output: %v", err)
 	}
@@ -1669,7 +1778,8 @@ func testPublishTransaction(r *rpctest.Harness,
 	tx1 := newTx(t, r, keyDesc.PubKey, alice, false)
 
 	// Publish the transaction.
-	if err := alice.PublishTransaction(tx1); err != nil {
+	err = alice.PublishTransaction(tx1, labels.External)
+	if err != nil {
 		t.Fatalf("unable to publish: %v", err)
 	}
 
@@ -1681,7 +1791,8 @@ func testPublishTransaction(r *rpctest.Harness,
 
 	// Publish the exact same transaction again. This should not return an
 	// error, even though the transaction is already in the mempool.
-	if err := alice.PublishTransaction(tx1); err != nil {
+	err = alice.PublishTransaction(tx1, labels.External)
+	if err != nil {
 		t.Fatalf("unable to publish: %v", err)
 	}
 
@@ -1700,7 +1811,8 @@ func testPublishTransaction(r *rpctest.Harness,
 	tx2 := newTx(t, r, keyDesc.PubKey, alice, false)
 
 	// Publish this tx.
-	if err := alice.PublishTransaction(tx2); err != nil {
+	err = alice.PublishTransaction(tx2, labels.External)
+	if err != nil {
 		t.Fatalf("unable to publish: %v", err)
 	}
 
@@ -1711,7 +1823,8 @@ func testPublishTransaction(r *rpctest.Harness,
 
 	// Publish the transaction again. It is already mined, and we don't
 	// expect this to return an error.
-	if err := alice.PublishTransaction(tx2); err != nil {
+	err = alice.PublishTransaction(tx2, labels.External)
+	if err != nil {
 		t.Fatalf("unable to publish: %v", err)
 	}
 
@@ -1727,7 +1840,8 @@ func testPublishTransaction(r *rpctest.Harness,
 		// transaction. Create a new tx and publish it. This is the
 		// output we'll try to double spend.
 		tx3 = newTx(t, r, keyDesc.PubKey, alice, false)
-		if err := alice.PublishTransaction(tx3); err != nil {
+		err := alice.PublishTransaction(tx3, labels.External)
+		if err != nil {
 			t.Fatalf("unable to publish: %v", err)
 		}
 
@@ -1747,7 +1861,8 @@ func testPublishTransaction(r *rpctest.Harness,
 		}
 
 		// This should be accepted into the mempool.
-		if err := alice.PublishTransaction(tx4); err != nil {
+		err = alice.PublishTransaction(tx4, labels.External)
+		if err != nil {
 			t.Fatalf("unable to publish: %v", err)
 		}
 
@@ -1781,7 +1896,7 @@ func testPublishTransaction(r *rpctest.Harness,
 			t.Fatal(err)
 		}
 
-		err = alice.PublishTransaction(tx5)
+		err = alice.PublishTransaction(tx5, labels.External)
 		if err != lnwallet.ErrDoubleSpend {
 			t.Fatalf("expected ErrDoubleSpend, got: %v", err)
 		}
@@ -1809,7 +1924,7 @@ func testPublishTransaction(r *rpctest.Harness,
 			expErr = nil
 			tx3Spend = tx6
 		}
-		err = alice.PublishTransaction(tx6)
+		err = alice.PublishTransaction(tx6, labels.External)
 		if err != expErr {
 			t.Fatalf("expected ErrDoubleSpend, got: %v", err)
 		}
@@ -1844,7 +1959,7 @@ func testPublishTransaction(r *rpctest.Harness,
 		}
 
 		// Expect rejection.
-		err = alice.PublishTransaction(tx7)
+		err = alice.PublishTransaction(tx7, labels.External)
 		if err != lnwallet.ErrDoubleSpend {
 			t.Fatalf("expected ErrDoubleSpend, got: %v", err)
 		}
@@ -1912,7 +2027,9 @@ func testSignOutputUsingTweaks(r *rpctest.Harness,
 			Value:    btcutil.SatoshiPerBitcoin,
 			PkScript: keyScript,
 		}
-		tx, err := alice.SendOutputs([]*wire.TxOut{newOutput}, 2500)
+		tx, err := alice.SendOutputs(
+			[]*wire.TxOut{newOutput}, 2500, labels.External,
+		)
 		if err != nil {
 			t.Fatalf("unable to create output: %v", err)
 		}
@@ -2034,7 +2151,9 @@ func testReorgWalletBalance(r *rpctest.Harness, w *lnwallet.LightningWallet,
 		Value:    1e8,
 		PkScript: script,
 	}
-	tx, err := w.SendOutputs([]*wire.TxOut{output}, 2500)
+	tx, err := w.SendOutputs(
+		[]*wire.TxOut{output}, 2500, labels.External,
+	)
 	if err != nil {
 		t.Fatalf("unable to send outputs: %v", err)
 	}
@@ -2415,7 +2534,7 @@ func testCreateSimpleTx(r *rpctest.Harness, w *lnwallet.LightningWallet,
 		// _very_ similar to the one we just created being sent. The
 		// only difference is that the dry run tx is not signed, and
 		// that the change output position might be different.
-		tx, sendErr := w.SendOutputs(outputs, feeRate)
+		tx, sendErr := w.SendOutputs(outputs, feeRate, labels.External)
 		switch {
 		case test.valid && sendErr != nil:
 			t.Fatalf("got unexpected error when sending tx: %v",
@@ -2638,6 +2757,10 @@ var walletTests = []walletTestCase{
 	{
 		name: "test sign create account",
 		test: testSignOutputCreateAccount,
+	},
+	{
+		name: "test get recovery info",
+		test: testGetRecoveryInfo,
 	},
 }
 
@@ -2891,7 +3014,10 @@ func TestLightningWallet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to create db: %v", err)
 	}
-	hintCache, err := chainntnfs.NewHeightHintCache(db)
+	testCfg := chainntnfs.CacheConfig{
+		QueryDisable: false,
+	}
+	hintCache, err := chainntnfs.NewHeightHintCache(testCfg, db)
 	if err != nil {
 		t.Fatalf("unable to create height hint cache: %v", err)
 	}
@@ -3104,6 +3230,8 @@ func runTests(t *testing.T, walletDriver *lnwallet.WalletDriver,
 			NetParams:   netParams,
 			ChainSource: aliceClient,
 			CoinType:    keychain.CoinTypeTestnet,
+			// wallet starts in recovery mode
+			RecoveryWindow: 2,
 		}
 		aliceWalletController, err = walletDriver.New(aliceWalletConfig)
 		if err != nil {
@@ -3127,6 +3255,8 @@ func runTests(t *testing.T, walletDriver *lnwallet.WalletDriver,
 			NetParams:   netParams,
 			ChainSource: bobClient,
 			CoinType:    keychain.CoinTypeTestnet,
+			// wallet starts without recovery mode
+			RecoveryWindow: 0,
 		}
 		bobWalletController, err = walletDriver.New(bobWalletConfig)
 		if err != nil {

@@ -40,7 +40,7 @@ func validateAtplCfg(cfg *lncfg.AutoPilot) ([]*autopilot.WeightedHeuristic,
 		a, ok := autopilot.AvailableHeuristics[name]
 		if !ok {
 			// No heuristic matching this config option was found.
-			return nil, fmt.Errorf("Heuristic %v not available. %v",
+			return nil, fmt.Errorf("heuristic %v not available. %v",
 				name, availStr)
 		}
 
@@ -59,11 +59,11 @@ func validateAtplCfg(cfg *lncfg.AutoPilot) ([]*autopilot.WeightedHeuristic,
 
 	// Check found heuristics. We must have at least one to operate.
 	if len(heuristics) == 0 {
-		return nil, fmt.Errorf("No active heuristics. %v", availStr)
+		return nil, fmt.Errorf("no active heuristics: %v", availStr)
 	}
 
 	if sum != 1.0 {
-		return nil, fmt.Errorf("Heuristic weights must sum to 1.0")
+		return nil, fmt.Errorf("heuristic weights must sum to 1.0")
 	}
 	return heuristics, nil
 }
@@ -96,16 +96,17 @@ func (c *chanController) OpenChannel(target *btcec.PublicKey,
 	// Construct the open channel request and send it to the server to begin
 	// the funding workflow.
 	req := &openChanReq{
-		targetPubkey:    target,
-		chainHash:       *activeNetParams.GenesisHash,
-		subtractFees:    true,
-		localFundingAmt: amt,
-		pushAmt:         0,
-		minHtlcIn:       c.chanMinHtlcIn,
-		fundingFeePerKw: feePerKw,
-		private:         c.private,
-		remoteCsvDelay:  0,
-		minConfs:        c.minConfs,
+		targetPubkey:     target,
+		chainHash:        *activeNetParams.GenesisHash,
+		subtractFees:     true,
+		localFundingAmt:  amt,
+		pushAmt:          0,
+		minHtlcIn:        c.chanMinHtlcIn,
+		fundingFeePerKw:  feePerKw,
+		private:          c.private,
+		remoteCsvDelay:   0,
+		minConfs:         c.minConfs,
+		maxValueInFlight: 0,
 	}
 
 	updateStream, errChan := c.server.OpenChannel(req)
@@ -170,7 +171,7 @@ func initAutoPilot(svr *server, cfg *lncfg.AutoPilot,
 
 	// With the heuristic itself created, we can now populate the remainder
 	// of the items that the autopilot agent needs to perform its duties.
-	self := svr.identityPriv.PubKey()
+	self := svr.identityECDH.PubKey()
 	pilotCfg := autopilot.Config{
 		Self:      self,
 		Heuristic: weightedAttachment,
@@ -184,7 +185,7 @@ func initAutoPilot(svr *server, cfg *lncfg.AutoPilot,
 		WalletBalance: func() (btcutil.Amount, error) {
 			return svr.cc.wallet.ConfirmedBalance(cfg.MinConfs)
 		},
-		Graph:       autopilot.ChannelGraphFromDatabase(svr.chanDB.ChannelGraph()),
+		Graph:       autopilot.ChannelGraphFromDatabase(svr.localChanDB.ChannelGraph()),
 		Constraints: atplConstraints,
 		ConnectToPeer: func(target *btcec.PublicKey, addrs []net.Addr) (bool, error) {
 			// First, we'll check if we're already connected to the
@@ -255,7 +256,7 @@ func initAutoPilot(svr *server, cfg *lncfg.AutoPilot,
 			// We'll fetch the current state of open
 			// channels from the database to use as initial
 			// state for the auto-pilot agent.
-			activeChannels, err := svr.chanDB.FetchAllChannels()
+			activeChannels, err := svr.remoteChanDB.FetchAllChannels()
 			if err != nil {
 				return nil, err
 			}

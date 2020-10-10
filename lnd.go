@@ -27,13 +27,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcutil"
 	proxy "github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/lightningnetwork/lnd/cert"
 	"github.com/monaarchives/btcwallet/wallet"
-	"github.com/monasuite/neutrino"
-
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/build"
 	"github.com/monasuite/lnd/chanacceptor"
@@ -49,6 +46,7 @@ import (
 	"github.com/monasuite/lnd/walletunlocker"
 	"github.com/monasuite/lnd/watchtower"
 	"github.com/monasuite/lnd/watchtower/wtdb"
+	"github.com/monasuite/neutrino"
 )
 
 // WalletUnlockerAuthOptions returns a list of DialOptions that can be used to
@@ -237,7 +235,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 	if cfg.CPUProfile != "" {
 		f, err := os.Create(cfg.CPUProfile)
 		if err != nil {
-			err := fmt.Errorf("Unable to create CPU profile: %v",
+			err := fmt.Errorf("unable to create CPU profile: %v",
 				err)
 			ltndLog.Error(err)
 			return err
@@ -247,46 +245,25 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 		defer pprof.StopCPUProfile()
 	}
 
-	// Create the network-segmented directory for the channel database.
-	graphDir := filepath.Join(cfg.DataDir,
-		defaultGraphSubDirname,
-		normalizeNetwork(activeNetParams.Name))
-
-	ltndLog.Infof("Opening the main database, this might take a few " +
-		"minutes...")
-
-	// Open the channeldb, which is dedicated to storing channel, and
-	// network related metadata.
-	startOpenTime := time.Now()
-	chanDB, err := channeldb.Open(
-		graphDir,
-		channeldb.OptionSetRejectCacheSize(cfg.Caches.RejectCacheSize),
-		channeldb.OptionSetChannelCacheSize(cfg.Caches.ChannelCacheSize),
-		channeldb.OptionSetSyncFreelist(cfg.SyncFreelist),
-		channeldb.OptionDryRunMigration(cfg.DryRunMigration),
-	)
-	switch {
-	case err == channeldb.ErrDryRunMigrationOK:
-		ltndLog.Infof("%v, exiting", err)
-		return nil
-
-	case err != nil:
-		ltndLog.Errorf("Unable to open channeldb: %v", err)
-		return err
-	}
-	defer chanDB.Close()
-
-	openTime := time.Since(startOpenTime)
-	ltndLog.Infof("Database now open (time_to_open=%v)!", openTime)
-
-	// Only process macaroons if --no-macaroons isn't set.
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	localChanDB, remoteChanDB, cleanUp, err := initializeDatabases(ctx, cfg)
+	switch {
+	case err == channeldb.ErrDryRunMigrationOK:
+		ltndLog.Infof("%v, exiting", err)
+		return nil
+	case err != nil:
+		return fmt.Errorf("unable to open databases: %v", err)
+	}
+
+	defer cleanUp()
+
+	// Only process macaroons if --no-macaroons isn't set.
 	tlsCfg, restCreds, restProxyDest, err := getTLSConfig(cfg)
 	if err != nil {
-		err := fmt.Errorf("Unable to load TLS credentials: %v", err)
+		err := fmt.Errorf("unable to load TLS credentials: %v", err)
 		ltndLog.Error(err)
 		return err
 	}
@@ -319,7 +296,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 			cfg, mainChain.ChainDir,
 		)
 		if err != nil {
-			err := fmt.Errorf("Unable to initialize neutrino "+
+			err := fmt.Errorf("unable to initialize neutrino "+
 				"backend: %v", err)
 			ltndLog.Error(err)
 			return err
@@ -394,7 +371,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 			restProxyDest, tlsCfg, walletUnlockerListeners,
 		)
 		if err != nil {
-			err := fmt.Errorf("Unable to set up wallet password "+
+			err := fmt.Errorf("unable to set up wallet password "+
 				"listeners: %v", err)
 			ltndLog.Error(err)
 			return err
@@ -418,7 +395,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 			cfg.networkDir, macaroons.IPLockChecker,
 		)
 		if err != nil {
-			err := fmt.Errorf("Unable to set up macaroon "+
+			err := fmt.Errorf("unable to set up macaroon "+
 				"authentication: %v", err)
 			ltndLog.Error(err)
 			return err
@@ -428,7 +405,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 		// Try to unlock the macaroon store with the private password.
 		err = macaroonService.CreateUnlock(&privateWalletPw)
 		if err != nil {
-			err := fmt.Errorf("Unable to unlock macaroons: %v", err)
+			err := fmt.Errorf("unable to unlock macaroons: %v", err)
 			ltndLog.Error(err)
 			return err
 		}
@@ -442,7 +419,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 				cfg.ReadMacPath, cfg.InvoiceMacPath,
 			)
 			if err != nil {
-				err := fmt.Errorf("Unable to create macaroons "+
+				err := fmt.Errorf("unable to create macaroons "+
 					"%v", err)
 				ltndLog.Error(err)
 				return err
@@ -453,13 +430,17 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 	// With the information parsed from the configuration, create valid
 	// instances of the pertinent interfaces required to operate the
 	// Lightning Network Daemon.
+	//
+	// When we create the chain control, we need storage for the height
+	// hints and also the wallet itself, for these two we want them to be
+	// replicated, so we'll pass in the remote channel DB instance.
 	activeChainControl, err := newChainControlFromConfig(
-		cfg, chanDB, privateWalletPw, publicWalletPw,
+		cfg, localChanDB, remoteChanDB, privateWalletPw, publicWalletPw,
 		walletInitParams.Birthday, walletInitParams.RecoveryWindow,
 		walletInitParams.Wallet, neutrinoCS,
 	)
 	if err != nil {
-		err := fmt.Errorf("Unable to create chain control: %v", err)
+		err := fmt.Errorf("unable to create chain control: %v", err)
 		ltndLog.Error(err)
 		return err
 	}
@@ -471,18 +452,17 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 	cfg.registeredChains.RegisterChain(primaryChain, activeChainControl)
 
 	// TODO(roasbeef): add rotation
-	idPrivKey, err := activeChainControl.wallet.DerivePrivKey(keychain.KeyDescriptor{
-		KeyLocator: keychain.KeyLocator{
+	idKeyDesc, err := activeChainControl.keyRing.DeriveKey(
+		keychain.KeyLocator{
 			Family: keychain.KeyFamilyNodeKey,
 			Index:  0,
 		},
-	})
+	)
 	if err != nil {
-		err := fmt.Errorf("Unable to derive node private key: %v", err)
+		err := fmt.Errorf("error deriving node key: %v", err)
 		ltndLog.Error(err)
 		return err
 	}
-	idPrivKey.Curve = btcec.S256()
 
 	if cfg.Tor.Active {
 		srvrLog.Infof("Proxying all network traffic via Tor "+
@@ -495,9 +475,9 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 	var towerClientDB *wtdb.ClientDB
 	if cfg.WtClient.Active {
 		var err error
-		towerClientDB, err = wtdb.OpenClientDB(graphDir)
+		towerClientDB, err = wtdb.OpenClientDB(cfg.localDatabaseDir())
 		if err != nil {
-			err := fmt.Errorf("Unable to open watchtower client "+
+			err := fmt.Errorf("unable to open watchtower client "+
 				"database: %v", err)
 			ltndLog.Error(err)
 			return err
@@ -538,24 +518,21 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 
 		towerDB, err := wtdb.OpenTowerDB(towerDBDir)
 		if err != nil {
-			err := fmt.Errorf("Unable to open watchtower "+
+			err := fmt.Errorf("unable to open watchtower "+
 				"database: %v", err)
 			ltndLog.Error(err)
 			return err
 		}
 		defer towerDB.Close()
 
-		towerPrivKey, err := activeChainControl.wallet.DerivePrivKey(
-			keychain.KeyDescriptor{
-				KeyLocator: keychain.KeyLocator{
-					Family: keychain.KeyFamilyTowerID,
-					Index:  0,
-				},
+		towerKeyDesc, err := activeChainControl.keyRing.DeriveKey(
+			keychain.KeyLocator{
+				Family: keychain.KeyFamilyTowerID,
+				Index:  0,
 			},
 		)
 		if err != nil {
-			err := fmt.Errorf("Unable to derive watchtower "+
-				"private key: %v", err)
+			err := fmt.Errorf("error deriving tower key: %v", err)
 			ltndLog.Error(err)
 			return err
 		}
@@ -570,9 +547,11 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 					lnwallet.WitnessPubKey, false,
 				)
 			},
-			NodePrivKey: towerPrivKey,
-			PublishTx:   activeChainControl.wallet.PublishTransaction,
-			ChainHash:   *activeNetParams.GenesisHash,
+			NodeKeyECDH: keychain.NewPubKeyECDH(
+				towerKeyDesc, activeChainControl.keyRing,
+			),
+			PublishTx: activeChainControl.wallet.PublishTransaction,
+			ChainHash: *activeNetParams.GenesisHash,
 		}
 
 		// If there is a tor controller (user wants auto hidden services), then
@@ -591,7 +570,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 
 		wtConfig, err := cfg.Watchtower.Apply(wtCfg, lncfg.NormalizeAddresses)
 		if err != nil {
-			err := fmt.Errorf("Unable to configure watchtower: %v",
+			err := fmt.Errorf("unable to configure watchtower: %v",
 				err)
 			ltndLog.Error(err)
 			return err
@@ -599,7 +578,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 
 		tower, err = watchtower.New(wtConfig)
 		if err != nil {
-			err := fmt.Errorf("Unable to create watchtower: %v", err)
+			err := fmt.Errorf("unable to create watchtower: %v", err)
 			ltndLog.Error(err)
 			return err
 		}
@@ -611,12 +590,12 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 	// Set up the core server which will listen for incoming peer
 	// connections.
 	server, err := newServer(
-		cfg, cfg.Listeners, chanDB, towerClientDB, activeChainControl,
-		idPrivKey, walletInitParams.ChansToRestore, chainedAcceptor,
-		torController,
+		cfg, cfg.Listeners, localChanDB, remoteChanDB, towerClientDB,
+		activeChainControl, &idKeyDesc, walletInitParams.ChansToRestore,
+		chainedAcceptor, torController,
 	)
 	if err != nil {
-		err := fmt.Errorf("Unable to create server: %v", err)
+		err := fmt.Errorf("unable to create server: %v", err)
 		ltndLog.Error(err)
 		return err
 	}
@@ -626,19 +605,19 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 	// it at will.
 	atplCfg, err := initAutoPilot(server, cfg.Autopilot, mainChain)
 	if err != nil {
-		err := fmt.Errorf("Unable to initialize autopilot: %v", err)
+		err := fmt.Errorf("unable to initialize autopilot: %v", err)
 		ltndLog.Error(err)
 		return err
 	}
 
 	atplManager, err := autopilot.NewManager(atplCfg)
 	if err != nil {
-		err := fmt.Errorf("Unable to create autopilot manager: %v", err)
+		err := fmt.Errorf("unable to create autopilot manager: %v", err)
 		ltndLog.Error(err)
 		return err
 	}
 	if err := atplManager.Start(); err != nil {
-		err := fmt.Errorf("Unable to start autopilot manager: %v", err)
+		err := fmt.Errorf("unable to start autopilot manager: %v", err)
 		ltndLog.Error(err)
 		return err
 	}
@@ -666,12 +645,12 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 		tower, tlsCfg, rpcListeners, chainedAcceptor,
 	)
 	if err != nil {
-		err := fmt.Errorf("Unable to create RPC server: %v", err)
+		err := fmt.Errorf("unable to create RPC server: %v", err)
 		ltndLog.Error(err)
 		return err
 	}
 	if err := rpcServer.Start(); err != nil {
-		err := fmt.Errorf("Unable to start RPC server: %v", err)
+		err := fmt.Errorf("unable to start RPC server: %v", err)
 		ltndLog.Error(err)
 		return err
 	}
@@ -686,7 +665,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 
 		_, bestHeight, err := activeChainControl.chainIO.GetBestBlock()
 		if err != nil {
-			err := fmt.Errorf("Unable to determine chain tip: %v",
+			err := fmt.Errorf("unable to determine chain tip: %v",
 				err)
 			ltndLog.Error(err)
 			return err
@@ -702,7 +681,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 
 			synced, _, err := activeChainControl.wallet.IsSynced()
 			if err != nil {
-				err := fmt.Errorf("Unable to determine if "+
+				err := fmt.Errorf("unable to determine if "+
 					"wallet is synced: %v", err)
 				ltndLog.Error(err)
 				return err
@@ -717,7 +696,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 
 		_, bestHeight, err = activeChainControl.chainIO.GetBestBlock()
 		if err != nil {
-			err := fmt.Errorf("Unable to determine chain tip: %v",
+			err := fmt.Errorf("unable to determine chain tip: %v",
 				err)
 			ltndLog.Error(err)
 			return err
@@ -730,7 +709,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 	// With all the relevant chains initialized, we can finally start the
 	// server itself.
 	if err := server.Start(); err != nil {
-		err := fmt.Errorf("Unable to start server: %v", err)
+		err := fmt.Errorf("unable to start server: %v", err)
 		ltndLog.Error(err)
 		return err
 	}
@@ -741,7 +720,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 	// stopped together with the autopilot service.
 	if cfg.Autopilot.Active {
 		if err := atplManager.StartAgent(); err != nil {
-			err := fmt.Errorf("Unable to start autopilot agent: %v",
+			err := fmt.Errorf("unable to start autopilot agent: %v",
 				err)
 			ltndLog.Error(err)
 			return err
@@ -750,7 +729,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 
 	if cfg.Watchtower.Active {
 		if err := tower.Start(); err != nil {
-			err := fmt.Errorf("Unable to start watchtower: %v", err)
+			err := fmt.Errorf("unable to start watchtower: %v", err)
 			ltndLog.Error(err)
 			return err
 		}
@@ -1133,4 +1112,126 @@ func waitForWalletPassword(cfg *Config, restEndpoints []net.Addr,
 	case <-signal.ShutdownChannel():
 		return nil, fmt.Errorf("shutting down")
 	}
+}
+
+// initializeDatabases extracts the current databases that we'll use for normal
+// operation in the daemon. Two databases are returned: one remote and one
+// local. However, only if the replicated database is active will the remote
+// database point to a unique database. Otherwise, the local and remote DB will
+// both point to the same local database. A function closure that closes all
+// opened databases is also returned.
+func initializeDatabases(ctx context.Context,
+	cfg *Config) (*channeldb.DB, *channeldb.DB, func(), error) {
+
+	ltndLog.Infof("Opening the main database, this might take a few " +
+		"minutes...")
+
+	if cfg.DB.Backend == lncfg.BoltBackend {
+		ltndLog.Infof("Opening bbolt database, sync_freelist=%v",
+			cfg.DB.Bolt.SyncFreelist)
+	}
+
+	startOpenTime := time.Now()
+
+	databaseBackends, err := cfg.DB.GetBackends(
+		ctx, cfg.localDatabaseDir(), cfg.networkName(),
+	)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("unable to obtain database "+
+			"backends: %v", err)
+	}
+
+	// If the remoteDB is nil, then we'll just open a local DB as normal,
+	// having the remote and local pointer be the exact same instance.
+	var (
+		localChanDB, remoteChanDB *channeldb.DB
+		closeFuncs                []func()
+	)
+	if databaseBackends.RemoteDB == nil {
+		// Open the channeldb, which is dedicated to storing channel,
+		// and network related metadata.
+		localChanDB, err = channeldb.CreateWithBackend(
+			databaseBackends.LocalDB,
+			channeldb.OptionSetRejectCacheSize(cfg.Caches.RejectCacheSize),
+			channeldb.OptionSetChannelCacheSize(cfg.Caches.ChannelCacheSize),
+			channeldb.OptionDryRunMigration(cfg.DryRunMigration),
+		)
+		switch {
+		case err == channeldb.ErrDryRunMigrationOK:
+			return nil, nil, nil, err
+
+		case err != nil:
+			err := fmt.Errorf("unable to open local channeldb: %v", err)
+			ltndLog.Error(err)
+			return nil, nil, nil, err
+		}
+
+		closeFuncs = append(closeFuncs, func() {
+			localChanDB.Close()
+		})
+
+		remoteChanDB = localChanDB
+	} else {
+		ltndLog.Infof("Database replication is available! Creating " +
+			"local and remote channeldb instances")
+
+		// Otherwise, we'll open two instances, one for the state we
+		// only need locally, and the other for things we want to
+		// ensure are replicated.
+		localChanDB, err = channeldb.CreateWithBackend(
+			databaseBackends.LocalDB,
+			channeldb.OptionSetRejectCacheSize(cfg.Caches.RejectCacheSize),
+			channeldb.OptionSetChannelCacheSize(cfg.Caches.ChannelCacheSize),
+			channeldb.OptionDryRunMigration(cfg.DryRunMigration),
+		)
+		switch {
+		// As we want to allow both versions to get thru the dry run
+		// migration, we'll only exit the second time here once the
+		// remote instance has had a time to migrate as well.
+		case err == channeldb.ErrDryRunMigrationOK:
+			ltndLog.Infof("Local DB dry run migration successful")
+
+		case err != nil:
+			err := fmt.Errorf("unable to open local channeldb: %v", err)
+			ltndLog.Error(err)
+			return nil, nil, nil, err
+		}
+
+		closeFuncs = append(closeFuncs, func() {
+			localChanDB.Close()
+		})
+
+		ltndLog.Infof("Opening replicated database instance...")
+
+		remoteChanDB, err = channeldb.CreateWithBackend(
+			databaseBackends.RemoteDB,
+			channeldb.OptionDryRunMigration(cfg.DryRunMigration),
+		)
+		switch {
+		case err == channeldb.ErrDryRunMigrationOK:
+			return nil, nil, nil, err
+
+		case err != nil:
+			localChanDB.Close()
+
+			err := fmt.Errorf("unable to open remote channeldb: %v", err)
+			ltndLog.Error(err)
+			return nil, nil, nil, err
+		}
+
+		closeFuncs = append(closeFuncs, func() {
+			remoteChanDB.Close()
+		})
+	}
+
+	openTime := time.Since(startOpenTime)
+	ltndLog.Infof("Database now open (time_to_open=%v)!", openTime)
+
+	cleanUp := func() {
+		for _, closeFunc := range closeFuncs {
+			closeFunc()
+		}
+	}
+
+	return localChanDB, remoteChanDB, cleanUp, nil
 }
