@@ -8,6 +8,8 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -621,6 +623,23 @@ type WalletUnlockerServer interface {
 	//ChangePassword changes the password of the encrypted wallet. This will
 	//automatically unlock the wallet database if successful.
 	ChangePassword(context.Context, *ChangePasswordRequest) (*ChangePasswordResponse, error)
+}
+
+// UnimplementedWalletUnlockerServer can be embedded to have forward compatible implementations.
+type UnimplementedWalletUnlockerServer struct {
+}
+
+func (*UnimplementedWalletUnlockerServer) GenSeed(ctx context.Context, req *GenSeedRequest) (*GenSeedResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GenSeed not implemented")
+}
+func (*UnimplementedWalletUnlockerServer) InitWallet(ctx context.Context, req *InitWalletRequest) (*InitWalletResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InitWallet not implemented")
+}
+func (*UnimplementedWalletUnlockerServer) UnlockWallet(ctx context.Context, req *UnlockWalletRequest) (*UnlockWalletResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UnlockWallet not implemented")
+}
+func (*UnimplementedWalletUnlockerServer) ChangePassword(ctx context.Context, req *ChangePasswordRequest) (*ChangePasswordResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ChangePassword not implemented")
 }
 
 func RegisterWalletUnlockerServer(s *grpc.Server, srv WalletUnlockerServer) {

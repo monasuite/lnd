@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/golang/protobuf/descriptor"
 	"github.com/golang/protobuf/proto"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/grpc-ecosystem/grpc-gateway/utilities"
@@ -22,11 +23,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// Suppress "imported and not used" errors
 var _ codes.Code
 var _ io.Reader
 var _ status.Status
 var _ = runtime.String
 var _ = utilities.NewDoubleArray
+var _ = descriptor.ForMessage
 
 func request_ChainNotifier_RegisterConfirmationsNtfn_0(ctx context.Context, marshaler runtime.Marshaler, client ChainNotifierClient, req *http.Request, pathParams map[string]string) (ChainNotifier_RegisterConfirmationsNtfnClient, runtime.ServerMetadata, error) {
 	var protoReq ConfRequest
@@ -101,6 +104,35 @@ func request_ChainNotifier_RegisterBlockEpochNtfn_0(ctx context.Context, marshal
 	metadata.HeaderMD = header
 	return stream, metadata, nil
 
+}
+
+// RegisterChainNotifierHandlerServer registers the http handlers for service ChainNotifier to "mux".
+// UnaryRPC     :call ChainNotifierServer directly.
+// StreamingRPC :currently unsupported pending https://github.com/grpc/grpc-go/issues/906.
+func RegisterChainNotifierHandlerServer(ctx context.Context, mux *runtime.ServeMux, server ChainNotifierServer) error {
+
+	mux.Handle("POST", pattern_ChainNotifier_RegisterConfirmationsNtfn_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		err := status.Error(codes.Unimplemented, "streaming calls are not yet supported in the in-process transport")
+		_, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+		return
+	})
+
+	mux.Handle("POST", pattern_ChainNotifier_RegisterSpendNtfn_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		err := status.Error(codes.Unimplemented, "streaming calls are not yet supported in the in-process transport")
+		_, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+		return
+	})
+
+	mux.Handle("POST", pattern_ChainNotifier_RegisterBlockEpochNtfn_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		err := status.Error(codes.Unimplemented, "streaming calls are not yet supported in the in-process transport")
+		_, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+		return
+	})
+
+	return nil
 }
 
 // RegisterChainNotifierHandlerFromEndpoint is same as RegisterChainNotifierHandler but
@@ -205,11 +237,11 @@ func RegisterChainNotifierHandlerClient(ctx context.Context, mux *runtime.ServeM
 }
 
 var (
-	pattern_ChainNotifier_RegisterConfirmationsNtfn_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"v2", "chainnotifier", "register", "confirmations"}, ""))
+	pattern_ChainNotifier_RegisterConfirmationsNtfn_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"v2", "chainnotifier", "register", "confirmations"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_ChainNotifier_RegisterSpendNtfn_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"v2", "chainnotifier", "register", "spends"}, ""))
+	pattern_ChainNotifier_RegisterSpendNtfn_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"v2", "chainnotifier", "register", "spends"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_ChainNotifier_RegisterBlockEpochNtfn_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"v2", "chainnotifier", "register", "blocks"}, ""))
+	pattern_ChainNotifier_RegisterBlockEpochNtfn_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"v2", "chainnotifier", "register", "blocks"}, "", runtime.AssumeColonVerbOpt(true)))
 )
 
 var (

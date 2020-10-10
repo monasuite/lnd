@@ -4,10 +4,6 @@
     "title": "chainrpc/chainnotifier.proto",
     "version": "version not set"
   },
-  "schemes": [
-    "http",
-    "https"
-  ],
   "consumes": [
     "application/json"
   ],
@@ -24,7 +20,22 @@
           "200": {
             "description": "A successful response.(streaming responses)",
             "schema": {
-              "$ref": "#/x-stream-definitions/chainrpcBlockEpoch"
+              "type": "object",
+              "properties": {
+                "result": {
+                  "$ref": "#/definitions/chainrpcBlockEpoch"
+                },
+                "error": {
+                  "$ref": "#/definitions/runtimeStreamError"
+                }
+              },
+              "title": "Stream result of chainrpcBlockEpoch"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response",
+            "schema": {
+              "$ref": "#/definitions/runtimeError"
             }
           }
         },
@@ -52,7 +63,22 @@
           "200": {
             "description": "A successful response.(streaming responses)",
             "schema": {
-              "$ref": "#/x-stream-definitions/chainrpcConfEvent"
+              "type": "object",
+              "properties": {
+                "result": {
+                  "$ref": "#/definitions/chainrpcConfEvent"
+                },
+                "error": {
+                  "$ref": "#/definitions/runtimeStreamError"
+                }
+              },
+              "title": "Stream result of chainrpcConfEvent"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response",
+            "schema": {
+              "$ref": "#/definitions/runtimeError"
             }
           }
         },
@@ -80,7 +106,22 @@
           "200": {
             "description": "A successful response.(streaming responses)",
             "schema": {
-              "$ref": "#/x-stream-definitions/chainrpcSpendEvent"
+              "type": "object",
+              "properties": {
+                "result": {
+                  "$ref": "#/definitions/chainrpcSpendEvent"
+                },
+                "error": {
+                  "$ref": "#/definitions/runtimeStreamError"
+                }
+              },
+              "title": "Stream result of chainrpcSpendEvent"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response",
+            "schema": {
+              "$ref": "#/definitions/runtimeError"
             }
           }
         },
@@ -270,6 +311,27 @@
         }
       }
     },
+    "runtimeError": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
     "runtimeStreamError": {
       "type": "object",
       "properties": {
@@ -294,44 +356,6 @@
           }
         }
       }
-    }
-  },
-  "x-stream-definitions": {
-    "chainrpcBlockEpoch": {
-      "type": "object",
-      "properties": {
-        "result": {
-          "$ref": "#/definitions/chainrpcBlockEpoch"
-        },
-        "error": {
-          "$ref": "#/definitions/runtimeStreamError"
-        }
-      },
-      "title": "Stream result of chainrpcBlockEpoch"
-    },
-    "chainrpcConfEvent": {
-      "type": "object",
-      "properties": {
-        "result": {
-          "$ref": "#/definitions/chainrpcConfEvent"
-        },
-        "error": {
-          "$ref": "#/definitions/runtimeStreamError"
-        }
-      },
-      "title": "Stream result of chainrpcConfEvent"
-    },
-    "chainrpcSpendEvent": {
-      "type": "object",
-      "properties": {
-        "result": {
-          "$ref": "#/definitions/chainrpcSpendEvent"
-        },
-        "error": {
-          "$ref": "#/definitions/runtimeStreamError"
-        }
-      },
-      "title": "Stream result of chainrpcSpendEvent"
     }
   }
 }
