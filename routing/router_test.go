@@ -23,7 +23,6 @@ import (
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/record"
 	"github.com/monasuite/lnd/routing/route"
-	"github.com/monasuite/lnd/zpay32"
 )
 
 var uniquePaymentID uint64 = 1 // to be used atomically
