@@ -66,8 +66,13 @@ const (
 	// in the real world.
 	MaxBtcFundingAmount = btcutil.Amount(1<<24) - 1
 
-	// maxMonaFundingAmount is a soft-limit of the maximum channel size
-	// currently accepted on the Monacoin chain within the Lightning
+	// MaxBtcFundingAmountWumbo is a soft-limit on the maximum size of wumbo
+	// channels. This limit is 10 BTC and is the only thing standing between
+	// you and limitless channel size (apart from 21 million cap)
+	MaxBtcFundingAmountWumbo = btcutil.Amount(1000000000)
+
+	// maxLtcFundingAmount is a soft-limit of the maximum channel size
+	// currently accepted on the Litecoin chain within the Lightning
 	// Protocol.
 	maxMonaFundingAmount = MaxBtcFundingAmount * btcToMonaConversionRate
 )
@@ -123,6 +128,7 @@ type reservationWithCtx struct {
 	remoteCsvDelay uint16
 	remoteMinHtlc  lnwire.MilliSatoshi
 	remoteMaxValue lnwire.MilliSatoshi
+	remoteMaxHtlcs uint16
 
 	updateMtx   sync.RWMutex
 	lastUpdated time.Time
@@ -353,6 +359,11 @@ type fundingConfig struct {
 	// flood us with very small channels that would never really be usable
 	// due to fees.
 	MinChanSize btcutil.Amount
+
+	// MaxChanSize is the largest channel size that we'll accept as an
+	// inbound channel. We have such a parameter, so that you may decide how
+	// WUMBO you would like your channel.
+	MaxChanSize btcutil.Amount
 
 	// MaxPendingChannels is the maximum number of pending channels we
 	// allow for each peer.
@@ -1193,13 +1204,24 @@ func (f *fundingManager) handleFundingOpen(fmsg *fundingOpenMsg) {
 	msg := fmsg.msg
 	amt := msg.FundingAmount
 
-	// We count the number of pending channels for this peer. This is the
-	// sum of the active reservations and the channels pending open in the
-	// database.
+	// We get all pending channels for this peer. This is the list of the
+	// active reservations and the channels pending open in the database.
 	f.resMtx.RLock()
-	numPending := len(f.activeReservations[peerIDKey])
+	reservations := f.activeReservations[peerIDKey]
+
+	// We don't count reservations that were created from a canned funding
+	// shim. The user has registered the shim and therefore expects this
+	// channel to arrive.
+	numPending := 0
+	for _, res := range reservations {
+		if !res.reservation.IsCannedShim() {
+			numPending++
+		}
+	}
 	f.resMtx.RUnlock()
 
+	// Also count the channels that are already pending. There we don't know
+	// the underlying intent anymore, unfortunately.
 	channels, err := f.cfg.Wallet.Cfg.Database.FetchOpenChannels(peerPubKey)
 	if err != nil {
 		f.failFundingFlow(
@@ -1209,7 +1231,13 @@ func (f *fundingManager) handleFundingOpen(fmsg *fundingOpenMsg) {
 	}
 
 	for _, c := range channels {
-		if c.IsPending {
+		// Pending channels that have a non-zero thaw height were also
+		// created through a canned funding shim. Those also don't
+		// count towards the DoS protection limit.
+		//
+		// TODO(guggero): Properly store the funding type (wallet, shim,
+		// PSBT) on the channel so we don't need to use the thaw height.
+		if c.IsPending && c.ThawHeight == 0 {
 			numPending++
 		}
 	}
@@ -1239,13 +1267,11 @@ func (f *fundingManager) handleFundingOpen(fmsg *fundingOpenMsg) {
 		return
 	}
 
-	// We'll reject any request to create a channel that's above the
-	// current soft-limit for channel size, but only if we're rejecting all
-	// wumbo channel initiations.
-	if f.cfg.NoWumboChans && msg.FundingAmount > MaxFundingAmount {
+	// Ensure that the remote party respects our maximum channel size.
+	if amt > f.cfg.MaxChanSize {
 		f.failFundingFlow(
 			fmsg.peer, fmsg.msg.PendingChannelID,
-			lnwire.ErrChanTooLarge,
+			lnwallet.ErrChanTooLarge(amt, f.cfg.MaxChanSize),
 		)
 		return
 	}
@@ -1399,6 +1425,7 @@ func (f *fundingManager) handleFundingOpen(fmsg *fundingOpenMsg) {
 		remoteCsvDelay: remoteCsvDelay,
 		remoteMinHtlc:  minHtlc,
 		remoteMaxValue: remoteMaxValue,
+		remoteMaxHtlcs: maxHtlcs,
 		err:            make(chan error, 1),
 		peer:           fmsg.peer,
 	}
@@ -1548,7 +1575,6 @@ func (f *fundingManager) handleFundingAccept(fmsg *fundingAcceptMsg) {
 	// here so we can properly commit their accepted constraints to the
 	// reservation.
 	chanReserve := f.cfg.RequiredRemoteChanReserve(resCtx.chanAmt, msg.DustLimit)
-	maxHtlcs := f.cfg.RequiredRemoteMaxHTLCs(resCtx.chanAmt)
 
 	// The remote node has responded with their portion of the channel
 	// contribution. At this point, we can process their contribution which
@@ -1562,7 +1588,7 @@ func (f *fundingManager) handleFundingAccept(fmsg *fundingAcceptMsg) {
 				MaxPendingAmount: resCtx.remoteMaxValue,
 				ChanReserve:      chanReserve,
 				MinHTLC:          resCtx.remoteMinHtlc,
-				MaxAcceptedHtlcs: maxHtlcs,
+				MaxAcceptedHtlcs: resCtx.remoteMaxHtlcs,
 				CsvDelay:         resCtx.remoteCsvDelay,
 			},
 			MultiSigKey: keychain.KeyDescriptor{
@@ -3073,6 +3099,7 @@ func (f *fundingManager) handleInitFundingMsg(msg *initFundingMsg) {
 		minHtlcIn      = msg.minHtlcIn
 		remoteCsvDelay = msg.remoteCsvDelay
 		maxValue       = msg.maxValueInFlight
+		maxHtlcs       = msg.maxHtlcs
 	)
 
 	// We'll determine our dust limit depending on which chain is active.
@@ -3211,6 +3238,10 @@ func (f *fundingManager) handleInitFundingMsg(msg *initFundingMsg) {
 		maxValue = f.cfg.RequiredRemoteMaxValue(capacity)
 	}
 
+	if maxHtlcs == 0 {
+		maxHtlcs = f.cfg.RequiredRemoteMaxHTLCs(capacity)
+	}
+
 	// If a pending channel map for this peer isn't already created, then
 	// we create one, ultimately allowing us to track this pending
 	// reservation within the target peer.
@@ -3225,6 +3256,7 @@ func (f *fundingManager) handleInitFundingMsg(msg *initFundingMsg) {
 		remoteCsvDelay: remoteCsvDelay,
 		remoteMinHtlc:  minHtlcIn,
 		remoteMaxValue: maxValue,
+		remoteMaxHtlcs: maxHtlcs,
 		reservation:    reservation,
 		peer:           msg.peer,
 		updates:        msg.updates,
@@ -3244,7 +3276,6 @@ func (f *fundingManager) handleInitFundingMsg(msg *initFundingMsg) {
 	// policy to determine of required commitment constraints for the
 	// remote party.
 	chanReserve := f.cfg.RequiredRemoteChanReserve(capacity, ourDustLimit)
-	maxHtlcs := f.cfg.RequiredRemoteMaxHTLCs(capacity)
 
 	fndgLog.Infof("Starting funding workflow with %v for pending_id(%x), "+
 		"committype=%v", msg.peer.Address(), chanID, commitType)

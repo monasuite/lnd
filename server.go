@@ -28,7 +28,6 @@ import (
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/queue"
 	"github.com/lightningnetwork/lnd/ticker"
-
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/brontide"
 	"github.com/monasuite/lnd/chanacceptor"
@@ -40,6 +39,7 @@ import (
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/discovery"
 	"github.com/monasuite/lnd/feature"
+	"github.com/monasuite/lnd/healthcheck"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/input"
@@ -276,6 +276,9 @@ type server struct {
 	chanEventStore *chanfitness.ChannelEventStore
 
 	hostAnn *netann.HostAnnouncer
+
+	// livelinessMonitor monitors that lnd has access to critical resources.
+	livelinessMonitor *healthcheck.Monitor
 
 	quit chan struct{}
 
@@ -1150,6 +1153,10 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			return lnwire.NewMSatFromSatoshis(chanAmt) - reserve
 		},
 		RequiredRemoteMaxHTLCs: func(chanAmt btcutil.Amount) uint16 {
+			if cfg.DefaultRemoteMaxHtlcs > 0 {
+				return cfg.DefaultRemoteMaxHtlcs
+			}
+
 			// By default, we'll permit them to utilize the full
 			// channel bandwidth.
 			return uint16(input.MaxHTLCNumber / 2)
@@ -1157,6 +1164,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		ZombieSweeperInterval:         1 * time.Minute,
 		ReservationTimeout:            10 * time.Minute,
 		MinChanSize:                   btcutil.Amount(cfg.MinChanSize),
+		MaxChanSize:                   btcutil.Amount(cfg.MaxChanSize),
 		MaxPendingChannels:            cfg.MaxPendingChannels,
 		RejectPush:                    cfg.RejectPush,
 		NotifyOpenChannelEvent:        s.channelNotifier.NotifyOpenChannelEvent,
@@ -1252,6 +1260,56 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		})
 	}
 
+	// Create a set of health checks using our configured values. If a
+	// health check has been disabled by setting attempts to 0, our monitor
+	// will not run it.
+	chainHealthCheck := healthcheck.NewObservation(
+		"chain backend",
+		func() error {
+			_, _, err := cc.chainIO.GetBestBlock()
+			return err
+		},
+		cfg.HealthChecks.ChainCheck.Interval,
+		cfg.HealthChecks.ChainCheck.Timeout,
+		cfg.HealthChecks.ChainCheck.Backoff,
+		cfg.HealthChecks.ChainCheck.Attempts,
+	)
+
+	diskCheck := healthcheck.NewObservation(
+		"disk space",
+		func() error {
+			free, err := healthcheck.AvailableDiskSpace(cfg.LndDir)
+			if err != nil {
+				return err
+			}
+
+			// If we have more free space than we require,
+			// we return a nil error.
+			if free > cfg.HealthChecks.DiskCheck.RequiredRemaining {
+				return nil
+			}
+
+			return fmt.Errorf("require: %v free space, got: %v",
+				cfg.HealthChecks.DiskCheck.RequiredRemaining,
+				free)
+		},
+		cfg.HealthChecks.DiskCheck.Interval,
+		cfg.HealthChecks.DiskCheck.Timeout,
+		cfg.HealthChecks.DiskCheck.Backoff,
+		cfg.HealthChecks.DiskCheck.Attempts,
+	)
+
+	// If we have not disabled all of our health checks, we create a
+	// liveliness monitor with our configured checks.
+	s.livelinessMonitor = healthcheck.NewMonitor(
+		&healthcheck.Config{
+			Checks: []*healthcheck.Observation{
+				chainHealthCheck, diskCheck,
+			},
+			Shutdown: srvrLog.Criticalf,
+		},
+	)
+
 	// Create the connection manager which will be responsible for
 	// maintaining persistent outbound connections and also accepting new
 	// incoming connections
@@ -1297,6 +1355,13 @@ func (s *server) Start() error {
 
 		if s.hostAnn != nil {
 			if err := s.hostAnn.Start(); err != nil {
+				startErr = err
+				return
+			}
+		}
+
+		if s.livelinessMonitor != nil {
+			if err := s.livelinessMonitor.Start(); err != nil {
 				startErr = err
 				return
 			}
@@ -1530,6 +1595,13 @@ func (s *server) Stop() error {
 			if err := s.hostAnn.Stop(); err != nil {
 				srvrLog.Warnf("unable to shut down host "+
 					"annoucner: %v", err)
+			}
+		}
+
+		if s.livelinessMonitor != nil {
+			if err := s.livelinessMonitor.Stop(); err != nil {
+				srvrLog.Warnf("unable to shutdown liveliness "+
+					"monitor: %v", err)
 			}
 		}
 
@@ -3272,6 +3344,8 @@ type openChanReq struct {
 	// maxValueInFlight is the maximum amount of coins in millisatoshi that can
 	// be pending within the channel. It only applies to the remote party.
 	maxValueInFlight lnwire.MilliSatoshi
+
+	maxHtlcs uint16
 
 	// TODO(roasbeef): add ability to specify channel constraints as well
 

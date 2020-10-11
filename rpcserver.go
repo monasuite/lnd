@@ -184,6 +184,7 @@ var (
 	validEntities = []string{
 		"onchain", "offchain", "address", "message",
 		"peers", "info", "invoices", "signer", "macaroon",
+		macaroons.PermissionEntityCustomURI,
 	}
 )
 
@@ -197,9 +198,9 @@ func stringInSlice(a string, slice []string) bool {
 	return false
 }
 
-// mainRPCServerPermissions returns a mapping of the main RPC server calls to
+// MainRPCServerPermissions returns a mapping of the main RPC server calls to
 // the permissions they require.
-func mainRPCServerPermissions() map[string][]bakery.Op {
+func MainRPCServerPermissions() map[string][]bakery.Op {
 	return map[string][]bakery.Op{
 		"/lnrpc.Lightning/SendCoins": {{
 			Entity: "onchain",
@@ -429,6 +430,10 @@ func mainRPCServerPermissions() map[string][]bakery.Op {
 			Entity: "macaroon",
 			Action: "generate",
 		}},
+		"/lnrpc.Lightning/ListPermissions": {{
+			Entity: "info",
+			Action: "read",
+		}},
 		"/lnrpc.Lightning/SubscribePeerEvents": {{
 			Entity: "peers",
 			Action: "read",
@@ -502,6 +507,10 @@ type rpcServer struct {
 
 	// selfNode is our own pubkey.
 	selfNode route.Vertex
+
+	// allPermissions is a map of all registered gRPC URIs (including
+	// internal and external subservers) to the permissions they require.
+	allPermissions map[string][]bakery.Op
 }
 
 // A compile time check to ensure that rpcServer fully implements the
@@ -608,7 +617,7 @@ func newRPCServer(cfg *Config, s *server, macService *macaroons.Service,
 	// Next, we need to merge the set of sub server macaroon permissions
 	// with the main RPC server permissions so we can unite them under a
 	// single set of interceptors.
-	permissions := mainRPCServerPermissions()
+	permissions := MainRPCServerPermissions()
 	for _, subServerPerm := range subServerPerms {
 		for method, ops := range subServerPerm {
 			// For each new method:ops combo, we also ensure that
@@ -629,10 +638,12 @@ func newRPCServer(cfg *Config, s *server, macService *macaroons.Service,
 		return nil, err
 	}
 
-	// External subserver possibly need to register their own permissions.
+	// External subserver possibly need to register their own permissions
+	// and macaroon validator.
 	for _, lis := range listeners {
 		extSubserver := lis.ExternalRPCSubserverCfg
 		if extSubserver != nil {
+			macValidator := extSubserver.MacaroonValidator
 			for method, ops := range extSubserver.Permissions {
 				// For each new method:ops combo, we also ensure
 				// that non of the sub-servers try to override
@@ -645,6 +656,23 @@ func newRPCServer(cfg *Config, s *server, macService *macaroons.Service,
 				}
 
 				permissions[method] = ops
+
+				// Give the external subservers the possibility
+				// to also use their own validator to check any
+				// macaroons attached to calls to this method.
+				// This allows them to have their own root key
+				// ID database and permission entities.
+				if macValidator != nil {
+					err := macService.RegisterExternalValidator(
+						method, macValidator,
+					)
+					if err != nil {
+						return nil, fmt.Errorf("could "+
+							"not register "+
+							"external macaroon "+
+							"validator: %v", err)
+					}
+				}
 			}
 		}
 	}
@@ -709,6 +737,7 @@ func newRPCServer(cfg *Config, s *server, macService *macaroons.Service,
 		quit:            make(chan struct{}, 1),
 		macService:      macService,
 		selfNode:        selfNode.PubKeyBytes,
+		allPermissions:  permissions,
 	}
 	lnrpc.RegisterLightningServer(grpcServer, rootRPCServer)
 
@@ -810,12 +839,6 @@ func (r *rpcServer) Start() error {
 	// Wrap the default grpc-gateway handler with the WebSocket handler.
 	restHandler := lnrpc.NewWebSocketProxy(restMux, rpcsLog)
 
-	// Set the CORS headers if configured. This wraps the HTTP handler with
-	// another handler.
-	if len(r.cfg.RestCORS) > 0 {
-		restHandler = allowCORS(restHandler, r.cfg.RestCORS)
-	}
-
 	// With our custom REST proxy mux created, register our main RPC and
 	// give all subservers a chance to register as well.
 	err := lnrpc.RegisterLightningHandlerFromEndpoint(
@@ -871,7 +894,8 @@ func (r *rpcServer) Start() error {
 			// through the following chain:
 			// req ---> CORS handler --> WS proxy --->
 			//   REST proxy --> gRPC endpoint
-			err := http.Serve(lis, restHandler)
+			corsHandler := allowCORS(restHandler, r.cfg.RestCORS)
+			err := http.Serve(lis, corsHandler)
 			if err != nil && !lnrpc.IsClosedConnError(err) {
 				rpcsLog.Error(err)
 			}
@@ -943,6 +967,12 @@ func allowCORS(handler http.Handler, origins []string) http.Handler {
 	allowHeaders := "Access-Control-Allow-Headers"
 	allowMethods := "Access-Control-Allow-Methods"
 	allowOrigin := "Access-Control-Allow-Origin"
+
+	// If the user didn't supply any origins that means CORS is disabled
+	// and we should return the original handler.
+	if len(origins) == 0 {
+		return handler
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
@@ -1715,6 +1745,7 @@ func (r *rpcServer) parseOpenChannelReq(in *lnrpc.OpenChannelRequest,
 	minHtlcIn := lnwire.MilliSatoshi(in.MinHtlcMsat)
 	remoteCsvDelay := uint16(in.RemoteCsvDelay)
 	maxValue := lnwire.MilliSatoshi(in.RemoteMaxValueInFlightMsat)
+	maxHtlcs := uint16(in.RemoteMaxHtlcs)
 
 	globalFeatureSet := r.server.featureMgr.Get(feature.SetNodeAnn)
 
@@ -1745,6 +1776,13 @@ func (r *rpcServer) parseOpenChannelReq(in *lnrpc.OpenChannelRequest,
 	if localFundingAmt < minChanFundingSize {
 		return nil, fmt.Errorf("channel is too small, the minimum "+
 			"channel size is: %v SAT", int64(minChanFundingSize))
+	}
+
+	// Prevent users from submitting a max-htlc value that would exceed the
+	// protocol maximum.
+	if maxHtlcs > input.MaxHTLCNumber/2 {
+		return nil, fmt.Errorf("remote-max-htlcs (%v) cannot be "+
+			"greater than %v", maxHtlcs, input.MaxHTLCNumber/2)
 	}
 
 	// Then, we'll extract the minimum number of confirmations that each
@@ -1833,6 +1871,7 @@ func (r *rpcServer) parseOpenChannelReq(in *lnrpc.OpenChannelRequest,
 		minConfs:         minConfs,
 		shutdownScript:   script,
 		maxValueInFlight: maxValue,
+		maxHtlcs:         maxHtlcs,
 	}, nil
 }
 
@@ -2317,13 +2356,14 @@ func abandonChanFromGraph(chanGraph *channeldb.ChannelGraph,
 // AbandonChannel removes all channel state from the database except for a
 // close summary. This method can be used to get rid of permanently unusable
 // channels due to bugs fixed in newer versions of lnd.
-func (r *rpcServer) AbandonChannel(ctx context.Context,
+func (r *rpcServer) AbandonChannel(_ context.Context,
 	in *lnrpc.AbandonChannelRequest) (*lnrpc.AbandonChannelResponse, error) {
 
 	// If this isn't the dev build, then we won't allow the RPC to be
 	// executed, as it's an advanced feature and won't be activated in
-	// regular production/release builds.
-	if !build.IsDevBuild() {
+	// regular production/release builds except for the explicit case of
+	// externally funded channels that are still pending.
+	if !in.PendingFundingShimOnly && !build.IsDevBuild() {
 		return nil, fmt.Errorf("AbandonChannel RPC call only " +
 			"available in dev builds")
 	}
@@ -2355,6 +2395,20 @@ func (r *rpcServer) AbandonChannel(ctx context.Context,
 	// on-disk state, we'll remove the channel from the switch and peer
 	// state if it's been loaded in.
 	case err == nil:
+		// If the user requested the more safe version that only allows
+		// the removal of externally (shim) funded channels that are
+		// still pending, we enforce this option now that we know the
+		// state of the channel.
+		//
+		// TODO(guggero): Properly store the funding type (wallet, shim,
+		// PSBT) on the channel so we don't need to use the thaw height.
+		isShimFunded := dbChan.ThawHeight > 0
+		isPendingShimFunded := isShimFunded && dbChan.IsPending
+		if in.PendingFundingShimOnly && !isPendingShimFunded {
+			return nil, fmt.Errorf("channel %v is not externally "+
+				"funded or not pending", chanPoint)
+		}
+
 		// We'll mark the channel as borked before we remove the state
 		// from the switch/peer so it won't be loaded back in if the
 		// peer reconnects.
@@ -6397,13 +6451,25 @@ func (r *rpcServer) BakeMacaroon(ctx context.Context,
 	// the bakery.
 	requestedPermissions := make([]bakery.Op, len(req.Permissions))
 	for idx, op := range req.Permissions {
-		if !stringInSlice(op.Action, validActions) {
-			return nil, fmt.Errorf("invalid permission action. %s",
-				helpMsg)
-		}
 		if !stringInSlice(op.Entity, validEntities) {
 			return nil, fmt.Errorf("invalid permission entity. %s",
 				helpMsg)
+		}
+
+		// Either we have the special entity "uri" which specifies a
+		// full gRPC URI or we have one of the pre-defined actions.
+		if op.Entity == macaroons.PermissionEntityCustomURI {
+			_, ok := r.allPermissions[op.Action]
+			if !ok {
+				return nil, fmt.Errorf("invalid permission " +
+					"action, must be an existing URI in " +
+					"the format /package.Service/" +
+					"MethodName")
+			}
+		} else if !stringInSlice(op.Action, validActions) {
+			return nil, fmt.Errorf("invalid permission action. %s",
+				helpMsg)
+
 		}
 
 		requestedPermissions[idx] = bakery.Op{
@@ -6428,6 +6494,33 @@ func (r *rpcServer) BakeMacaroon(ctx context.Context,
 	resp.Macaroon = hex.EncodeToString(newMacBytes)
 
 	return resp, nil
+}
+
+// ListPermissions lists all RPC method URIs and their required macaroon
+// permissions to access them.
+func (r *rpcServer) ListPermissions(_ context.Context,
+	_ *lnrpc.ListPermissionsRequest) (*lnrpc.ListPermissionsResponse,
+	error) {
+
+	rpcsLog.Debugf("[listpermissions]")
+
+	permissionMap := make(map[string]*lnrpc.MacaroonPermissionList)
+	for uri, perms := range r.allPermissions {
+		rpcPerms := make([]*lnrpc.MacaroonPermission, len(perms))
+		for idx, perm := range perms {
+			rpcPerms[idx] = &lnrpc.MacaroonPermission{
+				Entity: perm.Entity,
+				Action: perm.Action,
+			}
+		}
+		permissionMap[uri] = &lnrpc.MacaroonPermissionList{
+			Permissions: rpcPerms,
+		}
+	}
+
+	return &lnrpc.ListPermissionsResponse{
+		MethodPermissions: permissionMap,
+	}, nil
 }
 
 // FundingStateStep is an advanced funding related call that allows the caller
@@ -6531,19 +6624,50 @@ func (r *rpcServer) FundingStateStep(ctx context.Context,
 	// the final PSBT to the previously verified one and if nothing
 	// unexpected was changed, continue the channel opening process.
 	case in.GetPsbtFinalize() != nil:
+		msg := in.GetPsbtFinalize()
 		rpcsLog.Debugf("Finalizing PSBT for pending_id=%x",
-			in.GetPsbtFinalize().PendingChanId)
+			msg.PendingChanId)
 
 		copy(pendingChanID[:], in.GetPsbtFinalize().PendingChanId)
-		packet, err := psbt.NewFromRawBytes(
-			bytes.NewReader(in.GetPsbtFinalize().SignedPsbt), false,
+
+		var (
+			packet *psbt.Packet
+			rawTx  *wire.MsgTx
+			err    error
 		)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing psbt: %v", err)
+
+		// Either the signed PSBT or the raw transaction need to be set
+		// but not both at the same time.
+		switch {
+		case len(msg.SignedPsbt) > 0 && len(msg.FinalRawTx) > 0:
+			return nil, fmt.Errorf("cannot set both signed PSBT " +
+				"and final raw TX at the same time")
+
+		case len(msg.SignedPsbt) > 0:
+			packet, err = psbt.NewFromRawBytes(
+				bytes.NewReader(in.GetPsbtFinalize().SignedPsbt),
+				false,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("error parsing psbt: %v",
+					err)
+			}
+
+		case len(msg.FinalRawTx) > 0:
+			rawTx = &wire.MsgTx{}
+			err = rawTx.Deserialize(bytes.NewReader(msg.FinalRawTx))
+			if err != nil {
+				return nil, fmt.Errorf("error parsing final "+
+					"raw TX: %v", err)
+			}
+
+		default:
+			return nil, fmt.Errorf("PSBT or raw transaction to " +
+				"finalize missing")
 		}
 
 		err = r.server.cc.wallet.PsbtFundingFinalize(
-			pendingChanID, packet,
+			pendingChanID, packet, rawTx,
 		)
 		if err != nil {
 			return nil, err

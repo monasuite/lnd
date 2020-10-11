@@ -15,6 +15,7 @@ import (
 	"github.com/monasuite/lnd/channelnotifier"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/discovery"
+	"github.com/monasuite/lnd/healthcheck"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/invoices"
 	"github.com/monasuite/lnd/lnrpc/autopilotrpc"
@@ -25,9 +26,11 @@ import (
 	"github.com/monasuite/lnd/lnrpc/verrpc"
 	"github.com/monasuite/lnd/lnrpc/walletrpc"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chancloser"
 	"github.com/monasuite/lnd/lnwallet/chanfunding"
 	"github.com/monasuite/lnd/monitoring"
 	"github.com/monasuite/lnd/netann"
+	"github.com/monasuite/lnd/peer"
 	"github.com/monasuite/lnd/peernotifier"
 	"github.com/monasuite/lnd/routing"
 	"github.com/monasuite/lnd/routing/localchans"
@@ -120,11 +123,14 @@ func SetupLoggers(root *build.RotatingLogWriter) {
 	AddSubLogger(root, "WTCL", wtclient.UseLogger)
 	AddSubLogger(root, "PRNF", peernotifier.UseLogger)
 	AddSubLogger(root, "CHFD", chanfunding.UseLogger)
+	AddSubLogger(root, "PEER", peer.UseLogger)
+	AddSubLogger(root, "CHCL", chancloser.UseLogger)
 
 	AddSubLogger(root, routing.Subsystem, routing.UseLogger, localchans.UseLogger)
 	AddSubLogger(root, routerrpc.Subsystem, routerrpc.UseLogger)
 	AddSubLogger(root, chanfitness.Subsystem, chanfitness.UseLogger)
 	AddSubLogger(root, verrpc.Subsystem, verrpc.UseLogger)
+	AddSubLogger(root, healthcheck.Subsystem, healthcheck.UseLogger)
 }
 
 // AddSubLogger is a helper method to conveniently create and register the

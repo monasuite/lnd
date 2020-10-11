@@ -27,6 +27,7 @@ import (
 	"github.com/monasuite/lnd/discovery"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/htlcswitch/hodl"
+	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/lncfg"
 	"github.com/monasuite/lnd/lnrpc/routerrpc"
 	"github.com/monasuite/lnd/lnrpc/signrpc"
@@ -86,6 +87,27 @@ const (
 	// HostAnnouncer will wait between DNS resolutions to check if the
 	// backing IP of a host has changed.
 	defaultHostSampleInterval = time.Minute * 5
+
+	// defaultRemoteMaxHtlcs specifies the default limit for maximum
+	// concurrent HTLCs the remote party may add to commitment transactions.
+	// This value can be overridden with --default-remote-max-htlcs.
+	defaultRemoteMaxHtlcs = 483
+
+	defaultChainInterval = time.Minute
+	defaultChainTimeout  = time.Second * 10
+	defaultChainBackoff  = time.Second * 30
+	defaultChainAttempts = 0
+
+	// Set defaults for a health check which ensures that we have space
+	// available on disk. Although this check is off by default so that we
+	// avoid breaking any existing setups (particularly on mobile), we still
+	// set the other default values so that the health check can be easily
+	// enabled with sane defaults.
+	defaultRequiredDisk = 0.1
+	defaultDiskInterval = time.Hour * 12
+	defaultDiskTimeout  = time.Second * 5
+	defaultDiskBackoff  = time.Minute
+	defaultDiskAttempts = 0
 )
 
 var (
@@ -142,11 +164,12 @@ type Config struct {
 	DataDir      string `short:"b" long:"datadir" description:"The directory to store lnd's data within"`
 	SyncFreelist bool   `long:"sync-freelist" description:"Whether the databases used within lnd should sync their freelist to disk. This is disabled by default resulting in improved memory performance during operation, but with an increase in startup time."`
 
-	TLSCertPath     string   `long:"tlscertpath" description:"Path to write the TLS certificate for lnd's RPC and REST services"`
-	TLSKeyPath      string   `long:"tlskeypath" description:"Path to write the TLS private key for lnd's RPC and REST services"`
-	TLSExtraIPs     []string `long:"tlsextraip" description:"Adds an extra ip to the generated certificate"`
-	TLSExtraDomains []string `long:"tlsextradomain" description:"Adds an extra domain to the generated certificate"`
-	TLSAutoRefresh  bool     `long:"tlsautorefresh" description:"Re-generate TLS certificate and key if the IPs or domains are changed"`
+	TLSCertPath        string   `long:"tlscertpath" description:"Path to write the TLS certificate for lnd's RPC and REST services"`
+	TLSKeyPath         string   `long:"tlskeypath" description:"Path to write the TLS private key for lnd's RPC and REST services"`
+	TLSExtraIPs        []string `long:"tlsextraip" description:"Adds an extra ip to the generated certificate"`
+	TLSExtraDomains    []string `long:"tlsextradomain" description:"Adds an extra domain to the generated certificate"`
+	TLSAutoRefresh     bool     `long:"tlsautorefresh" description:"Re-generate TLS certificate and key if the IPs or domains are changed"`
+	TLSDisableAutofill bool     `long:"tlsdisableautofill" description:"Do not include the interface IPs or the system hostname in TLS certificate, use first --tlsextradomain as Common Name instead, if set"`
 
 	NoMacaroons     bool          `long:"no-macaroons" description:"Disable macaroon authentication"`
 	AdminMacPath    string        `long:"adminmacaroonpath" description:"Path to write the admin macaroon for lnd's RPC and REST services if it doesn't exist"`
@@ -218,6 +241,9 @@ type Config struct {
 	Alias                         string        `long:"alias" description:"The node alias. Used as a moniker by peers and intelligence services"`
 	Color                         string        `long:"color" description:"The color of the node in hex format (i.e. '#3399FF'). Used to customize node appearance in intelligence services"`
 	MinChanSize                   int64         `long:"minchansize" description:"The smallest channel size (in satoshis) that we should accept. Incoming channels smaller than this will be rejected"`
+	MaxChanSize                   int64         `long:"maxchansize" description:"The largest channel size (in satoshis) that we should accept. Incoming channels larger than this will be rejected"`
+
+	DefaultRemoteMaxHtlcs uint16 `long:"default-remote-max-htlcs" description:"The default max_htlc applied when opening or accepting channels. This value limits the number of concurrent HTLCs that the remote party can add to the commitment. The maximum possible value is 483."`
 
 	NumGraphSyncPeers      int           `long:"numgraphsyncpeers" description:"The number of peers that we should receive new graph updates from. This option can be tuned to save bandwidth for light clients or routing nodes."`
 	HistoricalSyncInterval time.Duration `long:"historicalsyncinterval" description:"The polling interval between historical graph sync attempts. Each historical graph sync attempt ensures we reconcile with the remote peer's graph from the genesis block."`
@@ -259,6 +285,8 @@ type Config struct {
 	ProtocolOptions *lncfg.ProtocolOptions `group:"protocol" namespace:"protocol"`
 
 	AllowCircularRoute bool `long:"allow-circular-route" description:"If true, our node will allow htlc forwards that arrive and depart on the same channel."`
+
+	HealthChecks *lncfg.HealthCheckConfig `group:"healthcheck" namespace:"healthcheck"`
 
 	DB *lncfg.DB `group:"db" namespace:"db"`
 
@@ -354,6 +382,8 @@ func DefaultConfig() Config {
 		Alias:                         defaultAlias,
 		Color:                         defaultColor,
 		MinChanSize:                   int64(minChanFundingSize),
+		MaxChanSize:                   int64(0),
+		DefaultRemoteMaxHtlcs:         defaultRemoteMaxHtlcs,
 		NumGraphSyncPeers:             defaultMinPeers,
 		HistoricalSyncInterval:        discovery.DefaultHistoricalSyncInterval,
 		Tor: &lncfg.Tor{
@@ -374,6 +404,23 @@ func DefaultConfig() Config {
 		Prometheus: lncfg.DefaultPrometheus(),
 		Watchtower: &lncfg.Watchtower{
 			TowerDir: defaultTowerDir,
+		},
+		HealthChecks: &lncfg.HealthCheckConfig{
+			ChainCheck: &lncfg.CheckConfig{
+				Interval: defaultChainInterval,
+				Timeout:  defaultChainTimeout,
+				Attempts: defaultChainAttempts,
+				Backoff:  defaultChainBackoff,
+			},
+			DiskCheck: &lncfg.DiskCheckConfig{
+				RequiredRemaining: defaultRequiredDisk,
+				CheckConfig: &lncfg.CheckConfig{
+					Interval: defaultDiskInterval,
+					Attempts: defaultDiskAttempts,
+					Timeout:  defaultDiskTimeout,
+					Backoff:  defaultDiskBackoff,
+				},
+			},
 		},
 		MaxOutgoingCltvExpiry:   htlcswitch.DefaultMaxOutgoingCltvExpiry,
 		MaxChannelFeeAllocation: htlcswitch.DefaultMaxLinkFeeAllocation,
@@ -558,7 +605,7 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 	}
 
 	// Ensure that the specified values for the min and max channel size
-	// don't are within the bounds of the normal chan size constraints.
+	// are within the bounds of the normal chan size constraints.
 	if cfg.Autopilot.MinChannelSize < int64(minChanFundingSize) {
 		cfg.Autopilot.MinChannelSize = int64(minChanFundingSize)
 	}
@@ -568,6 +615,38 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 
 	if _, err := validateAtplCfg(cfg.Autopilot); err != nil {
 		return nil, err
+	}
+
+	// Ensure that --maxchansize is properly handled when set by user.
+	// For non-Wumbo channels this limit remains 16777215 satoshis by default
+	// as specified in BOLT-02. For wumbo channels this limit is 1,000,000,000.
+	// satoshis (10 BTC). Always enforce --maxchansize explicitly set by user.
+	// If unset (marked by 0 value), then enforce proper default.
+	if cfg.MaxChanSize == 0 {
+		if cfg.ProtocolOptions.Wumbo() {
+			cfg.MaxChanSize = int64(MaxBtcFundingAmountWumbo)
+		} else {
+			cfg.MaxChanSize = int64(MaxBtcFundingAmount)
+		}
+	}
+
+	// Ensure that the user specified values for the min and max channel
+	// size make sense.
+	if cfg.MaxChanSize < cfg.MinChanSize {
+		return nil, fmt.Errorf("invalid channel size parameters: "+
+			"max channel size %v, must be no less than min chan size %v",
+			cfg.MaxChanSize, cfg.MinChanSize,
+		)
+	}
+
+	// Don't allow superflous --maxchansize greater than
+	// BOLT 02 soft-limit for non-wumbo channel
+	if !cfg.ProtocolOptions.Wumbo() && cfg.MaxChanSize > int64(MaxFundingAmount) {
+		return nil, fmt.Errorf("invalid channel size parameters: "+
+			"maximum channel size %v is greater than maximum non-wumbo"+
+			" channel size %v",
+			cfg.MaxChanSize, MaxFundingAmount,
+		)
 	}
 
 	// Ensure a valid max channel fee allocation was set.
@@ -1110,12 +1189,22 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 		cfg.DB.Bolt.SyncFreelist = cfg.SyncFreelist
 	}
 
+	// Ensure that the user hasn't chosen a remote-max-htlc value greater
+	// than the protocol maximum.
+	maxRemoteHtlcs := uint16(input.MaxHTLCNumber / 2)
+	if cfg.DefaultRemoteMaxHtlcs > maxRemoteHtlcs {
+		return nil, fmt.Errorf("default-remote-max-htlcs (%v) must be "+
+			"less than %v", cfg.DefaultRemoteMaxHtlcs,
+			maxRemoteHtlcs)
+	}
+
 	// Validate the subconfigs for workers, caches, and the tower client.
 	err = lncfg.Validate(
 		cfg.Workers,
 		cfg.Caches,
 		cfg.WtClient,
 		cfg.DB,
+		cfg.HealthChecks,
 	)
 	if err != nil {
 		return nil, err

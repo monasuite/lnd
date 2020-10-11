@@ -8,7 +8,7 @@ require (
 	github.com/btcsuite/btcd v0.20.1-beta.0.20200730232343-1db1b6f8217f
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f
 	github.com/btcsuite/btcutil v1.0.2
-	github.com/btcsuite/btcutil/psbt v1.0.2
+	github.com/btcsuite/btcutil/psbt v1.0.3-0.20200826194809-5f93e33af2b0
 	github.com/coreos/etcd v3.3.22+incompatible
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf // indirect
@@ -67,6 +67,7 @@ require (
 	go.uber.org/zap v1.14.1 // indirect
 	golang.org/x/crypto v0.0.0-20200709230013-948cd5f35899
 	golang.org/x/net v0.0.0-20200226121028-0de0cce0169b
+	golang.org/x/sys v0.0.0-20200202164722-d101bd2416d5
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2
 	google.golang.org/grpc v1.24.0
 	gopkg.in/errgo.v1 v1.0.1 // indirect

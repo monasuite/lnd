@@ -20,6 +20,10 @@ var (
 		Entity: "testEntity",
 		Action: "read",
 	}
+	testOperationURI = bakery.Op{
+		Entity: macaroons.PermissionEntityCustomURI,
+		Action: "SomeMethod",
+	}
 	defaultPw = []byte("hello")
 )
 
@@ -61,7 +65,9 @@ func TestNewService(t *testing.T) {
 
 	// Second, create the new service instance, unlock it and pass in a
 	// checker that we expect it to add to the bakery.
-	service, err := macaroons.NewService(tempDir, macaroons.IPLockChecker)
+	service, err := macaroons.NewService(
+		tempDir, "lnd", macaroons.IPLockChecker,
+	)
 	if err != nil {
 		t.Fatalf("Error creating new service: %v", err)
 	}
@@ -105,7 +111,9 @@ func TestValidateMacaroon(t *testing.T) {
 	// First, initialize the service and unlock it.
 	tempDir := setupTestRootKeyStorage(t)
 	defer os.RemoveAll(tempDir)
-	service, err := macaroons.NewService(tempDir, macaroons.IPLockChecker)
+	service, err := macaroons.NewService(
+		tempDir, "lnd", macaroons.IPLockChecker,
+	)
 	if err != nil {
 		t.Fatalf("Error creating new service: %v", err)
 	}
@@ -119,6 +127,7 @@ func TestValidateMacaroon(t *testing.T) {
 	// Then, create a new macaroon that we can serialize.
 	macaroon, err := service.Oven.NewMacaroon(
 		context.TODO(), bakery.LatestVersion, nil, testOperation,
+		testOperationURI,
 	)
 	if err != nil {
 		t.Fatalf("Error creating macaroon from service: %v", err)
@@ -136,7 +145,18 @@ func TestValidateMacaroon(t *testing.T) {
 	mockContext := metadata.NewIncomingContext(context.Background(), md)
 
 	// Finally, validate the macaroon against the required permissions.
-	err = service.ValidateMacaroon(mockContext, []bakery.Op{testOperation})
+	err = service.ValidateMacaroon(
+		mockContext, []bakery.Op{testOperation}, "FooMethod",
+	)
+	if err != nil {
+		t.Fatalf("Error validating the macaroon: %v", err)
+	}
+
+	// If the macaroon has the method specific URI permission, the list of
+	// required entity/action pairs is irrelevant.
+	err = service.ValidateMacaroon(
+		mockContext, []bakery.Op{{Entity: "irrelevant"}}, "SomeMethod",
+	)
 	if err != nil {
 		t.Fatalf("Error validating the macaroon: %v", err)
 	}
