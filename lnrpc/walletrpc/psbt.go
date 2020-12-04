@@ -9,7 +9,7 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil/psbt"
-	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/monaarchives/btcwallet/wtxmgr"
 	"github.com/monasuite/lnd/lnwallet"
 )
 
