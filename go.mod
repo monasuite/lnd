@@ -50,7 +50,7 @@ require (
 	github.com/mattn/goveralls v0.0.6 // indirect
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
 	github.com/modern-go/reflect2 v1.0.1 // indirect
-	github.com/monaarchives/btcwallet v0.12.3-0.20201011095755-9591d0c7ac59
+	github.com/monaarchives/btcwallet v0.12.3-0.20201204220812-b37545d0f57f
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
 	github.com/monaarchives/btcwallet/walletdb v1.3.3

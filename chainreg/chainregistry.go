@@ -41,8 +41,8 @@ type Config struct {
 	// Bitcoin defines settings for the Bitcoin chain.
 	Bitcoin *lncfg.Chain
 
-	// Litecoin defines settings for the Litecoin chain.
-	Litecoin *lncfg.Chain
+	// Monacoin defines settings for the Monacoin chain.
+	Monacoin *lncfg.Chain
 
 	// PrimaryChain is a function that returns our primary chain via its
 	// ChainCode.
@@ -58,14 +58,14 @@ type Config struct {
 	// BitcoindMode defines settings for connecting to a bitcoind node.
 	BitcoindMode *lncfg.Bitcoind
 
-	// LitecoindMode defines settings for connecting to a litecoind node.
-	LitecoindMode *lncfg.Bitcoind
+	// MonacoindMode defines settings for connecting to a monacoind node.
+	MonacoindMode *lncfg.Bitcoind
 
 	// BtcdMode defines settings for connecting to a btcd node.
 	BtcdMode *lncfg.Btcd
 
-	// LtcdMode defines settings for connecting to an ltcd node.
-	LtcdMode *lncfg.Btcd
+	// MonadMode defines settings for connecting to an monad node.
+	MonadMode *lncfg.Btcd
 
 	// LocalChanDB is a pointer to the local backing channel database.
 	LocalChanDB *channeldb.DB
@@ -131,12 +131,12 @@ const (
 	// delta.
 	DefaultBitcoinTimeLockDelta = 40
 
-	defaultMonacoinMinHTLCInMSat  = lnwire.MilliSatoshi(1)
-	defaultMonacoinMinHTLCOutMSat = lnwire.MilliSatoshi(1000)
-	defaultMonacoinBaseFeeMSat    = lnwire.MilliSatoshi(1000)
-	defaultMonacoinFeeRate        = lnwire.MilliSatoshi(1)
-	defaultMonacoinTimeLockDelta  = 960
-	defaultMonacoinDustLimit      = btcutil.Amount(54600)
+	DefaultMonacoinMinHTLCInMSat  = lnwire.MilliSatoshi(1)
+	DefaultMonacoinMinHTLCOutMSat = lnwire.MilliSatoshi(1000)
+	DefaultMonacoinBaseFeeMSat    = lnwire.MilliSatoshi(1000)
+	DefaultMonacoinFeeRate        = lnwire.MilliSatoshi(1)
+	DefaultMonacoinTimeLockDelta  = 960
+	DefaultMonacoinDustLimit      = btcutil.Amount(54600)
 
 	// DefaultBitcoinStaticFeePerKW is the fee rate of 50 sat/vbyte
 	// expressed in sat/kw.
@@ -148,11 +148,11 @@ const (
 
 	// defaultMonacoinStaticFeePerKW is the fee rate of 200 sat/vbyte
 	// expressed in sat/kw.
-	defaultMonacoinStaticFeePerKW = chainfee.SatPerKWeight(50000)
+	DefaultMonacoinStaticFeePerKW = chainfee.SatPerKWeight(50000)
 
-	// BtcToLtcConversionRate is a fixed ratio used in order to scale up
+	// BtcToMonaConversionRate is a fixed ratio used in order to scale up
 	// payments when running on the Monacoin chain.
-	btcToMonaConversionRate = 600
+	BtcToMonaConversionRate = 600
 )
 
 // DefaultBtcChannelConstraints is the default set of channel constraints that are
@@ -164,9 +164,9 @@ var DefaultBtcChannelConstraints = channeldb.ChannelConstraints{
 	MaxAcceptedHtlcs: input.MaxHTLCNumber / 2,
 }
 
-// DefaultLtcChannelConstraints is the default set of channel constraints that are
-// meant to be used when initially funding a Litecoin channel.
-var defaultMonaChannelConstraints = channeldb.ChannelConstraints{
+// DefaultMonaChannelConstraints is the default set of channel constraints that are
+// meant to be used when initially funding a Monacoin channel.
+var DefaultMonaChannelConstraints = channeldb.ChannelConstraints{
 	DustLimit:        DefaultMonacoinDustLimit,
 	MaxAcceptedHtlcs: input.MaxHTLCNumber / 2,
 }
@@ -766,7 +766,7 @@ var (
 			},
 		},
 
-		monacoinTestnetGenesis: {
+		MonacoinTestnetGenesis: {
 			{
 				"testlnd.nodes.directory",
 			},

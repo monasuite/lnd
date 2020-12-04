@@ -487,18 +487,3 @@ func verifyInputsSigned(ins []*wire.TxIn) error {
 	}
 	return nil
 }
-
-// verifyInputsSigned verifies that the given list of inputs is non-empty and
-// that all the inputs either contain a script signature or a witness stack.
-func verifyInputsSigned(ins []*wire.TxIn) error {
-	if len(ins) == 0 {
-		return fmt.Errorf("no inputs in transaction")
-	}
-	for idx, in := range ins {
-		if len(in.SignatureScript) == 0 && len(in.Witness) == 0 {
-			return fmt.Errorf("input %d has no signature data "+
-				"attached", idx)
-		}
-	}
-	return nil
-}

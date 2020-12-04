@@ -94,7 +94,7 @@ var BitcoinRegTestNetParams = BitcoinNetParams{
 // differ for monacoin to the chain parameters typed for btcsuite derivation.
 // This function is used in place of using something like interface{} to
 // abstract over _which_ chain (or fork) the parameters are for.
-func applyMonacoinParams(params *BitcoinNetParams,
+func ApplyMonacoinParams(params *BitcoinNetParams,
 	monacoinParams *MonacoinNetParams) {
 
 	params.Name = monacoinParams.Name

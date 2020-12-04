@@ -1628,7 +1628,7 @@ func (s *server) Start() error {
 		}
 
 		// Let users overwrite the DNS seed nodes. We only allow them
-		// for bitcoin mainnet/testnet and litecoin mainnet, all other
+		// for bitcoin mainnet/testnet and monacoin mainnet, all other
 		// combinations will just be ignored.
 		if s.cfg.Bitcoin.Active && s.cfg.Bitcoin.MainNet {
 			setSeedList(
@@ -1642,10 +1642,10 @@ func (s *server) Start() error {
 				chainreg.BitcoinTestnetGenesis,
 			)
 		}
-		if s.cfg.Litecoin.Active && s.cfg.Litecoin.MainNet {
+		if s.cfg.Monacoin.Active && s.cfg.Monacoin.MainNet {
 			setSeedList(
-				s.cfg.Litecoin.DNSSeeds,
-				chainreg.LitecoinMainnetGenesis,
+				s.cfg.Monacoin.DNSSeeds,
+				chainreg.MonacoinMainnetGenesis,
 			)
 		}
 
