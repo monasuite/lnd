@@ -10,9 +10,9 @@ import (
 	"math/big"
 	prand "math/rand"
 	"net"
-	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,11 +25,13 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/go-errors/errors"
 	sphinx "github.com/lightningnetwork/lightning-onion"
+	"github.com/lightningnetwork/lnd/cert"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/queue"
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/brontide"
+	"github.com/monasuite/lnd/chainreg"
 	"github.com/monasuite/lnd/chanacceptor"
 	"github.com/monasuite/lnd/chanbackup"
 	"github.com/monasuite/lnd/chanfitness"
@@ -61,12 +63,14 @@ import (
 	"github.com/monasuite/lnd/routing"
 	"github.com/monasuite/lnd/routing/localchans"
 	"github.com/monasuite/lnd/routing/route"
+	"github.com/monasuite/lnd/subscribe"
 	"github.com/monasuite/lnd/sweep"
 	"github.com/monasuite/lnd/tor"
 	"github.com/monasuite/lnd/walletunlocker"
+	"github.com/monasuite/lnd/watchtower/blob"
 	"github.com/monasuite/lnd/watchtower/wtclient"
-	"github.com/monasuite/lnd/watchtower/wtdb"
 	"github.com/monasuite/lnd/watchtower/wtpolicy"
+	"github.com/monasuite/lnd/watchtower/wtserver"
 )
 
 const (
@@ -201,7 +205,7 @@ type server struct {
 	// intended to replace it.
 	scheduledPeerConnection map[string]func()
 
-	cc *chainControl
+	cc *chainreg.ChainControl
 
 	fundingMgr *fundingManager
 
@@ -244,6 +248,8 @@ type server struct {
 	sphinx *hop.OnionProcessor
 
 	towerClient wtclient.Client
+
+	anchorTowerClient wtclient.Client
 
 	connMgr *connmgr.ConnManager
 
@@ -324,11 +330,11 @@ func parseAddr(address string, netCfg tor.Net) (net.Addr, error) {
 // noiseDial is a factory function which creates a connmgr compliant dialing
 // function by returning a closure which includes the server's identity key.
 func noiseDial(idKey keychain.SingleKeyECDH,
-	netCfg tor.Net) func(net.Addr) (net.Conn, error) {
+	netCfg tor.Net, timeout time.Duration) func(net.Addr) (net.Conn, error) {
 
 	return func(a net.Addr) (net.Conn, error) {
 		lnAddr := a.(*lnwire.NetAddress)
-		return brontide.Dial(idKey, lnAddr, netCfg.Dial)
+		return brontide.Dial(idKey, lnAddr, timeout, netCfg.Dial)
 	}
 }
 
@@ -336,7 +342,7 @@ func noiseDial(idKey keychain.SingleKeyECDH,
 // passed listener address.
 func newServer(cfg *Config, listenAddrs []net.Addr,
 	localChanDB, remoteChanDB *channeldb.DB,
-	towerClientDB *wtdb.ClientDB, cc *chainControl,
+	towerClientDB wtclient.DB, cc *chainreg.ChainControl,
 	nodeKeyDesc *keychain.KeyDescriptor,
 	chansToRestore walletunlocker.ChannelsToRecover,
 	chanPredicate chanacceptor.ChannelAcceptor,
@@ -344,9 +350,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	var (
 		err           error
-		nodeKeyECDH   = keychain.NewPubKeyECDH(*nodeKeyDesc, cc.keyRing)
+		nodeKeyECDH   = keychain.NewPubKeyECDH(*nodeKeyDesc, cc.KeyRing)
 		nodeKeySigner = keychain.NewPubKeyDigestSigner(
-			*nodeKeyDesc, cc.keyRing,
+			*nodeKeyDesc, cc.KeyRing,
 		)
 	)
 
@@ -369,12 +375,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// Initialize the sphinx router, placing it's persistent replay log in
 	// the same directory as the channel graph database. We don't need to
 	// replicate this data, so we'll store it locally.
-	sharedSecretPath := filepath.Join(
-		cfg.localDatabaseDir(), defaultSphinxDbName,
+	replayLog := htlcswitch.NewDecayedLog(
+		cfg.localDatabaseDir(), defaultSphinxDbName, cfg.DB.Bolt,
+		cc.ChainNotifier,
 	)
-	replayLog := htlcswitch.NewDecayedLog(sharedSecretPath, cc.chainNotifier)
 	sphinxRouter := sphinx.NewRouter(
-		nodeKeyECDH, activeNetParams.Params, replayLog,
+		nodeKeyECDH, cfg.ActiveNetParams.Params, replayLog,
 	)
 
 	writeBufferPool := pool.NewWriteBuffer(
@@ -406,11 +412,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 
 	registryConfig := invoices.RegistryConfig{
-		FinalCltvRejectDelta: lncfg.DefaultFinalCltvRejectDelta,
-		HtlcHoldDuration:     invoices.DefaultHtlcHoldDuration,
-		Clock:                clock.NewDefaultClock(),
-		AcceptKeySend:        cfg.AcceptKeySend,
-		KeysendHoldTime:      cfg.KeysendHoldTime,
+		FinalCltvRejectDelta:        lncfg.DefaultFinalCltvRejectDelta,
+		HtlcHoldDuration:            invoices.DefaultHtlcHoldDuration,
+		Clock:                       clock.NewDefaultClock(),
+		AcceptKeySend:               cfg.AcceptKeySend,
+		GcCanceledInvoicesOnStartup: cfg.GcCanceledInvoicesOnStartup,
+		GcCanceledInvoicesOnTheFly:  cfg.GcCanceledInvoicesOnTheFly,
+		KeysendHoldTime:             cfg.KeysendHoldTime,
 	}
 
 	s := &server{
@@ -418,7 +426,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		localChanDB:    localChanDB,
 		remoteChanDB:   remoteChanDB,
 		cc:             cc,
-		sigPool:        lnwallet.NewSigPool(cfg.Workers.Sig, cc.signer),
+		sigPool:        lnwallet.NewSigPool(cfg.Workers.Sig, cc.Signer),
 		writePool:      writePool,
 		readPool:       readPool,
 		chansToRestore: chansToRestore,
@@ -464,7 +472,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		subscribers: make(map[uint64]*preimageSubscriber),
 	}
 
-	_, currentHeight, err := s.cc.chainIO.GetBestBlock()
+	_, currentHeight, err := s.cc.ChainIO.GetBestBlock()
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +499,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		SwitchPackager:         channeldb.NewSwitchPackager(),
 		ExtractErrorEncrypter:  s.sphinx.ExtractErrorEncrypter,
 		FetchLastChannelUpdate: s.fetchLastChanUpdate(),
-		Notifier:               s.cc.chainNotifier,
+		Notifier:               s.cc.ChainNotifier,
 		HtlcNotifier:           s.htlcNotifier,
 		FwdEventTicker:         ticker.New(htlcswitch.DefaultFwdEventInterval),
 		LogEventTicker:         ticker.New(htlcswitch.DefaultLogInterval),
@@ -722,14 +730,16 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 
 	srvrLog.Debugf("Instantiating payment session source with config: "+
-		"PaymentAttemptPenalty=%v, MinRouteProbability=%v",
+		"AttemptCost=%v + %v%%, MinRouteProbability=%v",
 		int64(routingConfig.AttemptCost),
+		float64(routingConfig.AttemptCostPPM)/10000,
 		routingConfig.MinRouteProbability)
 
 	pathFindingConfig := routing.PathFindingConfig{
-		PaymentAttemptPenalty: lnwire.NewMSatFromSatoshis(
+		AttemptCost: lnwire.NewMSatFromSatoshis(
 			routingConfig.AttemptCost,
 		),
+		AttemptCostPPM: routingConfig.AttemptCostPPM,
 		MinProbability: routingConfig.MinRouteProbability,
 	}
 
@@ -746,8 +756,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		Graph:              chanGraph,
-		Chain:              cc.chainIO,
-		ChainView:          cc.chainView,
+		Chain:              cc.ChainIO,
+		ChainView:          cc.ChainView,
 		Payer:              s.htlcSwitch,
 		Control:            s.controlTower,
 		MissionControl:     s.missionControl,
@@ -755,7 +765,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		ChannelPruneExpiry: routing.DefaultChannelPruneExpiry,
 		GraphPruneInterval: time.Duration(time.Hour),
 		QueryBandwidth:     queryBandwidth,
-		AssumeChannelValid: cfg.Routing.UseAssumeChannelValid(),
+		AssumeChannelValid: cfg.Routing.AssumeChannelValid,
 		NextPaymentID:      sequencer.NextID,
 		PathFindingConfig:  pathFindingConfig,
 		Clock:              clock.NewDefaultClock(),
@@ -776,8 +786,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.authGossiper = discovery.New(discovery.Config{
 		Router:            s.chanRouter,
-		Notifier:          s.cc.chainNotifier,
-		ChainHash:         *activeNetParams.GenesisHash,
+		Notifier:          s.cc.ChainNotifier,
+		ChainHash:         *s.cfg.ActiveNetParams.GenesisHash,
 		Broadcast:         s.BroadcastMessage,
 		ChanSeries:        chanSeries,
 		NotifyWhenOnline:  s.NotifyWhenOnline,
@@ -798,6 +808,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		MinimumBatchSize:        10,
 		SubBatchDelay:           time.Second * 5,
 		IgnoreHistoricalFilters: cfg.IgnoreHistoricalGossipFilters,
+		GossipUpdateThrottle:    !cfg.ProtocolOptions.NoGossipThrottle(),
 	},
 		s.identityECDH.PubKey(),
 	)
@@ -809,9 +820,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		FetchChannel:              s.remoteChanDB.FetchChannel,
 	}
 
-	utxnStore, err := newNurseryStore(
-		activeNetParams.GenesisHash, remoteChanDB,
-	)
+	utxnStore, err := newNurseryStore(s.cfg.ActiveNetParams.GenesisHash, remoteChanDB)
 	if err != nil {
 		srvrLog.Errorf("unable to create nursery store: %v", err)
 		return nil, err
@@ -821,7 +830,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		sweep.DefaultBatchWindowDuration)
 
 	sweeperStore, err := sweep.NewSweeperStore(
-		remoteChanDB, activeNetParams.GenesisHash,
+		remoteChanDB, s.cfg.ActiveNetParams.GenesisHash,
 	)
 	if err != nil {
 		srvrLog.Errorf("unable to create sweeper store: %v", err)
@@ -829,14 +838,14 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 
 	s.sweeper = sweep.New(&sweep.UtxoSweeperConfig{
-		FeeEstimator:   cc.feeEstimator,
-		GenSweepScript: newSweepPkScriptGen(cc.wallet),
-		Signer:         cc.wallet.Cfg.Signer,
-		Wallet:         cc.wallet,
+		FeeEstimator:   cc.FeeEstimator,
+		GenSweepScript: newSweepPkScriptGen(cc.Wallet),
+		Signer:         cc.Wallet.Cfg.Signer,
+		Wallet:         cc.Wallet,
 		NewBatchTimer: func() <-chan time.Time {
 			return time.NewTimer(sweep.DefaultBatchWindowDuration).C
 		},
-		Notifier:             cc.chainNotifier,
+		Notifier:             cc.ChainNotifier,
 		Store:                sweeperStore,
 		MaxInputsPerTx:       sweep.DefaultMaxInputsPerTx,
 		MaxSweepAttempts:     sweep.DefaultMaxSweepAttempts,
@@ -846,12 +855,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	})
 
 	s.utxoNursery = newUtxoNursery(&NurseryConfig{
-		ChainIO:             cc.chainIO,
+		ChainIO:             cc.ChainIO,
 		ConfDepth:           1,
 		FetchClosedChannels: remoteChanDB.FetchClosedChannels,
 		FetchClosedChannel:  remoteChanDB.FetchClosedChannel,
-		Notifier:            cc.chainNotifier,
-		PublishTransaction:  cc.wallet.PublishTransaction,
+		Notifier:            cc.ChainNotifier,
+		PublishTransaction:  cc.Wallet.PublishTransaction,
 		Store:               utxnStore,
 		SweepInput:          s.sweeper.SweepInput,
 	})
@@ -873,11 +882,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	contractBreaches := make(chan *ContractBreachEvent, 1)
 
 	s.chainArb = contractcourt.NewChainArbitrator(contractcourt.ChainArbitratorConfig{
-		ChainHash:              *activeNetParams.GenesisHash,
+		ChainHash:              *s.cfg.ActiveNetParams.GenesisHash,
 		IncomingBroadcastDelta: lncfg.DefaultIncomingBroadcastDelta,
 		OutgoingBroadcastDelta: lncfg.DefaultOutgoingBroadcastDelta,
-		NewSweepAddr:           newSweepPkScriptGen(cc.wallet),
-		PublishTx:              cc.wallet.PublishTransaction,
+		NewSweepAddr:           newSweepPkScriptGen(cc.Wallet),
+		PublishTx:              cc.Wallet.PublishTransaction,
 		DeliverResolutionMsg: func(msgs ...contractcourt.ResolutionMsg) error {
 			for _, msg := range msgs {
 				err := s.htlcSwitch.ProcessContractResolution(msg)
@@ -909,16 +918,16 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			)
 		},
 		PreimageDB:   s.witnessBeacon,
-		Notifier:     cc.chainNotifier,
-		Signer:       cc.wallet.Cfg.Signer,
-		FeeEstimator: cc.feeEstimator,
-		ChainIO:      cc.chainIO,
+		Notifier:     cc.ChainNotifier,
+		Signer:       cc.Wallet.Cfg.Signer,
+		FeeEstimator: cc.FeeEstimator,
+		ChainIO:      cc.ChainIO,
 		MarkLinkInactive: func(chanPoint wire.OutPoint) error {
 			chanID := lnwire.NewChanIDFromOutPoint(&chanPoint)
 			s.htlcSwitch.RemoveLink(chanID)
 			return nil
 		},
-		IsOurAddress: cc.wallet.IsOurAddress,
+		IsOurAddress: cc.Wallet.IsOurAddress,
 		ContractBreach: func(chanPoint wire.OutPoint,
 			breachRet *lnwallet.BreachRetribution) error {
 			event := &ContractBreachEvent{
@@ -955,12 +964,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	s.breachArbiter = newBreachArbiter(&BreachConfig{
 		CloseLink:          closeLink,
 		DB:                 remoteChanDB,
-		Estimator:          s.cc.feeEstimator,
-		GenSweepScript:     newSweepPkScriptGen(cc.wallet),
-		Notifier:           cc.chainNotifier,
-		PublishTransaction: cc.wallet.PublishTransaction,
+		Estimator:          s.cc.FeeEstimator,
+		GenSweepScript:     newSweepPkScriptGen(cc.Wallet),
+		Notifier:           cc.ChainNotifier,
+		PublishTransaction: cc.Wallet.PublishTransaction,
 		ContractBreaches:   contractBreaches,
-		Signer:             cc.wallet.Cfg.Signer,
+		Signer:             cc.Wallet.Cfg.Signer,
 		Store:              newRetributionStore(remoteChanDB),
 	})
 
@@ -970,7 +979,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	chainCfg := cfg.Bitcoin
 	minRemoteDelay := minBtcRemoteDelay
 	maxRemoteDelay := maxBtcRemoteDelay
-	if primaryChain == monacoinChain {
+	if primaryChain == chainreg.MonacoinChain {
 		chainCfg = cfg.Monacoin
 		minRemoteDelay = minMonaRemoteDelay
 		maxRemoteDelay = maxMonaRemoteDelay
@@ -984,10 +993,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	s.fundingMgr, err = newFundingManager(fundingConfig{
 		NoWumboChans:       !cfg.ProtocolOptions.Wumbo(),
 		IDKey:              nodeKeyECDH.PubKey(),
-		Wallet:             cc.wallet,
-		PublishTransaction: cc.wallet.PublishTransaction,
-		Notifier:           cc.chainNotifier,
-		FeeEstimator:       cc.feeEstimator,
+		Wallet:             cc.Wallet,
+		PublishTransaction: cc.Wallet.PublishTransaction,
+		UpdateLabel: func(hash chainhash.Hash, label string) error {
+			return cc.Wallet.LabelTransaction(hash, label, true)
+		},
+		Notifier:     cc.ChainNotifier,
+		FeeEstimator: cc.FeeEstimator,
 		SignMessage: func(pubKey *btcec.PublicKey,
 			msg []byte) (input.Signature, error) {
 
@@ -995,7 +1007,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 				return s.nodeSigner.SignMessage(pubKey, msg)
 			}
 
-			return cc.msgSigner.SignMessage(pubKey, msg)
+			return cc.MsgSigner.SignMessage(pubKey, msg)
 		},
 		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement, error) {
 			return s.genNodeAnnouncement(true)
@@ -1025,8 +1037,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 			return nil, fmt.Errorf("unable to find channel")
 		},
-		DefaultRoutingPolicy: cc.routingPolicy,
-		DefaultMinHtlcIn:     cc.minHtlcIn,
+		DefaultRoutingPolicy: cc.RoutingPolicy,
+		DefaultMinHtlcIn:     cc.MinHtlcIn,
 		NumRequiredConfs: func(chanAmt btcutil.Amount,
 			pushAmt lnwire.MilliSatoshi) uint16 {
 			// For large channels we increase the number
@@ -1167,6 +1179,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		MaxChanSize:                   btcutil.Amount(cfg.MaxChanSize),
 		MaxPendingChannels:            cfg.MaxPendingChannels,
 		RejectPush:                    cfg.RejectPush,
+		MaxLocalCSVDelay:              chainCfg.MaxLocalDelay,
 		NotifyOpenChannelEvent:        s.channelNotifier.NotifyOpenChannelEvent,
 		OpenChannelPredicate:          chanPredicate,
 		NotifyPendingOpenChannelEvent: s.channelNotifier.NotifyPendingOpenChannelEvent,
@@ -1189,7 +1202,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		return nil, err
 	}
 	s.chanSubSwapper, err = chanbackup.NewSubSwapper(
-		startingChans, chanNotifier, s.cc.keyRing, backupFile,
+		startingChans, chanNotifier, s.cc.KeyRing, backupFile,
 	)
 	if err != nil {
 		return nil, err
@@ -1201,9 +1214,17 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	// Create a channel event store which monitors all open channels.
 	s.chanEventStore = chanfitness.NewChannelEventStore(&chanfitness.Config{
-		SubscribeChannelEvents: s.channelNotifier.SubscribeChannelEvents,
-		SubscribePeerEvents:    s.peerNotifier.SubscribePeerEvents,
-		GetOpenChannels:        s.remoteChanDB.FetchAllOpenChannels,
+		SubscribeChannelEvents: func() (subscribe.Subscription, error) {
+			return s.channelNotifier.SubscribeChannelEvents()
+		},
+		SubscribePeerEvents: func() (subscribe.Subscription, error) {
+			return s.peerNotifier.SubscribePeerEvents()
+		},
+		GetOpenChannels: s.remoteChanDB.FetchAllOpenChannels,
+		Clock:           clock.NewDefaultClock(),
+		ReadFlapCount:   s.remoteChanDB.ReadFlapCount,
+		WriteFlapCount:  s.remoteChanDB.WriteFlapCounts,
+		FlapCountTicker: ticker.New(chanfitness.FlapCountFlushRate),
 	})
 
 	if cfg.WtClient.Active {
@@ -1222,15 +1243,49 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			return nil, err
 		}
 
+		// authDial is the wrapper around the btrontide.Dial for the
+		// watchtower.
+		authDial := func(localKey keychain.SingleKeyECDH,
+			netAddr *lnwire.NetAddress,
+			dialer tor.DialFunc) (wtserver.Peer, error) {
+
+			return brontide.Dial(
+				localKey, netAddr, cfg.ConnectionTimeout, dialer,
+			)
+		}
+
 		s.towerClient, err = wtclient.New(&wtclient.Config{
-			Signer:         cc.wallet.Cfg.Signer,
-			NewAddress:     newSweepPkScriptGen(cc.wallet),
-			SecretKeyRing:  s.cc.keyRing,
+			Signer:         cc.Wallet.Cfg.Signer,
+			NewAddress:     newSweepPkScriptGen(cc.Wallet),
+			SecretKeyRing:  s.cc.KeyRing,
 			Dial:           cfg.net.Dial,
-			AuthDial:       wtclient.AuthDial,
+			AuthDial:       authDial,
 			DB:             towerClientDB,
 			Policy:         policy,
-			ChainHash:      *activeNetParams.GenesisHash,
+			ChainHash:      *s.cfg.ActiveNetParams.GenesisHash,
+			MinBackoff:     10 * time.Second,
+			MaxBackoff:     5 * time.Minute,
+			ForceQuitDelay: wtclient.DefaultForceQuitDelay,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// Copy the policy for legacy channels and set the blob flag
+		// signalling support for anchor channels.
+		anchorPolicy := policy
+		anchorPolicy.TxPolicy.BlobType |=
+			blob.Type(blob.FlagAnchorChannel)
+
+		s.anchorTowerClient, err = wtclient.New(&wtclient.Config{
+			Signer:         cc.Wallet.Cfg.Signer,
+			NewAddress:     newSweepPkScriptGen(cc.Wallet),
+			SecretKeyRing:  s.cc.KeyRing,
+			Dial:           cfg.net.Dial,
+			AuthDial:       authDial,
+			DB:             towerClientDB,
+			Policy:         anchorPolicy,
+			ChainHash:      *s.cfg.ActiveNetParams.GenesisHash,
 			MinBackoff:     10 * time.Second,
 			MaxBackoff:     5 * time.Minute,
 			ForceQuitDelay: wtclient.DefaultForceQuitDelay,
@@ -1265,10 +1320,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// will not run it.
 	chainHealthCheck := healthcheck.NewObservation(
 		"chain backend",
-		func() error {
-			_, _, err := cc.chainIO.GetBestBlock()
-			return err
-		},
+		cc.HealthCheck,
 		cfg.HealthChecks.ChainCheck.Interval,
 		cfg.HealthChecks.ChainCheck.Timeout,
 		cfg.HealthChecks.ChainCheck.Backoff,
@@ -1278,7 +1330,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	diskCheck := healthcheck.NewObservation(
 		"disk space",
 		func() error {
-			free, err := healthcheck.AvailableDiskSpace(cfg.LndDir)
+			free, err := healthcheck.AvailableDiskSpaceRatio(
+				cfg.LndDir,
+			)
 			if err != nil {
 				return err
 			}
@@ -1299,12 +1353,38 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		cfg.HealthChecks.DiskCheck.Attempts,
 	)
 
+	tlsHealthCheck := healthcheck.NewObservation(
+		"tls",
+		func() error {
+			_, parsedCert, err := cert.LoadCert(
+				cfg.TLSCertPath, cfg.TLSKeyPath,
+			)
+			if err != nil {
+				return err
+			}
+
+			// If the current time is passed the certificate's
+			// expiry time, then it is considered expired
+			if time.Now().After(parsedCert.NotAfter) {
+				return fmt.Errorf("TLS certificate is expired as of %v", parsedCert.NotAfter)
+			}
+
+			// If the certificate is not outdated, no error needs to
+			// be returned
+			return nil
+		},
+		cfg.HealthChecks.TLSCheck.Interval,
+		cfg.HealthChecks.TLSCheck.Timeout,
+		cfg.HealthChecks.TLSCheck.Backoff,
+		cfg.HealthChecks.TLSCheck.Attempts,
+	)
+
 	// If we have not disabled all of our health checks, we create a
 	// liveliness monitor with our configured checks.
 	s.livelinessMonitor = healthcheck.NewMonitor(
 		&healthcheck.Config{
 			Checks: []*healthcheck.Observation{
-				chainHealthCheck, diskCheck,
+				chainHealthCheck, diskCheck, tlsHealthCheck,
 			},
 			Shutdown: srvrLog.Criticalf,
 		},
@@ -1318,8 +1398,10 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		OnAccept:       s.InboundPeerConnected,
 		RetryDuration:  time.Second * 5,
 		TargetOutbound: 100,
-		Dial:           noiseDial(s.identityECDH, s.cfg.net),
-		OnConnection:   s.OutboundPeerConnected,
+		Dial: noiseDial(
+			s.identityECDH, s.cfg.net, s.cfg.ConnectionTimeout,
+		),
+		OnConnection: s.OutboundPeerConnected,
 	})
 	if err != nil {
 		return nil, err
@@ -1384,7 +1466,7 @@ func (s *server) Start() error {
 			startErr = err
 			return
 		}
-		if err := s.cc.chainNotifier.Start(); err != nil {
+		if err := s.cc.ChainNotifier.Start(); err != nil {
 			startErr = err
 			return
 		}
@@ -1406,6 +1488,12 @@ func (s *server) Start() error {
 		}
 		if s.towerClient != nil {
 			if err := s.towerClient.Start(); err != nil {
+				startErr = err
+				return
+			}
+		}
+		if s.anchorTowerClient != nil {
+			if err := s.anchorTowerClient.Start(); err != nil {
 				startErr = err
 				return
 			}
@@ -1462,13 +1550,13 @@ func (s *server) Start() error {
 		// recovery _before_ we even accept connections from any peers.
 		chanRestorer := &chanDBRestorer{
 			db:         s.remoteChanDB,
-			secretKeys: s.cc.keyRing,
+			secretKeys: s.cc.KeyRing,
 			chainArb:   s.chainArb,
 		}
 		if len(s.chansToRestore.PackedSingleChanBackups) != 0 {
 			err := chanbackup.UnpackAndRecoverSingles(
 				s.chansToRestore.PackedSingleChanBackups,
-				s.cc.keyRing, chanRestorer, s,
+				s.cc.KeyRing, chanRestorer, s,
 			)
 			if err != nil {
 				startErr = fmt.Errorf("unable to unpack single "+
@@ -1479,7 +1567,7 @@ func (s *server) Start() error {
 		if len(s.chansToRestore.PackedMultiChanBackup) != 0 {
 			err := chanbackup.UnpackAndRecoverMulti(
 				s.chansToRestore.PackedMultiChanBackup,
-				s.cc.keyRing, chanRestorer, s,
+				s.cc.KeyRing, chanRestorer, s,
 			)
 			if err != nil {
 				startErr = fmt.Errorf("unable to unpack chan "+
@@ -1508,6 +1596,57 @@ func (s *server) Start() error {
 		if err := s.establishPersistentConnections(); err != nil {
 			startErr = err
 			return
+		}
+
+		// setSeedList is a helper function that turns multiple DNS seed
+		// server tuples from the command line or config file into the
+		// data structure we need and does a basic formal sanity check
+		// in the process.
+		setSeedList := func(tuples []string, genesisHash chainhash.Hash) {
+			if len(tuples) == 0 {
+				return
+			}
+
+			result := make([][2]string, len(tuples))
+			for idx, tuple := range tuples {
+				tuple = strings.TrimSpace(tuple)
+				if len(tuple) == 0 {
+					return
+				}
+
+				servers := strings.Split(tuple, ",")
+				if len(servers) > 2 || len(servers) == 0 {
+					srvrLog.Warnf("Ignoring invalid DNS "+
+						"seed tuple: %v", servers)
+					return
+				}
+
+				copy(result[idx][:], servers)
+			}
+
+			chainreg.ChainDNSSeeds[genesisHash] = result
+		}
+
+		// Let users overwrite the DNS seed nodes. We only allow them
+		// for bitcoin mainnet/testnet and litecoin mainnet, all other
+		// combinations will just be ignored.
+		if s.cfg.Bitcoin.Active && s.cfg.Bitcoin.MainNet {
+			setSeedList(
+				s.cfg.Bitcoin.DNSSeeds,
+				chainreg.BitcoinMainnetGenesis,
+			)
+		}
+		if s.cfg.Bitcoin.Active && s.cfg.Bitcoin.TestNet3 {
+			setSeedList(
+				s.cfg.Bitcoin.DNSSeeds,
+				chainreg.BitcoinTestnetGenesis,
+			)
+		}
+		if s.cfg.Litecoin.Active && s.cfg.Litecoin.MainNet {
+			setSeedList(
+				s.cfg.Litecoin.DNSSeeds,
+				chainreg.LitecoinMainnetGenesis,
+			)
 		}
 
 		// If network bootstrapping hasn't been disabled, then we'll
@@ -1550,7 +1689,9 @@ func (s *server) Stop() error {
 
 		// Shutdown the wallet, funding manager, and the rpc server.
 		s.chanStatusMgr.Stop()
-		s.cc.chainNotifier.Stop()
+		if err := s.cc.ChainNotifier.Stop(); err != nil {
+			srvrLog.Warnf("Unable to stop ChainNotifier: %v", err)
+		}
 		s.chanRouter.Stop()
 		s.htlcSwitch.Stop()
 		s.sphinx.Stop()
@@ -1562,10 +1703,16 @@ func (s *server) Stop() error {
 		s.channelNotifier.Stop()
 		s.peerNotifier.Stop()
 		s.htlcNotifier.Stop()
-		s.cc.wallet.Shutdown()
-		s.cc.chainView.Stop()
+		if err := s.cc.Wallet.Shutdown(); err != nil {
+			srvrLog.Warnf("Unable to stop Wallet: %v", err)
+		}
+		if err := s.cc.ChainView.Stop(); err != nil {
+			srvrLog.Warnf("Unable to stop ChainView: %v", err)
+		}
 		s.connMgr.Stop()
-		s.cc.feeEstimator.Stop()
+		if err := s.cc.FeeEstimator.Stop(); err != nil {
+			srvrLog.Warnf("Unable to stop FeeEstimator: %v", err)
+		}
 		s.invoices.Stop()
 		s.fundingMgr.Stop()
 		s.chanSubSwapper.Stop()
@@ -1588,7 +1735,16 @@ func (s *server) Stop() error {
 		// tower. If this is halted for any reason, the force quit timer
 		// will kick in and abort to allow this method to return.
 		if s.towerClient != nil {
-			s.towerClient.Stop()
+			if err := s.towerClient.Stop(); err != nil {
+				srvrLog.Warnf("Unable to shut down tower "+
+					"client: %v", err)
+			}
+		}
+		if s.anchorTowerClient != nil {
+			if err := s.anchorTowerClient.Stop(); err != nil {
+				srvrLog.Warnf("Unable to shut down anchor "+
+					"tower client: %v", err)
+			}
 		}
 
 		if s.hostAnn != nil {
@@ -1824,7 +1980,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	// If this isn't simnet mode, then one of our additional bootstrapping
 	// sources will be the set of running DNS seeds.
 	if !s.cfg.Bitcoin.SimNet || !s.cfg.Monacoin.SimNet {
-		dnsSeeds, ok := chainDNSSeeds[*activeNetParams.GenesisHash]
+		dnsSeeds, ok := chainreg.ChainDNSSeeds[*s.cfg.ActiveNetParams.GenesisHash]
 
 		// If we have a set of DNS seeds for this chain, then we'll add
 		// it as an additional bootstrapping source.
@@ -1833,7 +1989,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 				"seeds: %v", dnsSeeds)
 
 			dnsBootStrapper := discovery.NewDNSSeedBootstrapper(
-				dnsSeeds, s.cfg.net,
+				dnsSeeds, s.cfg.net, s.cfg.ConnectionTimeout,
 			)
 			bootStrappers = append(bootStrappers, dnsBootStrapper)
 		}
@@ -1956,7 +2112,10 @@ func (s *server) peerBootstrapper(numTargetPeers uint32,
 					// TODO(roasbeef): can do AS, subnet,
 					// country diversity, etc
 					errChan := make(chan error, 1)
-					s.connectToPeer(a, errChan)
+					s.connectToPeer(
+						a, errChan,
+						s.cfg.ConnectionTimeout,
+					)
 					select {
 					case err := <-errChan:
 						if err == nil {
@@ -2058,7 +2217,9 @@ func (s *server) initialPeerBootstrap(ignore map[autopilot.NodeID]struct{},
 				defer wg.Done()
 
 				errChan := make(chan error, 1)
-				go s.connectToPeer(addr, errChan)
+				go s.connectToPeer(
+					addr, errChan, s.cfg.ConnectionTimeout,
+				)
 
 				// We'll only allow this connection attempt to
 				// take up to 3 seconds. This allows us to move
@@ -2885,7 +3046,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 	peerAddr := &lnwire.NetAddress{
 		IdentityKey: pubKey,
 		Address:     addr,
-		ChainNet:    activeNetParams.Net,
+		ChainNet:    s.cfg.ActiveNetParams.Net,
 	}
 
 	// With the brontide connection established, we'll now craft the feature
@@ -2913,7 +3074,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 	// htlcs, an extra block is added to prevent the channel from being
 	// closed when the htlc is outstanding and a new block comes in.
 	pCfg := peer.Config{
-		Conn:                    conn,
+		Conn:                    brontideConn,
 		ConnReq:                 connReq,
 		Addr:                    peerAddr,
 		Inbound:                 inbound,
@@ -2931,32 +3092,28 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		ChainArb:                s.chainArb,
 		AuthGossiper:            s.authGossiper,
 		ChanStatusMgr:           s.chanStatusMgr,
-		ChainIO:                 s.cc.chainIO,
-		FeeEstimator:            s.cc.feeEstimator,
-		Signer:                  s.cc.wallet.Cfg.Signer,
+		ChainIO:                 s.cc.ChainIO,
+		FeeEstimator:            s.cc.FeeEstimator,
+		Signer:                  s.cc.Wallet.Cfg.Signer,
 		SigPool:                 s.sigPool,
-		Wallet:                  s.cc.wallet,
-		ChainNotifier:           s.cc.chainNotifier,
-		RoutingPolicy:           s.cc.routingPolicy,
+		Wallet:                  s.cc.Wallet,
+		ChainNotifier:           s.cc.ChainNotifier,
+		RoutingPolicy:           s.cc.RoutingPolicy,
 		Sphinx:                  s.sphinx,
 		WitnessBeacon:           s.witnessBeacon,
 		Invoices:                s.invoices,
 		ChannelNotifier:         s.channelNotifier,
 		HtlcNotifier:            s.htlcNotifier,
 		TowerClient:             s.towerClient,
+		AnchorTowerClient:       s.anchorTowerClient,
 		DisconnectPeer:          s.DisconnectPeer,
 		GenNodeAnnouncement:     s.genNodeAnnouncement,
 
 		PrunePersistentPeerConnection: s.prunePersistentPeerConnection,
 
-		FetchLastChanUpdate:   s.fetchLastChanUpdate(),
-		ProcessFundingOpen:    s.fundingMgr.processFundingOpen,
-		ProcessFundingAccept:  s.fundingMgr.processFundingAccept,
-		ProcessFundingCreated: s.fundingMgr.processFundingCreated,
-		ProcessFundingSigned:  s.fundingMgr.processFundingSigned,
-		ProcessFundingLocked:  s.fundingMgr.processFundingLocked,
-		ProcessFundingError:   s.fundingMgr.processFundingError,
-		IsPendingChannel:      s.fundingMgr.IsPendingChannel,
+		FetchLastChanUpdate: s.fetchLastChanUpdate(),
+
+		FundingManager: s.fundingMgr,
 
 		Hodl:                    s.cfg.Hodl,
 		UnsafeReplay:            s.cfg.UnsafeReplay,
@@ -3347,6 +3504,10 @@ type openChanReq struct {
 
 	maxHtlcs uint16
 
+	// maxLocalCsv is the maximum local csv delay we will accept from our
+	// peer.
+	maxLocalCsv uint16
+
 	// TODO(roasbeef): add ability to specify channel constraints as well
 
 	// chanFunder is an optional channel funder that allows the caller to
@@ -3369,7 +3530,9 @@ type openChanReq struct {
 // connection is established, or the initial handshake process fails.
 //
 // NOTE: This function is safe for concurrent access.
-func (s *server) ConnectToPeer(addr *lnwire.NetAddress, perm bool) error {
+func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
+	perm bool, timeout time.Duration) error {
+
 	targetPub := string(addr.IdentityKey.SerializeCompressed())
 
 	// Acquire mutex, but use explicit unlocking instead of defer for
@@ -3430,7 +3593,7 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress, perm bool) error {
 	// the crypto negotiation breaks down, then return an error to the
 	// caller.
 	errChan := make(chan error, 1)
-	s.connectToPeer(addr, errChan)
+	s.connectToPeer(addr, errChan, timeout)
 
 	select {
 	case err := <-errChan:
@@ -3443,8 +3606,12 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress, perm bool) error {
 // connectToPeer establishes a connection to a remote peer. errChan is used to
 // notify the caller if the connection attempt has failed. Otherwise, it will be
 // closed.
-func (s *server) connectToPeer(addr *lnwire.NetAddress, errChan chan<- error) {
-	conn, err := brontide.Dial(s.identityECDH, addr, s.cfg.net.Dial)
+func (s *server) connectToPeer(addr *lnwire.NetAddress,
+	errChan chan<- error, timeout time.Duration) {
+
+	conn, err := brontide.Dial(
+		s.identityECDH, addr, timeout, s.cfg.net.Dial,
+	)
 	if err != nil {
 		srvrLog.Errorf("Unable to connect to %v: %v", addr, err)
 		select {
@@ -3538,7 +3705,7 @@ func (s *server) OpenChannel(
 	// If the fee rate wasn't specified, then we'll use a default
 	// confirmation target.
 	if req.fundingFeePerKw == 0 {
-		estimator := s.cc.feeEstimator
+		estimator := s.cc.FeeEstimator
 		feeRate, err := estimator.EstimateFeePerKW(6)
 		if err != nil {
 			req.err <- err

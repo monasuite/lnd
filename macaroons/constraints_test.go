@@ -70,7 +70,7 @@ func TestTimeoutConstraint(t *testing.T) {
 	}
 
 	// Finally, check that the created caveat has an
-	// acceptable value
+	// acceptable value.
 	if !strings.HasPrefix(
 		string(testMacaroon.Caveats()[0].Id),
 		expectedTimeCaveatSubstring,
@@ -95,7 +95,7 @@ func TestIpLockConstraint(t *testing.T) {
 	}
 
 	// Finally, check that the created caveat has an
-	// acceptable value
+	// acceptable value.
 	if string(testMacaroon.Caveats()[0].Id) != "ipaddr 127.0.0.1" {
 		t.Fatalf("Added caveat '%s' does not meet the expectations!",
 			testMacaroon.Caveats()[0].Id)

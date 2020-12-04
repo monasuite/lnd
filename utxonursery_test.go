@@ -20,6 +20,7 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lntest/mock"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/sweep"
 )
@@ -398,7 +399,7 @@ func TestBabyOutputSerialization(t *testing.T) {
 type nurseryTestContext struct {
 	nursery     *utxoNursery
 	notifier    *sweep.MockNotifier
-	chainIO     *mockChainIO
+	chainIO     *mock.ChainIO
 	publishChan chan wire.MsgTx
 	store       *nurseryStoreInterceptor
 	restart     func() bool
@@ -441,8 +442,8 @@ func createNurseryTestContext(t *testing.T,
 
 	timeoutChan := make(chan chan time.Time)
 
-	chainIO := &mockChainIO{
-		bestHeight: 0,
+	chainIO := &mock.ChainIO{
+		BestHeight: 0,
 	}
 
 	sweeper := newMockSweeper(t)
@@ -522,7 +523,7 @@ func createNurseryTestContext(t *testing.T,
 func (ctx *nurseryTestContext) notifyEpoch(height int32) {
 	ctx.t.Helper()
 
-	ctx.chainIO.bestHeight = height
+	ctx.chainIO.BestHeight = height
 	ctx.notifier.NotifyEpoch(height)
 }
 
@@ -930,9 +931,9 @@ func (i *nurseryStoreInterceptor) HeightsBelowOrEqual(height uint32) (
 }
 
 func (i *nurseryStoreInterceptor) ForChanOutputs(chanPoint *wire.OutPoint,
-	callback func([]byte, []byte) error) error {
+	callback func([]byte, []byte) error, reset func()) error {
 
-	return i.ns.ForChanOutputs(chanPoint, callback)
+	return i.ns.ForChanOutputs(chanPoint, callback, reset)
 }
 
 func (i *nurseryStoreInterceptor) ListChannels() ([]wire.OutPoint, error) {

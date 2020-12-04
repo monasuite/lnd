@@ -1,5 +1,3 @@
-// +build rpctest
-
 package itest
 
 import (
@@ -11,6 +9,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd"
+	"github.com/monasuite/lnd/chainreg"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lnrpc/routerrpc"
 	"github.com/monasuite/lnd/lntest"
@@ -25,7 +24,7 @@ func testSendToRouteMultiPath(net *lntest.NetworkHarness, t *harnessTest) {
 	ctx := newMppTestContext(t, net)
 	defer ctx.shutdownNodes()
 
-	// To ensure the payment goes through seperate paths, we'll set a
+	// To ensure the payment goes through separate paths, we'll set a
 	// channel size that can only carry one shard at a time. We'll divide
 	// the payment into 3 shards.
 	const (
@@ -93,7 +92,7 @@ func testSendToRouteMultiPath(net *lntest.NetworkHarness, t *harnessTest) {
 
 		req := &routerrpc.BuildRouteRequest{
 			AmtMsat:        int64(amt * 1000),
-			FinalCltvDelta: lnd.DefaultBitcoinTimeLockDelta,
+			FinalCltvDelta: chainreg.DefaultBitcoinTimeLockDelta,
 			HopPubkeys:     rpcHops,
 		}
 

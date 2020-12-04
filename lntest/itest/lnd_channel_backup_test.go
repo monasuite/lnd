@@ -1,5 +1,3 @@
-// +build rpctest
-
 package itest
 
 import (
@@ -366,8 +364,13 @@ func testChannelBackupRestore(net *lntest.NetworkHarness, t *harnessTest) {
 	// ann is updated?
 
 	for _, testCase := range testCases {
+		testCase := testCase
 		success := t.t.Run(testCase.name, func(t *testing.T) {
 			h := newHarnessTest(t, net)
+
+			// Start each test with the default static fee estimate.
+			net.SetFeeEstimate(12500)
+
 			testChanRestoreScenario(h, net, &testCase, password)
 		})
 		if !success {
@@ -541,7 +544,7 @@ func testChannelBackupUpdates(net *lntest.NetworkHarness, t *harnessTest) {
 
 		chanPoint := chanPoints[i]
 
-		ctxt, _ = context.WithTimeout(ctxb, channelCloseTimeout)
+		ctxt, _ := context.WithTimeout(ctxb, channelCloseTimeout)
 		closeChannelAndAssert(
 			ctxt, t, net, net.Alice, chanPoint, forceClose,
 		)
@@ -794,8 +797,8 @@ func testChanRestoreScenario(t *harnessTest, net *lntest.NetworkHarness,
 	// First, we'll create a brand new node we'll use within the test. If
 	// we have a custom backup file specified, then we'll also create that
 	// for use.
-	dave, mnemonic, err := net.NewNodeWithSeed(
-		"dave", nodeArgs, password,
+	dave, mnemonic, _, err := net.NewNodeWithSeed(
+		"dave", nodeArgs, password, false,
 	)
 	if err != nil {
 		t.Fatalf("unable to create new node: %v", err)
@@ -1008,6 +1011,10 @@ func testChanRestoreScenario(t *harnessTest, net *lntest.NetworkHarness,
 	require.Error(t.t, err)
 	require.Contains(t.t, err.Error(), "cannot close channel with state: ")
 	require.Contains(t.t, err.Error(), "ChanStatusRestored")
+
+	// Increase the fee estimate so that the following force close tx will
+	// be cpfp'ed in case of anchor commitments.
+	net.SetFeeEstimate(30000)
 
 	// Now that we have ensured that the channels restored by the backup are
 	// in the correct state even without the remote peer telling us so,

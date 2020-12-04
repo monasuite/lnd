@@ -12,6 +12,7 @@ import (
 	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/invoices"
+	"github.com/monasuite/lnd/lntest/mock"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
@@ -295,7 +296,7 @@ type incomingResolverTestContext struct {
 	registry       *mockRegistry
 	witnessBeacon  *mockWitnessBeacon
 	resolver       *htlcIncomingContestResolver
-	notifier       *mockNotifier
+	notifier       *mock.ChainNotifier
 	onionProcessor *mockOnionProcessor
 	resolveErr     chan error
 	nextResolver   ContractResolver
@@ -303,10 +304,10 @@ type incomingResolverTestContext struct {
 }
 
 func newIncomingResolverTestContext(t *testing.T, isExit bool) *incomingResolverTestContext {
-	notifier := &mockNotifier{
-		epochChan: make(chan *chainntnfs.BlockEpoch),
-		spendChan: make(chan *chainntnfs.SpendDetail),
-		confChan:  make(chan *chainntnfs.TxConfirmation),
+	notifier := &mock.ChainNotifier{
+		EpochChan: make(chan *chainntnfs.BlockEpoch),
+		SpendChan: make(chan *chainntnfs.SpendDetail),
+		ConfChan:  make(chan *chainntnfs.TxConfirmation),
 	}
 	witnessBeacon := newMockWitnessBeacon()
 	registry := &mockRegistry{
@@ -377,7 +378,7 @@ func (i *incomingResolverTestContext) resolve() {
 }
 
 func (i *incomingResolverTestContext) notifyEpoch(height int32) {
-	i.notifier.epochChan <- &chainntnfs.BlockEpoch{
+	i.notifier.EpochChan <- &chainntnfs.BlockEpoch{
 		Height: height,
 	}
 }

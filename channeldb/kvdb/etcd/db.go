@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	// etcdConnectionTimeout is the timeout until successful connection to the
-	// etcd instance.
+	// etcdConnectionTimeout is the timeout until successful connection to
+	// the etcd instance.
 	etcdConnectionTimeout = 10 * time.Second
 
 	// etcdLongTimeout is a timeout for longer taking etcd operatons.
@@ -34,7 +34,8 @@ type callerStats struct {
 
 func (s callerStats) String() string {
 	return fmt.Sprintf("count: %d, retries: %d, rset: %d, wset: %d",
-		s.count, s.commitStats.Retries, s.commitStats.Rset, s.commitStats.Wset)
+		s.count, s.commitStats.Retries, s.commitStats.Rset,
+		s.commitStats.Wset)
 }
 
 // commitStatsCollector collects commit stats for commits succeeding
@@ -117,6 +118,7 @@ type db struct {
 	config               BackendConfig
 	cli                  *clientv3.Client
 	commitStatsCollector *commitStatsCollector
+	txQueue              *commitQueue
 }
 
 // Enforce db implements the walletdb.DB interface.
@@ -174,12 +176,13 @@ func newEtcdBackend(config BackendConfig) (*db, error) {
 	}
 
 	cli, err := clientv3.New(clientv3.Config{
-		Context:     config.Ctx,
-		Endpoints:   []string{config.Host},
-		DialTimeout: etcdConnectionTimeout,
-		Username:    config.User,
-		Password:    config.Pass,
-		TLS:         tlsConfig,
+		Context:            config.Ctx,
+		Endpoints:          []string{config.Host},
+		DialTimeout:        etcdConnectionTimeout,
+		Username:           config.User,
+		Password:           config.Pass,
+		TLS:                tlsConfig,
+		MaxCallSendMsgSize: 16384*1024 - 1,
 	})
 
 	if err != nil {
@@ -187,8 +190,9 @@ func newEtcdBackend(config BackendConfig) (*db, error) {
 	}
 
 	backend := &db{
-		cli:    cli,
-		config: config,
+		cli:     cli,
+		config:  config,
+		txQueue: NewCommitQueue(config.Ctx),
 	}
 
 	if config.CollectCommitStats {
@@ -200,7 +204,9 @@ func newEtcdBackend(config BackendConfig) (*db, error) {
 
 // getSTMOptions creats all STM options based on the backend config.
 func (db *db) getSTMOptions() []STMOptionFunc {
-	opts := []STMOptionFunc{WithAbortContext(db.config.Ctx)}
+	opts := []STMOptionFunc{
+		WithAbortContext(db.config.Ctx),
+	}
 
 	if db.config.CollectCommitStats {
 		opts = append(opts,
@@ -212,29 +218,35 @@ func (db *db) getSTMOptions() []STMOptionFunc {
 }
 
 // View opens a database read transaction and executes the function f with the
-// transaction passed as a parameter.  After f exits, the transaction is rolled
-// back.  If f errors, its error is returned, not a rollback error (if any
-// occur).
-func (db *db) View(f func(tx walletdb.ReadTx) error) error {
+// transaction passed as a parameter. After f exits, the transaction is rolled
+// back. If f errors, its error is returned, not a rollback error (if any
+// occur). The passed reset function is called before the start of the
+// transaction and can be used to reset intermediate state. As callers may
+// expect retries of the f closure (depending on the database backend used), the
+// reset function will be called before each retry respectively.
+func (db *db) View(f func(tx walletdb.ReadTx) error, reset func()) error {
 	apply := func(stm STM) error {
+		reset()
 		return f(newReadWriteTx(stm, db.config.Prefix))
 	}
 
-	return RunSTM(db.cli, apply, db.getSTMOptions()...)
+	return RunSTM(db.cli, apply, db.txQueue, db.getSTMOptions()...)
 }
 
 // Update opens a database read/write transaction and executes the function f
-// with the transaction passed as a parameter.  After f exits, if f did not
-// error, the transaction is committed.  Otherwise, if f did error, the
-// transaction is rolled back.  If the rollback fails, the original error
-// returned by f is still returned.  If the commit fails, the commit error is
-// returned.
-func (db *db) Update(f func(tx walletdb.ReadWriteTx) error) error {
+// with the transaction passed as a parameter. After f exits, if f did not
+// error, the transaction is committed. Otherwise, if f did error, the
+// transaction is rolled back. If the rollback fails, the original error
+// returned by f is still returned. If the commit fails, the commit error is
+// returned. As callers may expect retries of the f closure, the reset function
+// will be called before each retry respectively.
+func (db *db) Update(f func(tx walletdb.ReadWriteTx) error, reset func()) error {
 	apply := func(stm STM) error {
+		reset()
 		return f(newReadWriteTx(stm, db.config.Prefix))
 	}
 
-	return RunSTM(db.cli, apply, db.getSTMOptions()...)
+	return RunSTM(db.cli, apply, db.txQueue, db.getSTMOptions()...)
 }
 
 // PrintStats returns all collected stats pretty printed into a string.
@@ -246,18 +258,18 @@ func (db *db) PrintStats() string {
 	return ""
 }
 
-// BeginReadTx opens a database read transaction.
+// BeginReadWriteTx opens a database read+write transaction.
 func (db *db) BeginReadWriteTx() (walletdb.ReadWriteTx, error) {
 	return newReadWriteTx(
-		NewSTM(db.cli, db.getSTMOptions()...),
+		NewSTM(db.cli, db.txQueue, db.getSTMOptions()...),
 		db.config.Prefix,
 	), nil
 }
 
-// BeginReadWriteTx opens a database read+write transaction.
+// BeginReadTx opens a database read transaction.
 func (db *db) BeginReadTx() (walletdb.ReadTx, error) {
 	return newReadWriteTx(
-		NewSTM(db.cli, db.getSTMOptions()...),
+		NewSTM(db.cli, db.txQueue, db.getSTMOptions()...),
 		db.config.Prefix,
 	), nil
 }
@@ -294,5 +306,5 @@ func (db *db) Close() error {
 //
 // Batch is only useful when there are multiple goroutines calling it.
 func (db *db) Batch(apply func(tx walletdb.ReadWriteTx) error) error {
-	return db.Update(apply)
+	return db.Update(apply, func() {})
 }

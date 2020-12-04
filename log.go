@@ -9,6 +9,8 @@ import (
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/build"
 	"github.com/monasuite/lnd/chainntnfs"
+	"github.com/monasuite/lnd/chainreg"
+	"github.com/monasuite/lnd/chanacceptor"
 	"github.com/monasuite/lnd/chanbackup"
 	"github.com/monasuite/lnd/chanfitness"
 	"github.com/monasuite/lnd/channeldb"
@@ -38,7 +40,6 @@ import (
 	"github.com/monasuite/lnd/sweep"
 	"github.com/monasuite/lnd/watchtower"
 	"github.com/monasuite/lnd/watchtower/wtclient"
-	"github.com/monasuite/neutrino"
 	"google.golang.org/grpc"
 )
 
@@ -131,6 +132,8 @@ func SetupLoggers(root *build.RotatingLogWriter) {
 	AddSubLogger(root, chanfitness.Subsystem, chanfitness.UseLogger)
 	AddSubLogger(root, verrpc.Subsystem, verrpc.UseLogger)
 	AddSubLogger(root, healthcheck.Subsystem, healthcheck.UseLogger)
+	AddSubLogger(root, chainreg.Subsystem, chainreg.UseLogger)
+	AddSubLogger(root, chanacceptor.Subsystem, chanacceptor.UseLogger)
 }
 
 // AddSubLogger is a helper method to conveniently create and register the

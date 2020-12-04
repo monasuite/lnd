@@ -3,6 +3,7 @@ package input
 import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcutil"
 )
 
 // Input represents an abstract UTXO which is to be spent using a sweeping
@@ -13,6 +14,16 @@ type Input interface {
 	// Outpoint returns the reference to the output being spent, used to
 	// construct the corresponding transaction input.
 	OutPoint() *wire.OutPoint
+
+	// RequiredTxOut returns a non-nil TxOut if input commits to a certain
+	// transaction output. This is used in the SINGLE|ANYONECANPAY case to
+	// make sure any presigned input is still valid by including the
+	// output.
+	RequiredTxOut() *wire.TxOut
+
+	// RequiredLockTime returns whether this input commits to a tx locktime
+	// that must be used in the transaction including it.
+	RequiredLockTime() (uint32, bool)
 
 	// WitnessType returns an enum specifying the type of witness that must
 	// be generated in order to spend this output.
@@ -41,6 +52,19 @@ type Input interface {
 	// HeightHint returns the minimum height at which a confirmed spending
 	// tx can occur.
 	HeightHint() uint32
+
+	// UnconfParent returns information about a possibly unconfirmed parent
+	// tx.
+	UnconfParent() *TxInfo
+}
+
+// TxInfo describes properties of a parent tx that are relevant for CPFP.
+type TxInfo struct {
+	// Fee is the fee of the tx.
+	Fee btcutil.Amount
+
+	// Weight is the weight of the tx.
+	Weight int64
 }
 
 type inputKit struct {
@@ -49,12 +73,28 @@ type inputKit struct {
 	signDesc        SignDescriptor
 	heightHint      uint32
 	blockToMaturity uint32
+
+	// unconfParent contains information about a potential unconfirmed
+	// parent transaction.
+	unconfParent *TxInfo
 }
 
 // OutPoint returns the breached output's identifier that is to be included as
 // a transaction input.
 func (i *inputKit) OutPoint() *wire.OutPoint {
 	return &i.outpoint
+}
+
+// RequiredTxOut returns a nil for the base input type.
+func (i *inputKit) RequiredTxOut() *wire.TxOut {
+	return nil
+}
+
+// RequiredLockTime returns whether this input commits to a tx locktime that
+// must be used in the transaction including it. This will be false for the
+// base input type since we can re-sign for any lock time.
+func (i *inputKit) RequiredLockTime() (uint32, bool) {
+	return 0, false
 }
 
 // WitnessType returns the type of witness that must be generated to spend the
@@ -82,6 +122,11 @@ func (i *inputKit) BlocksToMaturity() uint32 {
 	return i.blockToMaturity
 }
 
+// Cpfp returns information about a possibly unconfirmed parent tx.
+func (i *inputKit) UnconfParent() *TxInfo {
+	return i.unconfParent
+}
+
 // BaseInput contains all the information needed to sweep a basic output
 // (CSV/CLTV/no time lock)
 type BaseInput struct {
@@ -91,14 +136,16 @@ type BaseInput struct {
 // MakeBaseInput assembles a new BaseInput that can be used to construct a
 // sweep transaction.
 func MakeBaseInput(outpoint *wire.OutPoint, witnessType WitnessType,
-	signDescriptor *SignDescriptor, heightHint uint32) BaseInput {
+	signDescriptor *SignDescriptor, heightHint uint32,
+	unconfParent *TxInfo) BaseInput {
 
 	return BaseInput{
 		inputKit{
-			outpoint:    *outpoint,
-			witnessType: witnessType,
-			signDesc:    *signDescriptor,
-			heightHint:  heightHint,
+			outpoint:     *outpoint,
+			witnessType:  witnessType,
+			signDesc:     *signDescriptor,
+			heightHint:   heightHint,
+			unconfParent: unconfParent,
 		},
 	}
 }
@@ -109,7 +156,7 @@ func NewBaseInput(outpoint *wire.OutPoint, witnessType WitnessType,
 	signDescriptor *SignDescriptor, heightHint uint32) *BaseInput {
 
 	input := MakeBaseInput(
-		outpoint, witnessType, signDescriptor, heightHint,
+		outpoint, witnessType, signDescriptor, heightHint, nil,
 	)
 
 	return &input

@@ -28,7 +28,7 @@ func TestCopy(t *testing.T) {
 
 		require.NoError(t, apple.Put([]byte("key"), []byte("val")))
 		return nil
-	})
+	}, func() {})
 
 	// Expect non-zero copy.
 	var buf bytes.Buffer
@@ -63,10 +63,10 @@ func TestAbortContext(t *testing.T) {
 	// Expect that the update will fail.
 	err = db.Update(func(tx walletdb.ReadWriteTx) error {
 		_, err := tx.CreateTopLevelBucket([]byte("bucket"))
-		require.NoError(t, err)
+		require.Error(t, err, "context canceled")
 
 		return nil
-	})
+	}, func() {})
 
 	require.Error(t, err, "context canceled")
 

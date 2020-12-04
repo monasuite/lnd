@@ -8,6 +8,8 @@ LINT_PKG := github.com/golangci/golangci-lint/cmd/golangci-lint
 GOACC_PKG := github.com/ory/go-acc
 FALAFEL_PKG := github.com/lightninglabs/falafel
 GOIMPORTS_PKG := golang.org/x/tools/cmd/goimports
+GOFUZZ_BUILD_PKG := github.com/dvyukov/go-fuzz/go-fuzz-build
+GOFUZZ_PKG := github.com/dvyukov/go-fuzz/go-fuzz
 
 GO_BIN := ${GOPATH}/bin
 BTCD_BIN := $(GO_BIN)/btcd
@@ -15,8 +17,9 @@ GOMOBILE_BIN := GO111MODULE=off $(GO_BIN)/gomobile
 GOVERALLS_BIN := $(GO_BIN)/goveralls
 LINT_BIN := $(GO_BIN)/golangci-lint
 GOACC_BIN := $(GO_BIN)/go-acc
+GOFUZZ_BUILD_BIN := $(GO_BIN)/go-fuzz-build
+GOFUZZ_BIN := $(GO_BIN)/go-fuzz
 
-BTCD_DIR :=${GOPATH}/src/$(BTCD_PKG)
 MOBILE_BUILD_DIR :=${GOPATH}/src/$(MOBILE_PKG)/build
 IOS_BUILD_DIR := $(MOBILE_BUILD_DIR)/ios
 IOS_BUILD := $(IOS_BUILD_DIR)/Lndmobile.framework
@@ -28,13 +31,14 @@ COMMIT_HASH := $(shell git rev-parse HEAD)
 
 BTCD_COMMIT := $(shell cat go.mod | \
 		grep $(BTCD_PKG) | \
-		tail -n1 | \
+		head -n1 | \
 		awk -F " " '{ print $$2 }' | \
 		awk -F "/" '{ print $$1 }')
 
 LINT_COMMIT := v1.18.0
 GOACC_COMMIT := ddc355013f90fea78d83d3a6c71f1d37ac07ecd5
 FALAFEL_COMMIT := v0.7.1
+GOFUZZ_COMMIT := 21309f307f61
 
 DEPGET := cd /tmp && GO111MODULE=on go get -v
 GOBUILD := GO111MODULE=on go build -v
@@ -43,8 +47,6 @@ GOTEST := GO111MODULE=on go test
 
 GOVERSION := $(shell go version | awk '{print $$3}')
 GOFILES_NOVENDOR = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
-GOLIST := go list -deps $(PKG)/... | grep '$(PKG)'| grep -v '/vendor/'
-GOLISTCOVER := $(shell go list -deps -f '{{.ImportPath}}' ./... | grep '$(PKG)' | sed -e 's/^$(ESCPKG)/./')
 
 RM := rm -f
 CP := cp
@@ -53,6 +55,7 @@ XARGS := xargs -L 1
 
 include make/testing_flags.mk
 include make/release_flags.mk
+include make/fuzz_flags.mk
 
 DEV_TAGS := $(if ${tags},$(DEV_TAGS) ${tags},$(DEV_TAGS))
 
@@ -118,6 +121,14 @@ goimports:
 	@$(call print, "Installing goimports.")
 	$(DEPGET) $(GOIMPORTS_PKG)
 
+$(GOFUZZ_BIN):
+	@$(call print, "Fetching go-fuzz")
+	$(DEPGET) $(GOFUZZ_PKG)@$(GOFUZZ_COMMIT)
+
+$(GOFUZZ_BUILD_BIN):
+	@$(call print, "Fetching go-fuzz-build")
+	$(DEPGET) $(GOFUZZ_BUILD_PKG)@$(GOFUZZ_COMMIT)
+
 # ============
 # INSTALLATION
 # ============
@@ -128,14 +139,12 @@ build:
 	$(GOBUILD) -tags="$(DEV_TAGS)" -o lncli-debug $(DEV_LDFLAGS) $(PKG)/cmd/lncli
 
 build-itest:
-	@$(call print, "Building itest lnd and lncli.")
-	$(GOBUILD) -tags="$(ITEST_TAGS)" -o lnd-itest $(ITEST_LDFLAGS) $(PKG)/cmd/lnd
-	$(GOBUILD) -tags="$(ITEST_TAGS)" -o lncli-itest $(ITEST_LDFLAGS) $(PKG)/cmd/lncli
+	@$(call print, "Building itest btcd and lnd.")
+	CGO_ENABLED=0 $(GOBUILD) -tags="rpctest" -o lntest/itest/btcd-itest$(EXEC_SUFFIX) $(ITEST_LDFLAGS) $(BTCD_PKG)
+	CGO_ENABLED=0 $(GOBUILD) -tags="$(ITEST_TAGS)" -o lntest/itest/lnd-itest$(EXEC_SUFFIX) $(ITEST_LDFLAGS) $(PKG)/cmd/lnd
 
-build-itest-windows:
-	@$(call print, "Building itest lnd and lncli.")
-	$(GOBUILD) -tags="$(ITEST_TAGS)" -o lnd-itest.exe $(ITEST_LDFLAGS) $(PKG)/cmd/lnd
-	$(GOBUILD) -tags="$(ITEST_TAGS)" -o lncli-itest.exe $(ITEST_LDFLAGS) $(PKG)/cmd/lncli
+	@$(call print, "Building itest binary for ${backend} backend.")
+	CGO_ENABLED=0 $(GOTEST) -v ./lntest/itest -tags="$(DEV_TAGS) $(RPC_TAGS) rpctest $(backend)" -c -o lntest/itest/itest.test$(EXEC_SUFFIX)
 
 install:
 	@$(call print, "Installing lnd and lncli.")
@@ -158,12 +167,17 @@ check: unit itest
 
 itest-only:
 	@$(call print, "Running integration tests with ${backend} backend.")
-	$(ITEST)
+	rm -rf lntest/itest/*.log lntest/itest/.logs-*; date
+	EXEC_SUFFIX=$(EXEC_SUFFIX) scripts/itest_part.sh 0 1 $(TEST_FLAGS) $(ITEST_FLAGS)
 	lntest/itest/log_check_errors.sh
 
-itest: btcd build-itest itest-only
+itest: build-itest itest-only
 
-itest-windows: btcd build-itest-windows itest-only
+itest-parallel: build-itest
+	@$(call print, "Running tests")
+	rm -rf lntest/itest/*.log lntest/itest/.logs-*; date
+	EXEC_SUFFIX=$(EXEC_SUFFIX) echo "$$(seq 0 $$(expr $(ITEST_PARALLELISM) - 1))" | xargs -P $(ITEST_PARALLELISM) -n 1 -I {} scripts/itest_part.sh {} $(NUM_ITEST_TRANCHES) $(TEST_FLAGS)
+	lntest/itest/log_check_errors.sh
 
 unit: btcd
 	@$(call print, "Running unit tests.")
@@ -171,7 +185,7 @@ unit: btcd
 
 unit-cover: $(GOACC_BIN)
 	@$(call print, "Running unit coverage tests.")
-	$(GOACC_BIN) $(COVER_PKG) -- -test.tags="$(DEV_TAGS) $(LOG_TAGS)"
+	$(GOACC_BIN) $(COVER_PKG) -- -tags="$(DEV_TAGS) $(LOG_TAGS)"
 
 
 unit-race:
@@ -193,11 +207,26 @@ travis-cover: btcd unit-cover goveralls
 
 flakehunter: build-itest
 	@$(call print, "Flake hunting ${backend} integration tests.")
-	while [ $$? -eq 0 ]; do $(ITEST); done
+	while [ $$? -eq 0 ]; do make itest-only icase='${icase}' backend='${backend}'; done
 
 flake-unit:
 	@$(call print, "Flake hunting unit tests.")
 	while [ $$? -eq 0 ]; do GOTRACEBACK=all $(UNIT) -count=1; done
+
+flakehunter-parallel:
+	@$(call print, "Flake hunting ${backend} integration tests in parallel.")
+	while [ $$? -eq 0 ]; do make itest-parallel tranches=1 parallel=${ITEST_PARALLELISM} icase='${icase}' backend='${backend}'; done
+
+# =============
+# FUZZING
+# =============
+fuzz-build: $(GOFUZZ_BUILD_BIN)
+	@$(call print, "Creating fuzz harnesses for packages '$(FUZZPKG)'.")
+	scripts/fuzz.sh build "$(FUZZPKG)"
+
+fuzz-run: $(GOFUZZ_BIN)
+	@$(call print, "Fuzzing packages '$(FUZZPKG)'.")
+	scripts/fuzz.sh run "$(FUZZPKG)" "$(FUZZ_TEST_RUN_TIME)" "$(FUZZ_TEST_TIMEOUT)" "$(FUZZ_NUM_PROCESSES)" "$(FUZZ_BASE_WORKDIR)"
 
 # =========
 # UTILITIES
@@ -231,6 +260,10 @@ rpc-check: rpc
 	for rpc in $$(find lnrpc/ -name "*.proto" | $(XARGS) awk '/    rpc /{print $$2}'); do if ! grep -q $$rpc lnrpc/rest-annotations.yaml; then echo "RPC $$rpc not added to lnrpc/rest-annotations.yaml"; exit 1; fi; done
 	if test -n "$$(git describe --dirty | grep dirty)"; then echo "Protos not properly formatted or not compiled with v3.4.0"; git status; git diff; exit 1; fi
 
+sample-conf-check:
+	@$(call print, "Making sure every flag has an example in the sample-lnd.conf file")
+	for flag in $$(GO_FLAGS_COMPLETION=1 go run -tags="$(RELEASE_TAGS)" $(PKG)/cmd/lnd -- | grep -v help | cut -c3-); do if ! grep -q $$flag sample-lnd.conf; then echo "Command line flag --$$flag not added to sample-lnd.conf"; exit 1; fi; done
+
 mobile-rpc: falafel goimports
 	@$(call print, "Creating mobile RPC from protos.")
 	cd ./mobile; ./gen_bindings.sh $(FALAFEL_COMMIT)
@@ -242,12 +275,12 @@ vendor:
 ios: vendor mobile-rpc
 	@$(call print, "Building iOS framework ($(IOS_BUILD)).")
 	mkdir -p $(IOS_BUILD_DIR)
-	$(GOMOBILE_BIN) bind -target=ios -tags="mobile $(DEV_TAGS) autopilotrpc experimental" $(LDFLAGS) -v -o $(IOS_BUILD) $(MOBILE_PKG)
+	$(GOMOBILE_BIN) bind -target=ios -tags="mobile $(DEV_TAGS) autopilotrpc" $(LDFLAGS) -v -o $(IOS_BUILD) $(MOBILE_PKG)
 
 android: vendor mobile-rpc
 	@$(call print, "Building Android library ($(ANDROID_BUILD)).")
 	mkdir -p $(ANDROID_BUILD_DIR)
-	$(GOMOBILE_BIN) bind -target=android -tags="mobile $(DEV_TAGS) autopilotrpc experimental" $(LDFLAGS) -v -o $(ANDROID_BUILD) $(MOBILE_PKG)
+	$(GOMOBILE_BIN) bind -target=android -tags="mobile $(DEV_TAGS) autopilotrpc" $(LDFLAGS) -v -o $(ANDROID_BUILD) $(MOBILE_PKG)
 
 mobile: ios android
 

@@ -1447,7 +1447,7 @@ func TestBalanceAtHeight(t *testing.T) {
 			commit.RemoteBalance = remote
 
 			return appendChannelLogEntry(logBucket, &commit)
-		})
+		}, func() {})
 
 		return err
 	}
@@ -1485,7 +1485,7 @@ func TestBalanceAtHeight(t *testing.T) {
 			targetHeight:          unknownHeight,
 			expectedLocalBalance:  0,
 			expectedRemoteBalance: 0,
-			expectedError:         errLogEntryNotFound,
+			expectedError:         ErrLogEntryNotFound,
 		},
 		{
 			name:                  "height not reached",

@@ -15,10 +15,8 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/clock"
-	"github.com/monasuite/lnd/chainntnfs"
-	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lntest/mock"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
 )
@@ -50,7 +48,7 @@ type mockArbitratorLog struct {
 // interface.
 var _ ArbitratorLog = (*mockArbitratorLog)(nil)
 
-func (b *mockArbitratorLog) CurrentState() (ArbitratorState, error) {
+func (b *mockArbitratorLog) CurrentState(kvdb.RTx) (ArbitratorState, error) {
 	return b.state, nil
 }
 
@@ -139,7 +137,7 @@ func (b *mockArbitratorLog) InsertConfirmedCommitSet(c *CommitSet) error {
 	return nil
 }
 
-func (b *mockArbitratorLog) FetchConfirmedCommitSet() (*CommitSet, error) {
+func (b *mockArbitratorLog) FetchConfirmedCommitSet(kvdb.RTx) (*CommitSet, error) {
 	return b.commitSet, nil
 }
 
@@ -195,8 +193,6 @@ type chanArbTestCtx struct {
 	cleanUp func()
 
 	resolvedChan chan struct{}
-
-	blockEpochs chan *chainntnfs.BlockEpoch
 
 	incubationRequests chan struct{}
 
@@ -276,7 +272,7 @@ func (c *chanArbTestCtx) Restart(restartClosure func(*chanArbTestCtx)) (*chanArb
 		restartClosure(newCtx)
 	}
 
-	if err := newCtx.chanArb.Start(); err != nil {
+	if err := newCtx.chanArb.Start(nil); err != nil {
 		return nil, err
 	}
 
@@ -303,12 +299,6 @@ func withMarkClosed(markClosed func(*channeldb.ChannelCloseSummary,
 func createTestChannelArbitrator(t *testing.T, log ArbitratorLog,
 	opts ...testChanArbOption) (*chanArbTestCtx, error) {
 
-	blockEpochs := make(chan *chainntnfs.BlockEpoch)
-	blockEpoch := &chainntnfs.BlockEpochEvent{
-		Epochs: blockEpochs,
-		Cancel: func() {},
-	}
-
 	chanPoint := wire.OutPoint{}
 	shortChanID := lnwire.ShortChannelID{}
 	chanEvents := &ChainEventSubscription{
@@ -334,10 +324,10 @@ func createTestChannelArbitrator(t *testing.T, log ArbitratorLog,
 		},
 		OutgoingBroadcastDelta: 5,
 		IncomingBroadcastDelta: 5,
-		Notifier: &mockNotifier{
-			epochChan: make(chan *chainntnfs.BlockEpoch),
-			spendChan: make(chan *chainntnfs.SpendDetail),
-			confChan:  make(chan *chainntnfs.TxConfirmation),
+		Notifier: &mock.ChainNotifier{
+			EpochChan: make(chan *chainntnfs.BlockEpoch),
+			SpendChan: make(chan *chainntnfs.SpendDetail),
+			ConfChan:  make(chan *chainntnfs.TxConfirmation),
 		},
 		IncubateOutputs: func(wire.OutPoint,
 			*lnwallet.OutgoingHtlcResolution,
@@ -365,7 +355,6 @@ func createTestChannelArbitrator(t *testing.T, log ArbitratorLog,
 	arbCfg := &ChannelArbitratorConfig{
 		ChanPoint:   chanPoint,
 		ShortChanID: shortChanID,
-		BlockEpochs: blockEpoch,
 		MarkChannelResolved: func() error {
 			resolvedChan <- struct{}{}
 			return nil
@@ -432,7 +421,6 @@ func createTestChannelArbitrator(t *testing.T, log ArbitratorLog,
 		cleanUp:            cleanUp,
 		resolvedChan:       resolvedChan,
 		resolutions:        resolutionChan,
-		blockEpochs:        blockEpochs,
 		log:                log,
 		incubationRequests: incubateChan,
 		sweeper:            mockSweeper,
@@ -453,7 +441,7 @@ func TestChannelArbitratorCooperativeClose(t *testing.T) {
 		t.Fatalf("unable to create ChannelArbitrator: %v", err)
 	}
 
-	if err := chanArbCtx.chanArb.Start(); err != nil {
+	if err := chanArbCtx.chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 	defer func() {
@@ -515,7 +503,7 @@ func TestChannelArbitratorRemoteForceClose(t *testing.T) {
 	}
 	chanArb := chanArbCtx.chanArb
 
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 	defer chanArb.Stop()
@@ -570,7 +558,7 @@ func TestChannelArbitratorLocalForceClose(t *testing.T) {
 	}
 	chanArb := chanArbCtx.chanArb
 
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 	defer chanArb.Stop()
@@ -676,7 +664,7 @@ func TestChannelArbitratorBreachClose(t *testing.T) {
 	}
 	chanArb := chanArbCtx.chanArb
 
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 	defer func() {
@@ -721,7 +709,7 @@ func TestChannelArbitratorLocalForceClosePendingHtlc(t *testing.T) {
 	chanArb.cfg.PreimageDB = newMockWitnessBeacon()
 	chanArb.cfg.Registry = &mockRegistry{}
 
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 	defer chanArb.Stop()
@@ -878,7 +866,7 @@ func TestChannelArbitratorLocalForceClosePendingHtlc(t *testing.T) {
 	// We'll grab the old notifier here as our resolvers are still holding
 	// a reference to this instance, and a new one will be created when we
 	// restart the channel arb below.
-	oldNotifier := chanArb.cfg.Notifier.(*mockNotifier)
+	oldNotifier := chanArb.cfg.Notifier.(*mock.ChainNotifier)
 
 	// At this point, in order to simulate a restart, we'll re-create the
 	// channel arbitrator. We do this to ensure that all information
@@ -927,7 +915,7 @@ func TestChannelArbitratorLocalForceClosePendingHtlc(t *testing.T) {
 	}
 
 	// Send a notification that the expiry height has been reached.
-	oldNotifier.epochChan <- &chainntnfs.BlockEpoch{Height: 10}
+	oldNotifier.EpochChan <- &chainntnfs.BlockEpoch{Height: 10}
 
 	// htlcOutgoingContestResolver is now transforming into a
 	// htlcTimeoutResolver and should send the contract off for incubation.
@@ -939,7 +927,7 @@ func TestChannelArbitratorLocalForceClosePendingHtlc(t *testing.T) {
 
 	// Notify resolver that the HTLC output of the commitment has been
 	// spent.
-	oldNotifier.spendChan <- &chainntnfs.SpendDetail{SpendingTx: closeTx}
+	oldNotifier.SpendChan <- &chainntnfs.SpendDetail{SpendingTx: closeTx}
 
 	// Finally, we should also receive a resolution message instructing the
 	// switch to cancel back the HTLC.
@@ -967,7 +955,7 @@ func TestChannelArbitratorLocalForceClosePendingHtlc(t *testing.T) {
 	}
 
 	// Notify resolver that the second level transaction is spent.
-	oldNotifier.spendChan <- &chainntnfs.SpendDetail{SpendingTx: closeTx}
+	oldNotifier.SpendChan <- &chainntnfs.SpendDetail{SpendingTx: closeTx}
 
 	// At this point channel should be marked as resolved.
 	chanArbCtxNew.AssertStateTransitions(StateFullyResolved)
@@ -993,7 +981,7 @@ func TestChannelArbitratorLocalForceCloseRemoteConfirmed(t *testing.T) {
 	}
 	chanArb := chanArbCtx.chanArb
 
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 	defer chanArb.Stop()
@@ -1102,7 +1090,7 @@ func TestChannelArbitratorLocalForceDoubleSpend(t *testing.T) {
 	}
 	chanArb := chanArbCtx.chanArb
 
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 	defer chanArb.Stop()
@@ -1210,7 +1198,7 @@ func TestChannelArbitratorPersistence(t *testing.T) {
 	}
 
 	chanArb := chanArbCtx.chanArb
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 
@@ -1334,7 +1322,7 @@ func TestChannelArbitratorForceCloseBreachedChannel(t *testing.T) {
 	}
 
 	chanArb := chanArbCtx.chanArb
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 
@@ -1496,7 +1484,7 @@ func TestChannelArbitratorCommitFailure(t *testing.T) {
 		}
 
 		chanArb := chanArbCtx.chanArb
-		if err := chanArb.Start(); err != nil {
+		if err := chanArb.Start(nil); err != nil {
 			t.Fatalf("unable to start ChannelArbitrator: %v", err)
 		}
 
@@ -1581,7 +1569,7 @@ func TestChannelArbitratorEmptyResolutions(t *testing.T) {
 	chanArb.cfg.ClosingHeight = 100
 	chanArb.cfg.CloseType = channeldb.RemoteForceClose
 
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 
@@ -1613,7 +1601,7 @@ func TestChannelArbitratorAlreadyForceClosed(t *testing.T) {
 		t.Fatalf("unable to create ChannelArbitrator: %v", err)
 	}
 	chanArb := chanArbCtx.chanArb
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 	defer chanArb.Stop()
@@ -1711,7 +1699,7 @@ func TestChannelArbitratorDanglingCommitForceClose(t *testing.T) {
 				t.Fatalf("unable to create ChannelArbitrator: %v", err)
 			}
 			chanArb := chanArbCtx.chanArb
-			if err := chanArb.Start(); err != nil {
+			if err := chanArb.Start(nil); err != nil {
 				t.Fatalf("unable to start ChannelArbitrator: %v", err)
 			}
 			defer chanArb.Stop()
@@ -1758,7 +1746,7 @@ func TestChannelArbitratorDanglingCommitForceClose(t *testing.T) {
 			// now mine a block (height 5), which is 5 blocks away
 			// (our grace delta) from the expiry of that HTLC.
 			case testCase.htlcExpired:
-				chanArbCtx.blockEpochs <- &chainntnfs.BlockEpoch{Height: 5}
+				chanArbCtx.chanArb.blocks <- 5
 
 			// Otherwise, we'll just trigger a regular force close
 			// request.
@@ -1862,7 +1850,7 @@ func TestChannelArbitratorDanglingCommitForceClose(t *testing.T) {
 			// so instead, we'll mine another block which'll cause
 			// it to re-examine its state and realize there're no
 			// more HTLCs.
-			chanArbCtx.blockEpochs <- &chainntnfs.BlockEpoch{Height: 6}
+			chanArbCtx.chanArb.blocks <- 6
 			chanArbCtx.AssertStateTransitions(StateFullyResolved)
 		})
 	}
@@ -1902,7 +1890,7 @@ func TestChannelArbitratorPendingExpiredHTLC(t *testing.T) {
 		return false
 	}
 
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 	defer func() {
@@ -1939,13 +1927,13 @@ func TestChannelArbitratorPendingExpiredHTLC(t *testing.T) {
 	// We will advance the uptime to 10 seconds which should be still within
 	// the grace period and should not trigger going to chain.
 	testClock.SetTime(startTime.Add(time.Second * 10))
-	chanArbCtx.blockEpochs <- &chainntnfs.BlockEpoch{Height: 5}
+	chanArbCtx.chanArb.blocks <- 5
 	chanArbCtx.AssertState(StateDefault)
 
 	// We will advance the uptime to 16 seconds which should trigger going
 	// to chain.
 	testClock.SetTime(startTime.Add(time.Second * 16))
-	chanArbCtx.blockEpochs <- &chainntnfs.BlockEpoch{Height: 6}
+	chanArbCtx.chanArb.blocks <- 6
 	chanArbCtx.AssertStateTransitions(
 		StateBroadcastCommit,
 		StateCommitmentBroadcasted,
@@ -2059,7 +2047,7 @@ func TestRemoteCloseInitiator(t *testing.T) {
 			}
 			chanArb := chanArbCtx.chanArb
 
-			if err := chanArb.Start(); err != nil {
+			if err := chanArb.Start(nil); err != nil {
 				t.Fatalf("unable to start "+
 					"ChannelArbitrator: %v", err)
 			}
@@ -2129,7 +2117,7 @@ func TestChannelArbitratorAnchors(t *testing.T) {
 			{}, {},
 		}
 
-	if err := chanArb.Start(); err != nil {
+	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
 	defer func() {
@@ -2236,9 +2224,9 @@ func TestChannelArbitratorAnchors(t *testing.T) {
 		t.Fatalf("expected anchor resolver, got %T", resolver)
 	}
 
-	// The anchor resolver is expected to offer the anchor input to the
+	// The anchor resolver is expected to re-offer the anchor input to the
 	// sweeper.
-	<-chanArbCtx.sweeper.updatedInputs
+	<-chanArbCtx.sweeper.sweptInputs
 
 	// The mock sweeper immediately signals success for that input. This
 	// should transition the channel to the resolved state.

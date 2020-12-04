@@ -9,6 +9,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
+	"github.com/monasuite/lnd/lntest/mock"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwallet/chainfee"
 )
@@ -287,7 +288,7 @@ func TestCraftSweepAllTxCoinSelectFail(t *testing.T) {
 	utxoLocker := newMockOutpointLocker()
 
 	_, err := CraftSweepAllTx(
-		0, 100, nil, coinSelectLocker, utxoSource, utxoLocker, nil, nil,
+		0, 100, 10, nil, coinSelectLocker, utxoSource, utxoLocker, nil, nil,
 	)
 
 	// Since we instructed the coin select locker to fail above, we should
@@ -312,7 +313,7 @@ func TestCraftSweepAllTxUnknownWitnessType(t *testing.T) {
 	utxoLocker := newMockOutpointLocker()
 
 	_, err := CraftSweepAllTx(
-		0, 100, nil, coinSelectLocker, utxoSource, utxoLocker, nil, nil,
+		0, 100, 10, nil, coinSelectLocker, utxoSource, utxoLocker, nil, nil,
 	)
 
 	// Since passed in a p2wsh output, which is unknown, we should fail to
@@ -335,7 +336,7 @@ func TestCraftSweepAllTx(t *testing.T) {
 
 	// First, we'll make a mock signer along with a fee estimator, We'll
 	// use zero fees to we can assert a precise output value.
-	signer := &mockSigner{}
+	signer := &mock.DummySigner{}
 	feeEstimator := newMockFeeEstimator(0, 0)
 
 	// For our UTXO source, we'll pass in all the UTXOs that we know of,
@@ -346,7 +347,7 @@ func TestCraftSweepAllTx(t *testing.T) {
 	utxoLocker := newMockOutpointLocker()
 
 	sweepPkg, err := CraftSweepAllTx(
-		0, 100, deliveryAddr, coinSelectLocker, utxoSource, utxoLocker,
+		0, 100, 10, deliveryAddr, coinSelectLocker, utxoSource, utxoLocker,
 		feeEstimator, signer,
 	)
 	if err != nil {

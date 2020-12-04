@@ -1,5 +1,3 @@
-// +build rpctest
-
 package itest
 
 import (
@@ -9,6 +7,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd"
+	"github.com/monasuite/lnd/chainreg"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lnrpc/routerrpc"
 	"github.com/monasuite/lnd/lntest"
@@ -170,12 +169,12 @@ func testMultiHopPayments(net *lntest.NetworkHarness, t *harnessTest) {
 	// Set the fee policies of the Alice -> Bob and the Dave -> Alice
 	// channel edges to relatively large non default values. This makes it
 	// possible to pick up more subtle fee calculation errors.
-	maxHtlc := uint64(calculateMaxHtlc(chanAmt))
+	maxHtlc := calculateMaxHtlc(chanAmt)
 	const aliceBaseFeeSat = 1
 	const aliceFeeRatePPM = 100000
 	updateChannelPolicy(
 		t, net.Alice, chanPointAlice, aliceBaseFeeSat*1000,
-		aliceFeeRatePPM, lnd.DefaultBitcoinTimeLockDelta, maxHtlc,
+		aliceFeeRatePPM, chainreg.DefaultBitcoinTimeLockDelta, maxHtlc,
 		carol,
 	)
 
@@ -183,7 +182,7 @@ func testMultiHopPayments(net *lntest.NetworkHarness, t *harnessTest) {
 	const daveFeeRatePPM = 150000
 	updateChannelPolicy(
 		t, dave, chanPointDave, daveBaseFeeSat*1000, daveFeeRatePPM,
-		lnd.DefaultBitcoinTimeLockDelta, maxHtlc, carol,
+		chainreg.DefaultBitcoinTimeLockDelta, maxHtlc, carol,
 	)
 
 	// Before we start sending payments, subscribe to htlc events for each

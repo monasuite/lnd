@@ -29,7 +29,7 @@
 
     **Note**: The minimum version of Go supported is Go 1.13. We recommend that
     users use the latest version of Go, which at the time of writing is
-    [`1.13`](https://blog.golang.org/go1.13).
+    [`1.15`](https://blog.golang.org/go1.15).
 
 
     On Linux:
@@ -179,7 +179,7 @@ in the system's `$PATH` variable. Otherwise some of the tests will fail.
 
 In order to run, `lnd` requires, that the user specify a chain backend. At the
 time of writing of this document, there are three available chain backends:
-`btcd`, `neutrino`, `bitcoind`. All but neutrino (atm) can run on mainnet with
+`btcd`, `neutrino`, `bitcoind`. All including neutrino can run on mainnet with
 an out of the box `lnd` instance. We don't require `--txindex` when running
 with `bitcoind` or `btcd` but activating the `txindex` will generally make
 `lnd` run faster.
@@ -211,6 +211,8 @@ neutrino:
       --neutrino.maxpeers=                                    Max number of inbound and outbound peers
       --neutrino.banduration=                                 How long to ban misbehaving peers.  Valid time units are {s, m, h}.  Minimum 1 second
       --neutrino.banthreshold=                                Maximum allowed ban score before disconnecting and banning misbehaving peers.
+      --neutrino.useragentname=                               Used to help identify ourselves to other bitcoin peers.
+      --neutrino.useragentversion=                            Used to help identify ourselves to other bitcoin peers.
 ```
 
 ## Bitcoind Options

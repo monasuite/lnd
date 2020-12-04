@@ -57,6 +57,14 @@ type RegistryConfig struct {
 	// send payments.
 	AcceptKeySend bool
 
+	// GcCanceledInvoicesOnStartup if set, we'll attempt to garbage collect
+	// all canceled invoices upon start.
+	GcCanceledInvoicesOnStartup bool
+
+	// GcCanceledInvoicesOnTheFly if set, we'll garbage collect all newly
+	// canceled invoices on the fly.
+	GcCanceledInvoicesOnTheFly bool
+
 	// KeysendHoldTime indicates for how long we want to accept and hold
 	// spontaneous keysend payments.
 	KeysendHoldTime time.Duration
@@ -147,21 +155,68 @@ func NewRegistry(cdb *channeldb.DB, expiryWatcher *InvoiceExpiryWatcher,
 	}
 }
 
-// populateExpiryWatcher fetches all active invoices and their corresponding
-// payment hashes from ChannelDB and adds them to the expiry watcher.
-func (i *InvoiceRegistry) populateExpiryWatcher() error {
-	pendingOnly := true
-	pendingInvoices, err := i.cdb.FetchAllInvoicesWithPaymentHash(pendingOnly)
-	if err != nil && err != channeldb.ErrNoInvoicesCreated {
-		log.Errorf(
-			"Error while prefetching active invoices from the database: %v", err,
-		)
+// scanInvoicesOnStart will scan all invoices on start and add active invoices
+// to the invoice expirt watcher while also attempting to delete all canceled
+// invoices.
+func (i *InvoiceRegistry) scanInvoicesOnStart() error {
+	var (
+		pending   []*invoiceExpiry
+		removable []channeldb.InvoiceDeleteRef
+	)
+
+	reset := func() {
+		// Zero out our results on start and if the scan is ever run
+		// more than once. This latter case can happen if the kvdb
+		// layer needs to retry the View transaction underneath (eg.
+		// using the etcd driver, where all transactions are allowed
+		// to retry for serializability).
+		pending = nil
+		removable = make([]channeldb.InvoiceDeleteRef, 0)
+	}
+
+	scanFunc := func(
+		paymentHash lntypes.Hash, invoice *channeldb.Invoice) error {
+
+		if invoice.IsPending() {
+			expiryRef := makeInvoiceExpiry(paymentHash, invoice)
+			if expiryRef != nil {
+				pending = append(pending, expiryRef)
+			}
+		} else if i.cfg.GcCanceledInvoicesOnStartup &&
+			invoice.State == channeldb.ContractCanceled {
+
+			// Consider invoice for removal if it is already
+			// canceled. Invoices that are expired but not yet
+			// canceled, will be queued up for cancellation after
+			// startup and will be deleted afterwards.
+			ref := channeldb.InvoiceDeleteRef{
+				PayHash:     paymentHash,
+				AddIndex:    invoice.AddIndex,
+				SettleIndex: invoice.SettleIndex,
+			}
+
+			if invoice.Terms.PaymentAddr != channeldb.BlankPayAddr {
+				ref.PayAddr = &invoice.Terms.PaymentAddr
+			}
+
+			removable = append(removable, ref)
+		}
+		return nil
+	}
+
+	err := i.cdb.ScanInvoices(scanFunc, reset)
+	if err != nil {
 		return err
 	}
 
 	log.Debugf("Adding %d pending invoices to the expiry watcher",
-		len(pendingInvoices))
-	i.expiryWatcher.AddInvoices(pendingInvoices)
+		len(pending))
+	i.expiryWatcher.AddInvoices(pending...)
+
+	if err := i.cdb.DeleteInvoice(removable); err != nil {
+		log.Warnf("Deleting old invoices failed: %v", err)
+	}
+
 	return nil
 }
 
@@ -178,8 +233,9 @@ func (i *InvoiceRegistry) Start() error {
 	i.wg.Add(1)
 	go i.invoiceEventLoop()
 
-	// Now prefetch all pending invoices to the expiry watcher.
-	err = i.populateExpiryWatcher()
+	// Now scan all pending and removable invoices to the expiry watcher or
+	// delete them.
+	err = i.scanInvoicesOnStart()
 	if err != nil {
 		i.Stop()
 		return err
@@ -509,7 +565,10 @@ func (i *InvoiceRegistry) AddInvoice(invoice *channeldb.Invoice,
 	// InvoiceExpiryWatcher.AddInvoice must not be locked by InvoiceRegistry
 	// to avoid deadlock when a new invoice is added while an other is being
 	// canceled.
-	i.expiryWatcher.AddInvoice(paymentHash, invoice)
+	invoiceExpiryRef := makeInvoiceExpiry(paymentHash, invoice)
+	if invoiceExpiryRef != nil {
+		i.expiryWatcher.AddInvoices(invoiceExpiryRef)
+	}
 
 	return addIndex, nil
 }
@@ -1074,6 +1133,32 @@ func (i *InvoiceRegistry) cancelInvoiceImpl(payHash lntypes.Hash,
 		)
 	}
 	i.notifyClients(payHash, invoice, channeldb.ContractCanceled)
+
+	// Attempt to also delete the invoice if requested through the registry
+	// config.
+	if i.cfg.GcCanceledInvoicesOnTheFly {
+		// Assemble the delete reference and attempt to delete through
+		// the invocice from the DB.
+		deleteRef := channeldb.InvoiceDeleteRef{
+			PayHash:     payHash,
+			AddIndex:    invoice.AddIndex,
+			SettleIndex: invoice.SettleIndex,
+		}
+		if invoice.Terms.PaymentAddr != channeldb.BlankPayAddr {
+			deleteRef.PayAddr = &invoice.Terms.PaymentAddr
+		}
+
+		err = i.cdb.DeleteInvoice(
+			[]channeldb.InvoiceDeleteRef{deleteRef},
+		)
+		// If by any chance deletion failed, then log it instead of
+		// returning the error, as the invoice itsels has already been
+		// canceled.
+		if err != nil {
+			log.Warnf("Invoice%v could not be deleted: %v",
+				ref, err)
+		}
+	}
 
 	return nil
 }

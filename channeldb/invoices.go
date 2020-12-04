@@ -562,6 +562,8 @@ func (d *DB) AddInvoice(newInvoice *Invoice, paymentHash lntypes.Hash) (
 
 		invoiceAddIndex = newIndex
 		return nil
+	}, func() {
+		invoiceAddIndex = 0
 	})
 	if err != nil {
 		return 0, err
@@ -624,6 +626,8 @@ func (d *DB) InvoicesAddedSince(sinceAddIndex uint64) ([]Invoice, error) {
 		}
 
 		return nil
+	}, func() {
+		newInvoices = nil
 	})
 	if err != nil {
 		return nil, err
@@ -669,7 +673,7 @@ func (d *DB) LookupInvoice(ref InvoiceRef) (Invoice, error) {
 		invoice = i
 
 		return nil
-	})
+	}, func() {})
 	if err != nil {
 		return invoice, err
 	}
@@ -723,28 +727,14 @@ func fetchInvoiceNumByRef(invoiceIndex, payAddrIndex kvdb.RBucket,
 	}
 }
 
-// InvoiceWithPaymentHash is used to store an invoice and its corresponding
-// payment hash. This struct is only used to store results of
-// ChannelDB.FetchAllInvoicesWithPaymentHash() call.
-type InvoiceWithPaymentHash struct {
-	// Invoice holds the invoice as selected from the invoices bucket.
-	Invoice Invoice
+// ScanInvoices scans trough all invoices and calls the passed scanFunc for
+// for each invoice with its respective payment hash. Additionally a reset()
+// closure is passed which is used to reset/initialize partial results and also
+// to signal if the kvdb.View transaction has been retried.
+func (d *DB) ScanInvoices(
+	scanFunc func(lntypes.Hash, *Invoice) error, reset func()) error {
 
-	// PaymentHash is the payment hash for the Invoice.
-	PaymentHash lntypes.Hash
-}
-
-// FetchAllInvoicesWithPaymentHash returns all invoices and their payment hashes
-// currently stored within the database. If the pendingOnly param is true, then
-// only open or accepted invoices and their payment hashes will be returned,
-// skipping all invoices that are fully settled or canceled. Note that the
-// returned array is not ordered by add index.
-func (d *DB) FetchAllInvoicesWithPaymentHash(pendingOnly bool) (
-	[]InvoiceWithPaymentHash, error) {
-
-	var result []InvoiceWithPaymentHash
-
-	err := kvdb.View(d, func(tx kvdb.RTx) error {
+	return kvdb.View(d, func(tx kvdb.RTx) error {
 		invoices := tx.ReadBucket(invoiceBucket)
 		if invoices == nil {
 			return ErrNoInvoicesCreated
@@ -775,26 +765,12 @@ func (d *DB) FetchAllInvoicesWithPaymentHash(pendingOnly bool) (
 				return err
 			}
 
-			if pendingOnly && !invoice.IsPending() {
-				return nil
-			}
+			var paymentHash lntypes.Hash
+			copy(paymentHash[:], k)
 
-			invoiceWithPaymentHash := InvoiceWithPaymentHash{
-				Invoice: invoice,
-			}
-
-			copy(invoiceWithPaymentHash.PaymentHash[:], k)
-			result = append(result, invoiceWithPaymentHash)
-
-			return nil
+			return scanFunc(paymentHash, &invoice)
 		})
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
+	}, reset)
 }
 
 // InvoiceQuery represents a query to the invoice database. The query allows a
@@ -846,9 +822,7 @@ type InvoiceSlice struct {
 // QueryInvoices allows a caller to query the invoice database for invoices
 // within the specified add index range.
 func (d *DB) QueryInvoices(q InvoiceQuery) (InvoiceSlice, error) {
-	resp := InvoiceSlice{
-		InvoiceQuery: q,
-	}
+	var resp InvoiceSlice
 
 	err := kvdb.View(d, func(tx kvdb.RTx) error {
 		// If the bucket wasn't found, then there aren't any invoices
@@ -913,6 +887,10 @@ func (d *DB) QueryInvoices(q InvoiceQuery) (InvoiceSlice, error) {
 		}
 
 		return nil
+	}, func() {
+		resp = InvoiceSlice{
+			InvoiceQuery: q,
+		}
 	})
 	if err != nil && err != ErrNoInvoicesCreated {
 		return resp, err
@@ -974,6 +952,8 @@ func (d *DB) UpdateInvoice(ref InvoiceRef,
 		)
 
 		return err
+	}, func() {
+		updatedInvoice = nil
 	})
 
 	return updatedInvoice, err
@@ -1032,6 +1012,8 @@ func (d *DB) InvoicesSettledSince(sinceSettleIndex uint64) ([]Invoice, error) {
 		}
 
 		return nil
+	}, func() {
+		settledInvoices = nil
 	})
 	if err != nil {
 		return nil, err
@@ -1760,4 +1742,135 @@ func setSettleMetaFields(settleIndex kvdb.RwBucket, invoiceNum []byte,
 	invoice.SettleIndex = nextSettleSeqNo
 
 	return nil
+}
+
+// InvoiceDeleteRef holds a refererence to an invoice to be deleted.
+type InvoiceDeleteRef struct {
+	// PayHash is the payment hash of the target invoice. All invoices are
+	// currently indexed by payment hash.
+	PayHash lntypes.Hash
+
+	// PayAddr is the payment addr of the target invoice. Newer invoices
+	// (0.11 and up) are indexed by payment address in addition to payment
+	// hash, but pre 0.8 invoices do not have one at all.
+	PayAddr *[32]byte
+
+	// AddIndex is the add index of the invoice.
+	AddIndex uint64
+
+	// SettleIndex is the settle index of the invoice.
+	SettleIndex uint64
+}
+
+// DeleteInvoice attempts to delete the passed invoices from the database in
+// one transaction. The passed delete references hold all keys required to
+// delete the invoices without also needing to deserialze them.
+func (d *DB) DeleteInvoice(invoicesToDelete []InvoiceDeleteRef) error {
+	err := kvdb.Update(d, func(tx kvdb.RwTx) error {
+		invoices := tx.ReadWriteBucket(invoiceBucket)
+		if invoices == nil {
+			return ErrNoInvoicesCreated
+		}
+
+		invoiceIndex := invoices.NestedReadWriteBucket(
+			invoiceIndexBucket,
+		)
+		if invoiceIndex == nil {
+			return ErrNoInvoicesCreated
+		}
+
+		invoiceAddIndex := invoices.NestedReadWriteBucket(
+			addIndexBucket,
+		)
+		if invoiceAddIndex == nil {
+			return ErrNoInvoicesCreated
+		}
+		// settleIndex can be nil, as the bucket is created lazily
+		// when the first invoice is settled.
+		settleIndex := invoices.NestedReadWriteBucket(settleIndexBucket)
+
+		payAddrIndex := tx.ReadWriteBucket(payAddrIndexBucket)
+
+		for _, ref := range invoicesToDelete {
+			// Fetch the invoice key for using it to check for
+			// consistency and also to delete from the invoice index.
+			invoiceKey := invoiceIndex.Get(ref.PayHash[:])
+			if invoiceKey == nil {
+				return ErrInvoiceNotFound
+			}
+
+			err := invoiceIndex.Delete(ref.PayHash[:])
+			if err != nil {
+				return err
+			}
+
+			// Delete payment address index reference if there's a
+			// valid payment address passed.
+			if ref.PayAddr != nil {
+				// To ensure consistency check that the already
+				// fetched invoice key matches the one in the
+				// payment address index.
+				key := payAddrIndex.Get(ref.PayAddr[:])
+				if !bytes.Equal(key, invoiceKey) {
+					return fmt.Errorf("unknown invoice")
+				}
+
+				// Delete from the payment address index.
+				err := payAddrIndex.Delete(ref.PayAddr[:])
+				if err != nil {
+					return err
+				}
+			}
+
+			var addIndexKey [8]byte
+			byteOrder.PutUint64(addIndexKey[:], ref.AddIndex)
+
+			// To ensure consistency check that the key stored in
+			// the add index also matches the previously fetched
+			// invoice key.
+			key := invoiceAddIndex.Get(addIndexKey[:])
+			if !bytes.Equal(key, invoiceKey) {
+				return fmt.Errorf("unknown invoice")
+			}
+
+			// Remove from the add index.
+			err = invoiceAddIndex.Delete(addIndexKey[:])
+			if err != nil {
+				return err
+			}
+
+			// Remove from the settle index if available and
+			// if the invoice is settled.
+			if settleIndex != nil && ref.SettleIndex > 0 {
+				var settleIndexKey [8]byte
+				byteOrder.PutUint64(
+					settleIndexKey[:], ref.SettleIndex,
+				)
+
+				// To ensure consistency check that the already
+				// fetched invoice key matches the one in the
+				// settle index
+				key := settleIndex.Get(settleIndexKey[:])
+				if !bytes.Equal(key, invoiceKey) {
+					return fmt.Errorf("unknown invoice")
+				}
+
+				err = settleIndex.Delete(settleIndexKey[:])
+				if err != nil {
+					return err
+				}
+			}
+
+			// Finally remove the serialized invoice from the
+			// invoice bucket.
+			err = invoices.Delete(invoiceKey)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}, func() {})
+
+	return err
 }

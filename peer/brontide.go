@@ -19,18 +19,27 @@ import (
 
 	"github.com/lightningnetwork/lnd/queue"
 	"github.com/lightningnetwork/lnd/ticker"
-	"github.com/monasuite/lnd/brontide"
 	"github.com/monasuite/lnd/buffer"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/channelnotifier"
 	"github.com/monasuite/lnd/contractcourt"
+	"github.com/monasuite/lnd/discovery"
 	"github.com/monasuite/lnd/feature"
+	"github.com/monasuite/lnd/fmgr"
 	"github.com/monasuite/lnd/htlcswitch"
+	"github.com/monasuite/lnd/htlcswitch/hodl"
+	"github.com/monasuite/lnd/htlcswitch/hop"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/invoices"
 	"github.com/monasuite/lnd/lnpeer"
 	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwallet/chancloser"
 	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/netann"
+	"github.com/monasuite/lnd/pool"
+	"github.com/monasuite/lnd/watchtower/wtclient"
 )
 
 const (
@@ -110,6 +119,188 @@ type ChannelCloseUpdate struct {
 type TimestampedError struct {
 	Error     error
 	Timestamp time.Time
+}
+
+// Config defines configuration fields that are necessary for a peer object
+// to function.
+type Config struct {
+	// Conn is the underlying network connection for this peer.
+	Conn MessageConn
+
+	// ConnReq stores information related to the persistent connection request
+	// for this peer.
+	ConnReq *connmgr.ConnReq
+
+	// PubKeyBytes is the serialized, compressed public key of this peer.
+	PubKeyBytes [33]byte
+
+	// Addr is the network address of the peer.
+	Addr *lnwire.NetAddress
+
+	// Inbound indicates whether or not the peer is an inbound peer.
+	Inbound bool
+
+	// Features is the set of features that we advertise to the remote party.
+	Features *lnwire.FeatureVector
+
+	// LegacyFeatures is the set of features that we advertise to the remote
+	// peer for backwards compatibility. Nodes that have not implemented
+	// flat features will still be able to read our feature bits from the
+	// legacy global field, but we will also advertise everything in the
+	// default features field.
+	LegacyFeatures *lnwire.FeatureVector
+
+	// OutgoingCltvRejectDelta defines the number of blocks before expiry of
+	// an htlc where we don't offer it anymore.
+	OutgoingCltvRejectDelta uint32
+
+	// ChanActiveTimeout specifies the duration the peer will wait to request
+	// a channel reenable, beginning from the time the peer was started.
+	ChanActiveTimeout time.Duration
+
+	// ErrorBuffer stores a set of errors related to a peer. It contains error
+	// messages that our peer has recently sent us over the wire and records of
+	// unknown messages that were sent to us so that we can have a full track
+	// record of the communication errors we have had with our peer. If we
+	// choose to disconnect from a peer, it also stores the reason we had for
+	// disconnecting.
+	ErrorBuffer *queue.CircularBuffer
+
+	// WritePool is the task pool that manages reuse of write buffers. Write
+	// tasks are submitted to the pool in order to conserve the total number of
+	// write buffers allocated at any one time, and decouple write buffer
+	// allocation from the peer life cycle.
+	WritePool *pool.Write
+
+	// ReadPool is the task pool that manages reuse of read buffers.
+	ReadPool *pool.Read
+
+	// Switch is a pointer to the htlcswitch. It is used to setup, get, and
+	// tear-down ChannelLinks.
+	Switch *htlcswitch.Switch
+
+	// InterceptSwitch is a pointer to the InterceptableSwitch, a wrapper around
+	// the regular Switch. We only export it here to pass ForwardPackets to the
+	// ChannelLinkConfig.
+	InterceptSwitch *htlcswitch.InterceptableSwitch
+
+	// ChannelDB is used to fetch opened channels, and closed channels.
+	ChannelDB *channeldb.DB
+
+	// ChannelGraph is a pointer to the channel graph which is used to
+	// query information about the set of known active channels.
+	ChannelGraph *channeldb.ChannelGraph
+
+	// ChainArb is used to subscribe to channel events, update contract signals,
+	// and force close channels.
+	ChainArb *contractcourt.ChainArbitrator
+
+	// AuthGossiper is needed so that the Brontide impl can register with the
+	// gossiper and process remote channel announcements.
+	AuthGossiper *discovery.AuthenticatedGossiper
+
+	// ChanStatusMgr is used to set or un-set the disabled bit in channel
+	// updates.
+	ChanStatusMgr *netann.ChanStatusManager
+
+	// ChainIO is used to retrieve the best block.
+	ChainIO lnwallet.BlockChainIO
+
+	// FeeEstimator is used to compute our target ideal fee-per-kw when
+	// initializing the coop close process.
+	FeeEstimator chainfee.Estimator
+
+	// Signer is used when creating *lnwallet.LightningChannel instances.
+	Signer input.Signer
+
+	// SigPool is used when creating *lnwallet.LightningChannel instances.
+	SigPool *lnwallet.SigPool
+
+	// Wallet is used to publish transactions and generate delivery scripts
+	// during the coop close process.
+	Wallet *lnwallet.LightningWallet
+
+	// ChainNotifier is used to receive confirmations of a coop close
+	// transaction.
+	ChainNotifier chainntnfs.ChainNotifier
+
+	// RoutingPolicy is used to set the forwarding policy for links created by
+	// the Brontide.
+	RoutingPolicy htlcswitch.ForwardingPolicy
+
+	// Sphinx is used when setting up ChannelLinks so they can decode sphinx
+	// onion blobs.
+	Sphinx *hop.OnionProcessor
+
+	// WitnessBeacon is used when setting up ChannelLinks so they can add any
+	// preimages that they learn.
+	WitnessBeacon contractcourt.WitnessBeacon
+
+	// Invoices is passed to the ChannelLink on creation and handles all
+	// invoice-related logic.
+	Invoices *invoices.InvoiceRegistry
+
+	// ChannelNotifier is used by the link to notify other sub-systems about
+	// channel-related events and by the Brontide to subscribe to
+	// ActiveLinkEvents.
+	ChannelNotifier *channelnotifier.ChannelNotifier
+
+	// HtlcNotifier is used when creating a ChannelLink.
+	HtlcNotifier *htlcswitch.HtlcNotifier
+
+	// TowerClient is used by legacy channels to backup revoked states.
+	TowerClient wtclient.Client
+
+	// AnchorTowerClient is used by anchor channels to backup revoked
+	// states.
+	AnchorTowerClient wtclient.Client
+
+	// DisconnectPeer is used to disconnect this peer if the cooperative close
+	// process fails.
+	DisconnectPeer func(*btcec.PublicKey) error
+
+	// GenNodeAnnouncement is used to send our node announcement to the remote
+	// on startup.
+	GenNodeAnnouncement func(bool,
+		...netann.NodeAnnModifier) (lnwire.NodeAnnouncement, error)
+
+	// PrunePersistentPeerConnection is used to remove all internal state
+	// related to this peer in the server.
+	PrunePersistentPeerConnection func([33]byte)
+
+	// FetchLastChanUpdate fetches our latest channel update for a target
+	// channel.
+	FetchLastChanUpdate func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate,
+		error)
+
+	// FundingManager is an implementation of the fmgr.Manager interface.
+	FundingManager fmgr.Manager
+
+	// Hodl is used when creating ChannelLinks to specify HodlFlags as
+	// breakpoints in dev builds.
+	Hodl *hodl.Config
+
+	// UnsafeReplay is used when creating ChannelLinks to specify whether or
+	// not to replay adds on its commitment tx.
+	UnsafeReplay bool
+
+	// MaxOutgoingCltvExpiry is used when creating ChannelLinks and is the max
+	// number of blocks that funds could be locked up for when forwarding
+	// payments.
+	MaxOutgoingCltvExpiry uint32
+
+	// MaxChannelFeeAllocation is used when creating ChannelLinks and is the
+	// maximum percentage of total funds that can be allocated to a channel's
+	// commitment fee. This only applies for the initiator of the channel.
+	MaxChannelFeeAllocation float64
+
+	// ServerPubKey is the serialized, compressed public key of our lnd node.
+	// It is used to determine which policy (channel edge) to pass to the
+	// ChannelLink.
+	ServerPubKey [33]byte
+
+	// Quit is the server's quit channel. If this is closed, we halt operation.
+	Quit chan struct{}
 }
 
 // Brontide is an active peer on the Lightning Network. This struct is responsible
@@ -570,6 +761,18 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 		return p.cfg.ChainArb.UpdateContractSignals(*chanPoint, signals)
 	}
 
+	chanType := lnChan.State().ChanType
+
+	// Select the appropriate tower client based on the channel type. It's
+	// okay if the clients are disabled altogether and these values are nil,
+	// as the link will check for nilness before using either.
+	var towerClient htlcswitch.TowerClient
+	if chanType.HasAnchors() {
+		towerClient = p.cfg.AnchorTowerClient
+	} else {
+		towerClient = p.cfg.TowerClient
+	}
+
 	linkCfg := htlcswitch.ChannelLinkConfig{
 		Peer:                    p,
 		DecodeHopIterators:      p.cfg.Sphinx.DecodeHopIterators,
@@ -588,14 +791,14 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 		OnChannelFailure:        onChannelFailure,
 		SyncStates:              syncStates,
 		BatchTicker:             ticker.New(50 * time.Millisecond),
-		FwdPkgGCTicker:          ticker.New(time.Minute),
+		FwdPkgGCTicker:          ticker.New(time.Hour),
 		PendingCommitTicker:     ticker.New(time.Minute),
 		BatchSize:               10,
 		UnsafeReplay:            p.cfg.UnsafeReplay,
 		MinFeeUpdateTimeout:     htlcswitch.DefaultMinLinkFeeUpdateTimeout,
 		MaxFeeUpdateTimeout:     htlcswitch.DefaultMaxLinkFeeUpdateTimeout,
 		OutgoingCltvRejectDelta: p.cfg.OutgoingCltvRejectDelta,
-		TowerClient:             p.cfg.TowerClient,
+		TowerClient:             towerClient,
 		MaxOutgoingCltvExpiry:   p.cfg.MaxOutgoingCltvExpiry,
 		MaxFeeAllocation:        p.cfg.MaxChannelFeeAllocation,
 		NotifyActiveLink:        p.cfg.ChannelNotifier.NotifyActiveLinkEvent,
@@ -693,11 +896,7 @@ func (p *Brontide) String() string {
 // readNextMessage reads, and returns the next message on the wire along with
 // any additional raw payload.
 func (p *Brontide) readNextMessage() (lnwire.Message, error) {
-	noiseConn, ok := p.cfg.Conn.(*brontide.Conn)
-	if !ok {
-		return nil, fmt.Errorf("brontide.Conn required to read messages")
-	}
-
+	noiseConn := p.cfg.Conn
 	err := noiseConn.SetReadDeadline(time.Time{})
 	if err != nil {
 		return nil, err
@@ -1129,16 +1328,13 @@ out:
 			pongBytes := make([]byte, msg.NumPongBytes)
 			p.queueMsg(lnwire.NewPong(pongBytes), nil)
 
-		case *lnwire.OpenChannel:
-			p.cfg.ProcessFundingOpen(msg, p)
-		case *lnwire.AcceptChannel:
-			p.cfg.ProcessFundingAccept(msg, p)
-		case *lnwire.FundingCreated:
-			p.cfg.ProcessFundingCreated(msg, p)
-		case *lnwire.FundingSigned:
-			p.cfg.ProcessFundingSigned(msg, p)
-		case *lnwire.FundingLocked:
-			p.cfg.ProcessFundingLocked(msg, p)
+		case *lnwire.OpenChannel,
+			*lnwire.AcceptChannel,
+			*lnwire.FundingCreated,
+			*lnwire.FundingSigned,
+			*lnwire.FundingLocked:
+
+			p.cfg.FundingManager.ProcessFundingMsg(msg, p)
 
 		case *lnwire.Shutdown:
 			select {
@@ -1276,8 +1472,6 @@ func (p *Brontide) storeError(err error) {
 //
 // NOTE: This method should only be called from within the readHandler.
 func (p *Brontide) handleError(msg *lnwire.Error) bool {
-	key := p.cfg.Addr.IdentityKey
-
 	// Store the error we have received.
 	p.storeError(msg)
 
@@ -1293,8 +1487,8 @@ func (p *Brontide) handleError(msg *lnwire.Error) bool {
 
 	// If the channel ID for the error message corresponds to a pending
 	// channel, then the funding manager will handle the error.
-	case p.cfg.IsPendingChannel(msg.ChanID, key):
-		p.cfg.ProcessFundingError(msg, key)
+	case p.cfg.FundingManager.IsPendingChannel(msg.ChanID, p):
+		p.cfg.FundingManager.ProcessFundingMsg(msg, p)
 		return false
 
 	// If not we hand the error to the channel link for this channel.
@@ -1516,10 +1710,7 @@ func (p *Brontide) writeMessage(msg lnwire.Message) error {
 		p.logWireMessage(msg, false)
 	}
 
-	noiseConn, ok := p.cfg.Conn.(*brontide.Conn)
-	if !ok {
-		return fmt.Errorf("brontide.Conn required to write messages")
-	}
+	noiseConn := p.cfg.Conn
 
 	flushMsg := func() error {
 		// Ensure the write deadline is set before we attempt to send
@@ -1661,6 +1852,8 @@ out:
 		}
 	}
 
+	// Avoid an exit deadlock by ensuring WaitGroups are decremented before
+	// disconnect.
 	p.wg.Done()
 
 	p.Disconnect(exitErr)
@@ -2321,6 +2514,13 @@ type linkFailureReport struct {
 // force closing the channel depending on severity, and sending the error
 // message back to the remote party.
 func (p *Brontide) handleLinkFailure(failure linkFailureReport) {
+	// Retrieve the channel from the map of active channels. We do this to
+	// have access to it even after WipeChannel remove it from the map.
+	chanID := lnwire.NewChanIDFromOutPoint(&failure.chanPoint)
+	p.activeChanMtx.Lock()
+	lnChan := p.activeChannels[chanID]
+	p.activeChanMtx.Unlock()
+
 	// We begin by wiping the link, which will remove it from the switch,
 	// such that it won't be attempted used for any more updates.
 	//
@@ -2346,6 +2546,17 @@ func (p *Brontide) handleLinkFailure(failure linkFailureReport) {
 			peerLog.Infof("channel(%v) force "+
 				"closed with txid %v",
 				failure.shortChanID, closeTx.TxHash())
+		}
+	}
+
+	// If this is a permanent failure, we will mark the channel borked.
+	if failure.linkErr.PermanentFailure && lnChan != nil {
+		peerLog.Warnf("Marking link(%v) borked due to permanent "+
+			"failure", failure.shortChanID)
+
+		if err := lnChan.State().MarkBorked(); err != nil {
+			peerLog.Errorf("Unable to mark channel %v borked: %v",
+				failure.shortChanID, err)
 		}
 	}
 

@@ -15,6 +15,7 @@ import (
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lntypes"
+	"github.com/monasuite/lnd/macaroons"
 )
 
 const (
@@ -91,16 +92,19 @@ func New(cfg *Config) (*Server, lnrpc.MacaroonPerms, error) {
 	)
 
 	// Now that we know the full path of the invoices macaroon, we can
-	// check to see if we need to create it or not.
-	if !lnrpc.FileExists(macFilePath) && cfg.MacService != nil {
+	// check to see if we need to create it or not. If stateless_init is set
+	// then we don't write the macaroons.
+	if cfg.MacService != nil && !cfg.MacService.StatelessInit &&
+		!lnrpc.FileExists(macFilePath) {
+
 		log.Infof("Baking macaroons for invoices RPC Server at: %v",
 			macFilePath)
 
 		// At this point, we know that the invoices macaroon doesn't
 		// yet, exist, so we need to create it with the help of the
 		// main macaroon service.
-		invoicesMac, err := cfg.MacService.Oven.NewMacaroon(
-			context.Background(), bakery.LatestVersion, nil,
+		invoicesMac, err := cfg.MacService.NewMacaroon(
+			context.Background(), macaroons.DefaultRootKeyID,
 			macaroonOps...,
 		)
 		if err != nil {
@@ -112,7 +116,7 @@ func New(cfg *Config) (*Server, lnrpc.MacaroonPerms, error) {
 		}
 		err = ioutil.WriteFile(macFilePath, invoicesMacBytes, 0644)
 		if err != nil {
-			os.Remove(macFilePath)
+			_ = os.Remove(macFilePath)
 			return nil, nil, err
 		}
 	}
@@ -288,6 +292,11 @@ func (s *Server) AddHoldInvoice(ctx context.Context,
 		return nil, err
 	}
 
+	// Convert the passed routing hints to the required format.
+	routeHints, err := CreateZpay32HopHints(invoice.RouteHints)
+	if err != nil {
+		return nil, err
+	}
 	addInvoiceData := &AddInvoiceData{
 		Memo:            invoice.Memo,
 		Hash:            &hash,
@@ -299,6 +308,7 @@ func (s *Server) AddHoldInvoice(ctx context.Context,
 		Private:         invoice.Private,
 		HodlInvoice:     true,
 		Preimage:        nil,
+		RouteHints:      routeHints,
 	}
 
 	_, dbInvoice, err := AddInvoice(ctx, addInvoiceCfg, addInvoiceData)

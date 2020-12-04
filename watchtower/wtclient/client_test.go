@@ -1,5 +1,3 @@
-// +build dev
-
 package wtclient_test
 
 import (
@@ -14,16 +12,19 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
+	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/lnd/tor"
 	"github.com/monasuite/lnd/watchtower/blob"
 	"github.com/monasuite/lnd/watchtower/wtclient"
 	"github.com/monasuite/lnd/watchtower/wtdb"
 	"github.com/monasuite/lnd/watchtower/wtmock"
 	"github.com/monasuite/lnd/watchtower/wtpolicy"
 	"github.com/monasuite/lnd/watchtower/wtserver"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -85,7 +86,9 @@ func newMockNet(cb func(wtserver.Peer)) *mockNet {
 	}
 }
 
-func (m *mockNet) Dial(network string, address string) (net.Conn, error) {
+func (m *mockNet) Dial(network string, address string,
+	timeout time.Duration) (net.Conn, error) {
+
 	return nil, nil
 }
 
@@ -101,8 +104,9 @@ func (m *mockNet) ResolveTCPAddr(network string, address string) (*net.TCPAddr, 
 	panic("not implemented")
 }
 
-func (m *mockNet) AuthDial(local keychain.SingleKeyECDH, netAddr *lnwire.NetAddress,
-	dialer func(string, string) (net.Conn, error)) (wtserver.Peer, error) {
+func (m *mockNet) AuthDial(local keychain.SingleKeyECDH,
+	netAddr *lnwire.NetAddress,
+	dialer tor.DialFunc) (wtserver.Peer, error) {
 
 	localPk := local.PubKey()
 	localAddr := &net.TCPAddr{
@@ -434,10 +438,8 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 	clientDB := wtmock.NewClientDB()
 
 	clientCfg := &wtclient.Config{
-		Signer: signer,
-		Dial: func(string, string) (net.Conn, error) {
-			return nil, nil
-		},
+		Signer:        signer,
+		Dial:          mockNet.Dial,
 		DB:            clientDB,
 		AuthDial:      mockNet.AuthDial,
 		SecretKeyRing: wtmock.NewSecretKeyRing(),
@@ -445,10 +447,11 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 		NewAddress: func() ([]byte, error) {
 			return addrScript, nil
 		},
-		ReadTimeout:  timeout,
-		WriteTimeout: timeout,
-		MinBackoff:   time.Millisecond,
-		MaxBackoff:   10 * time.Millisecond,
+		ReadTimeout:    timeout,
+		WriteTimeout:   timeout,
+		MinBackoff:     time.Millisecond,
+		MaxBackoff:     time.Second,
+		ForceQuitDelay: 10 * time.Second,
 	}
 	client, err := wtclient.New(clientCfg)
 	if err != nil {
@@ -631,7 +634,7 @@ func (h *testHarness) backupState(id, i uint64, expErr error) {
 	_, retribution := h.channel(id).getState(i)
 
 	chanID := chanIDFromInt(id)
-	err := h.client.BackupState(&chanID, retribution, false)
+	err := h.client.BackupState(&chanID, retribution, channeldb.SingleFunderBit)
 	if err != expErr {
 		h.t.Fatalf("back error mismatch, want: %v, got: %v",
 			expErr, err)
@@ -1457,7 +1460,8 @@ var clientTests = []clientTest{
 			// Re-add the tower. We prevent the tower from acking
 			// session creation to ensure the inactive sessions are
 			// not used.
-			h.server.Stop()
+			err := h.server.Stop()
+			require.Nil(h.t, err)
 			h.serverCfg.NoAckCreateSession = true
 			h.startServer()
 			h.addTower(h.serverAddr)
@@ -1466,10 +1470,66 @@ var clientTests = []clientTest{
 			// Finally, allow the tower to ack session creation,
 			// allowing the state updates to be sent through the new
 			// session.
-			h.server.Stop()
+			err = h.server.Stop()
+			require.Nil(h.t, err)
 			h.serverCfg.NoAckCreateSession = false
 			h.startServer()
 			h.waitServerUpdates(hints[numUpdates/2:], 5*time.Second)
+		},
+	},
+	{
+		// Asserts that the client's force quite delay will properly
+		// shutdown the client if it is unable to completely drain the
+		// task pipeline.
+		name: "force unclean shutdown",
+		cfg: harnessCfg{
+			localBalance:  localBalance,
+			remoteBalance: remoteBalance,
+			policy: wtpolicy.Policy{
+				TxPolicy: wtpolicy.TxPolicy{
+					BlobType:     blob.TypeAltruistCommit,
+					SweepFeeRate: wtpolicy.DefaultSweepFeeRate,
+				},
+				MaxUpdates: 5,
+			},
+		},
+		fn: func(h *testHarness) {
+			const (
+				chanID     = 0
+				numUpdates = 6
+				maxUpdates = 5
+			)
+
+			// Advance the channel to create all states.
+			hints := h.advanceChannelN(chanID, numUpdates)
+
+			// Back up 4 of the 5 states for the negotiated session.
+			h.backupStates(chanID, 0, maxUpdates-1, nil)
+			h.waitServerUpdates(hints[:maxUpdates-1], 5*time.Second)
+
+			// Now, restart the tower and prevent it from acking any
+			// new sessions. We do this here as once the last slot
+			// is exhausted the client will attempt to renegotiate.
+			err := h.server.Stop()
+			require.Nil(h.t, err)
+			h.serverCfg.NoAckCreateSession = true
+			h.startServer()
+
+			// Back up the remaining two states. Once the first is
+			// processed, the session will be exhausted but the
+			// client won't be able to regnegotiate a session for
+			// the final state. We'll only wait for the first five
+			// states to arrive at the tower.
+			h.backupStates(chanID, maxUpdates-1, numUpdates, nil)
+			h.waitServerUpdates(hints[:maxUpdates], 5*time.Second)
+
+			// Finally, stop the client which will continue to
+			// attempt session negotiation since it has one more
+			// state to process. After the force quite delay
+			// expires, the client should force quite itself and
+			// allow the test to complete.
+			err = h.client.Stop()
+			require.Nil(h.t, err)
 		},
 	},
 }

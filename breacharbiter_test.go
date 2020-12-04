@@ -29,6 +29,7 @@ import (
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lntest/mock"
 	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwallet/chainfee"
@@ -430,11 +431,13 @@ func (frs *failingRetributionStore) Remove(key *wire.OutPoint) error {
 	return frs.rs.Remove(key)
 }
 
-func (frs *failingRetributionStore) ForAll(cb func(*retributionInfo) error) error {
+func (frs *failingRetributionStore) ForAll(cb func(*retributionInfo) error,
+	reset func()) error {
+
 	frs.mu.Lock()
 	defer frs.mu.Unlock()
 
-	return frs.rs.ForAll(cb)
+	return frs.rs.ForAll(cb, reset)
 }
 
 // Parse the pubkeys in the breached outputs.
@@ -591,10 +594,13 @@ func (rs *mockRetributionStore) Remove(key *wire.OutPoint) error {
 	return nil
 }
 
-func (rs *mockRetributionStore) ForAll(cb func(*retributionInfo) error) error {
+func (rs *mockRetributionStore) ForAll(cb func(*retributionInfo) error,
+	reset func()) error {
+
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 
+	reset()
 	for _, retInfo := range rs.state {
 		if err := cb(copyRetInfo(retInfo)); err != nil {
 			return err
@@ -716,6 +722,8 @@ func countRetributions(t *testing.T, rs RetributionStore) int {
 	err := rs.ForAll(func(_ *retributionInfo) error {
 		count++
 		return nil
+	}, func() {
+		count = 0
 	})
 	if err != nil {
 		t.Fatalf("unable to list retributions in db: %v", err)
@@ -918,7 +926,7 @@ restartCheck:
 	// Construct a set of all channel points presented by the store. Entries
 	// are only be added to the set if their corresponding retribution
 	// information matches the test vector.
-	var foundSet = make(map[wire.OutPoint]struct{})
+	var foundSet map[wire.OutPoint]struct{}
 
 	// Iterate through the stored retributions, checking to see if we have
 	// an equivalent retribution in the test vector. This will return an
@@ -947,6 +955,8 @@ restartCheck:
 		}
 
 		return nil
+	}, func() {
+		foundSet = make(map[wire.OutPoint]struct{})
 	}); err != nil {
 		t.Fatalf("failed to iterate over persistent retributions: %v",
 			err)
@@ -1433,8 +1443,8 @@ func testBreachSpends(t *testing.T, test breachTest) {
 
 	// Notify that the breaching transaction is confirmed, to trigger the
 	// retribution logic.
-	notifier := brar.cfg.Notifier.(*mockSpendNotifier)
-	notifier.confChannel <- &chainntnfs.TxConfirmation{}
+	notifier := brar.cfg.Notifier.(*mock.SpendNotifier)
+	notifier.ConfChan <- &chainntnfs.TxConfirmation{}
 
 	// The breach arbiter should attempt to sweep all outputs on the
 	// breached commitment. We'll pretend that the HTLC output has been
@@ -1510,7 +1520,7 @@ func testBreachSpends(t *testing.T, test breachTest) {
 
 	// Deliver confirmation of sweep if the test expects it.
 	if test.sendFinalConf {
-		notifier.confChannel <- &chainntnfs.TxConfirmation{}
+		notifier.ConfChan <- &chainntnfs.TxConfirmation{}
 	}
 
 	// Assert that the channel is fully resolved.
@@ -1670,10 +1680,10 @@ func createTestArbiter(t *testing.T, contractBreaches chan *ContractBreachEvent,
 
 	aliceKeyPriv, _ := btcec.PrivKeyFromBytes(btcec.S256(),
 		alicesPrivKey)
-	signer := &mockSigner{key: aliceKeyPriv}
+	signer := &mock.SingleSigner{Privkey: aliceKeyPriv}
 
 	// Assemble our test arbiter.
-	notifier := makeMockSpendNotifier()
+	notifier := mock.MakeMockSpendNotifier()
 	ba := newBreachArbiter(&BreachConfig{
 		CloseLink:          func(_ *wire.OutPoint, _ htlcswitch.ChannelCloseType) {},
 		DB:                 db,
@@ -1897,8 +1907,8 @@ func createInitChannels(revocationWindow int) (*lnwallet.LightningChannel, *lnwa
 		Packager:                channeldb.NewChannelPackager(shortChanID),
 	}
 
-	aliceSigner := &mockSigner{aliceKeyPriv}
-	bobSigner := &mockSigner{bobKeyPriv}
+	aliceSigner := &mock.SingleSigner{Privkey: aliceKeyPriv}
+	bobSigner := &mock.SingleSigner{Privkey: bobKeyPriv}
 
 	alicePool := lnwallet.NewSigPool(1, aliceSigner)
 	channelAlice, err := lnwallet.NewLightningChannel(

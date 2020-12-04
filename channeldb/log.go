@@ -3,6 +3,7 @@ package channeldb
 import (
 	"github.com/btcsuite/btclog"
 	"github.com/monasuite/lnd/build"
+	"github.com/monasuite/lnd/channeldb/kvdb"
 	mig "github.com/monasuite/lnd/channeldb/migration"
 	"github.com/monasuite/lnd/channeldb/migration12"
 	"github.com/monasuite/lnd/channeldb/migration13"
@@ -35,4 +36,5 @@ func UseLogger(logger btclog.Logger) {
 	migration12.UseLogger(logger)
 	migration13.UseLogger(logger)
 	migration16.UseLogger(logger)
+	kvdb.UseLogger(logger)
 }

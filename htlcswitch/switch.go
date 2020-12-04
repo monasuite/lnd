@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -419,6 +420,9 @@ func (s *Switch) GetPaymentResult(paymentID uint64, paymentHash lntypes.Hash,
 			return
 		}
 
+		log.Debugf("Received network result %T for paymentID=%v", n.msg,
+			paymentID)
+
 		// Extract the result and pass it to the result channel.
 		result, err := s.extractResult(
 			deobfuscator, n, paymentID, paymentHash,
@@ -435,6 +439,14 @@ func (s *Switch) GetPaymentResult(paymentID uint64, paymentHash lntypes.Hash,
 	}()
 
 	return resultChan, nil
+}
+
+// CleanStore calls the underlying result store, telling it is safe to delete
+// all entries except the ones in the keepPids map. This should be called
+// preiodically to let the switch clean up payment results that we have
+// handled.
+func (s *Switch) CleanStore(keepPids map[uint64]struct{}) error {
+	return s.networkResults.cleanStore(keepPids)
 }
 
 // SendHTLC is used by other subsystems which aren't belong to htlc switch
@@ -1010,9 +1022,9 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 		// trying all links to utilize our available bandwidth.
 		linkErrs := make(map[lnwire.ShortChannelID]*LinkError)
 
-		// Try to find destination channel link with appropriate
+		// Find all destination channel links with appropriate
 		// bandwidth.
-		var destination ChannelLink
+		var destinations []ChannelLink
 		for _, link := range interfaceLinks {
 			var failure *LinkError
 
@@ -1035,10 +1047,11 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 				)
 			}
 
-			// Stop searching if this link can forward the htlc.
+			// If this link can forward the htlc, add it to the set
+			// of destinations.
 			if failure == nil {
-				destination = link
-				break
+				destinations = append(destinations, link)
+				continue
 			}
 
 			linkErrs[link.ShortChanID()] = failure
@@ -1048,7 +1061,7 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 		// satisfying the current policy, then we'll send back an
 		// error, but ensure we send back the error sourced at the
 		// *target* link.
-		if destination == nil {
+		if len(destinations) == 0 {
 			// At this point, some or all of the links rejected the
 			// HTLC so we couldn't forward it. So we'll try to look
 			// up the error that came from the source.
@@ -1074,6 +1087,12 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 
 			return s.failAddPacket(packet, linkErr)
 		}
+
+		// Choose a random link out of the set of links that can forward
+		// this htlc. The reason for randomization is to evenly
+		// distribute the htlc load without making assumptions about
+		// what the best channel is.
+		destination := destinations[rand.Intn(len(destinations))]
 
 		// Send the packet to the destination channel link which
 		// manages the channel.
@@ -1811,12 +1830,14 @@ func (s *Switch) reforwardResponses() error {
 func (s *Switch) loadChannelFwdPkgs(source lnwire.ShortChannelID) ([]*channeldb.FwdPkg, error) {
 
 	var fwdPkgs []*channeldb.FwdPkg
-	if err := kvdb.Update(s.cfg.DB, func(tx kvdb.RwTx) error {
+	if err := kvdb.View(s.cfg.DB, func(tx kvdb.RTx) error {
 		var err error
 		fwdPkgs, err = s.cfg.SwitchPackager.LoadChannelFwdPkgs(
 			tx, source,
 		)
 		return err
+	}, func() {
+		fwdPkgs = nil
 	}); err != nil {
 		return nil, err
 	}
@@ -2167,6 +2188,12 @@ func (s *Switch) getLinks(destination [33]byte) ([]ChannelLink, error) {
 // CircuitModifier returns a reference to subset of the interfaces provided by
 // the circuit map, to allow links to open and close circuits.
 func (s *Switch) CircuitModifier() CircuitModifier {
+	return s.circuits
+}
+
+// CircuitLookup returns a reference to subset of the interfaces provided by the
+// circuit map, to allow looking up circuits.
+func (s *Switch) CircuitLookup() CircuitLookup {
 	return s.circuits
 }
 

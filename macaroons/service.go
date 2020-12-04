@@ -21,6 +21,13 @@ var (
 	// the macaroon stores.
 	DBFilename = "macaroons.db"
 
+	// ErrMissingRootKeyID specifies the root key ID is missing.
+	ErrMissingRootKeyID = fmt.Errorf("missing root key ID")
+
+	// ErrDeletionForbidden is used when attempting to delete the
+	// DefaultRootKeyID or the encryptedKeyID.
+	ErrDeletionForbidden = fmt.Errorf("the specified ID cannot be deleted")
+
 	// PermissionEntityCustomURI is a special entity name for a permission
 	// that does not describe an entity:action pair but instead specifies a
 	// specific URI that needs to be granted access to. This can be used for
@@ -55,6 +62,10 @@ type Service struct {
 	// If no external validator for an URI is specified, the service will
 	// use the internal validator.
 	externalValidators map[string]MacaroonValidator
+
+	// StatelessInit denotes if the service was initialized in the stateless
+	// mode where no macaroon files should be created on disk.
+	StatelessInit bool
 }
 
 // NewService returns a service backed by the macaroon Bolt DB stored in the
@@ -64,7 +75,9 @@ type Service struct {
 // listing the same checker more than once is not harmful. Default checkers,
 // such as those for `allow`, `time-before`, `declared`, and `error` caveats
 // are registered automatically and don't need to be added.
-func NewService(dir, location string, checks ...Checker) (*Service, error) {
+func NewService(dir, location string, statelessInit bool,
+	checks ...Checker) (*Service, error) {
+
 	// Ensure that the path to the directory exists.
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -111,6 +124,7 @@ func NewService(dir, location string, checks ...Checker) (*Service, error) {
 		Bakery:             *svc,
 		rks:                rootKeyStore,
 		externalValidators: make(map[string]MacaroonValidator),
+		StatelessInit:      statelessInit,
 	}, nil
 }
 
@@ -250,8 +264,8 @@ func (svc *Service) ValidateMacaroon(ctx context.Context,
 		return err
 	}
 
-	// Check the method being called against the permitted operation and
-	// the expiration time and IP address and return the result.
+	// Check the method being called against the permitted operation, the
+	// expiration time and IP address and return the result.
 	authChecker := svc.Checker.Auth(macaroon.Slice{mac})
 	_, err = authChecker.Allow(ctx, requiredPermissions...)
 
@@ -281,4 +295,52 @@ func (svc *Service) Close() error {
 // the result.
 func (svc *Service) CreateUnlock(password *[]byte) error {
 	return svc.rks.CreateUnlock(password)
+}
+
+// NewMacaroon wraps around the function Oven.NewMacaroon with the defaults,
+//  - version is always bakery.LatestVersion;
+//  - caveats is always nil.
+// In addition, it takes a rootKeyID parameter, and puts it into the context.
+// The context is passed through Oven.NewMacaroon(), in which calls the function
+// RootKey(), that reads the context for rootKeyID.
+func (svc *Service) NewMacaroon(
+	ctx context.Context, rootKeyID []byte,
+	ops ...bakery.Op) (*bakery.Macaroon, error) {
+
+	// Check rootKeyID is not called with nil or empty bytes. We want the
+	// caller to be aware the value of root key ID used, so we won't replace
+	// it with the DefaultRootKeyID if not specified.
+	if len(rootKeyID) == 0 {
+		return nil, ErrMissingRootKeyID
+	}
+
+	// // Pass the root key ID to context.
+	ctx = ContextWithRootKeyID(ctx, rootKeyID)
+
+	return svc.Oven.NewMacaroon(ctx, bakery.LatestVersion, nil, ops...)
+}
+
+// ListMacaroonIDs returns all the root key ID values except the value of
+// encryptedKeyID.
+func (svc *Service) ListMacaroonIDs(ctxt context.Context) ([][]byte, error) {
+	return svc.rks.ListMacaroonIDs(ctxt)
+}
+
+// DeleteMacaroonID removes one specific root key ID. If the root key ID is
+// found and deleted, it will be returned.
+func (svc *Service) DeleteMacaroonID(ctxt context.Context,
+	rootKeyID []byte) ([]byte, error) {
+	return svc.rks.DeleteMacaroonID(ctxt, rootKeyID)
+}
+
+// GenerateNewRootKey calls the underlying root key store's GenerateNewRootKey
+// and returns the result.
+func (svc *Service) GenerateNewRootKey() error {
+	return svc.rks.GenerateNewRootKey()
+}
+
+// ChangePassword calls the underlying root key store's ChangePassword and
+// returns the result.
+func (svc *Service) ChangePassword(oldPw, newPw []byte) error {
+	return svc.rks.ChangePassword(oldPw, newPw)
 }
