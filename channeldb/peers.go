@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lightningnetwork/lnd/channeldb/kvdb"
-	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/monasuite/lnd/routing/route"
 )
 
 var (

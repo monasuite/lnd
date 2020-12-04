@@ -5,7 +5,7 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 
-	"github.com/lightningnetwork/lnd/chainntnfs"
+	"github.com/monasuite/lnd/chainntnfs"
 )
 
 // SpendNotifier extends the mock.ChainNotifier so that spend

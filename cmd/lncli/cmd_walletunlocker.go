@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lightningnetwork/lnd/lncfg"
-	"github.com/lightningnetwork/lnd/lnrpc"
-	"github.com/lightningnetwork/lnd/walletunlocker"
+	"github.com/monasuite/lnd/lncfg"
+	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/walletunlocker"
 	"github.com/urfave/cli"
 )
 

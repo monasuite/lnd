@@ -11,11 +11,11 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcutil/psbt"
-	"github.com/btcsuite/btcwallet/wallet/txauthor"
-	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/monaarchives/btcwallet/wallet/txauthor"
+	"github.com/monaarchives/btcwallet/wtxmgr"
 
-	"github.com/lightningnetwork/lnd/lnwallet"
-	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
+	"github.com/monasuite/lnd/lnwallet"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 )
 
 var (

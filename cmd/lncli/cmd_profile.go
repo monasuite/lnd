@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/btcsuite/btcutil"
-	"github.com/lightningnetwork/lnd/lncfg"
+	"github.com/monasuite/lnd/lncfg"
 	"github.com/urfave/cli"
 	"gopkg.in/macaroon.v2"
 )

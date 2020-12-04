@@ -7,10 +7,10 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcutil"
-	"github.com/lightningnetwork/lnd/input"
-	"github.com/lightningnetwork/lnd/lnrpc"
-	"github.com/lightningnetwork/lnd/lnwallet/chancloser"
-	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/lnwallet/chancloser"
+	"github.com/monasuite/lnd/lnwire"
 	"github.com/stretchr/testify/require"
 )
 

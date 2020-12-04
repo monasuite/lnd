@@ -8,7 +8,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/lightningnetwork/lnd/zpay32"
+	"github.com/monasuite/lnd/zpay32"
 )
 
 // Fuzz_encode is used by go-fuzz.

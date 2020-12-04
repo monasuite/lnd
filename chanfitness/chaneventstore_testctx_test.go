@@ -8,13 +8,14 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/clock"
-	"github.com/lightningnetwork/lnd/peernotifier"
-	"github.com/lightningnetwork/lnd/routing/route"
-	"github.com/lightningnetwork/lnd/subscribe"
 	"github.com/lightningnetwork/lnd/ticker"
+	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/channelnotifier"
+	"github.com/monasuite/lnd/peernotifier"
+	"github.com/monasuite/lnd/routing/route"
+	"github.com/monasuite/lnd/subscribe"
+
 	"github.com/stretchr/testify/require"
 )
 

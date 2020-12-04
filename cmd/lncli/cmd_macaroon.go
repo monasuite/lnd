@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/lightningnetwork/lnd/lncfg"
-	"github.com/lightningnetwork/lnd/lnrpc"
-	"github.com/lightningnetwork/lnd/macaroons"
+	"github.com/monasuite/lnd/lncfg"
+	"github.com/monasuite/lnd/lnrpc"
+	"github.com/monasuite/lnd/macaroons"
 	"github.com/urfave/cli"
 	"gopkg.in/macaroon-bakery.v2/bakery"
 	"gopkg.in/macaroon.v2"

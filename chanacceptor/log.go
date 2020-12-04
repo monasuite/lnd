@@ -2,7 +2,7 @@ package chanacceptor
 
 import (
 	"github.com/btcsuite/btclog"
-	"github.com/lightningnetwork/lnd/build"
+	"github.com/monasuite/lnd/build"
 )
 
 // Subsystem defines the logging code for this subsystem.

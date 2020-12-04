@@ -3,7 +3,7 @@ package chanacceptor
 import (
 	"testing"
 
-	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/monasuite/lnd/lnwire"
 	"github.com/stretchr/testify/require"
 )
 

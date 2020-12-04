@@ -1,8 +1,8 @@
 package fmgr
 
 import (
-	"github.com/lightningnetwork/lnd/lnpeer"
-	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/monasuite/lnd/lnpeer"
+	"github.com/monasuite/lnd/lnwire"
 )
 
 // Manager is an interface that describes the basic operation of a funding

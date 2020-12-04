@@ -8,7 +8,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 
-	"github.com/lightningnetwork/lnd/input"
+	"github.com/monasuite/lnd/input"
 )
 
 // DummySignature is a dummy Signature implementation.

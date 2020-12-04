@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/lnrpc/signrpc"
-	"github.com/lightningnetwork/lnd/lntest"
+	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lnrpc/signrpc"
+	"github.com/monasuite/lnd/lntest"
 	"github.com/stretchr/testify/require"
 )
 

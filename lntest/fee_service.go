@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
+	"github.com/monasuite/lnd/lnwallet/chainfee"
 )
 
 const (

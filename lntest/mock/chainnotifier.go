@@ -4,7 +4,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 
-	"github.com/lightningnetwork/lnd/chainntnfs"
+	"github.com/monasuite/lnd/chainntnfs"
 )
 
 // ChainNotifier is a mock implementation of the ChainNotifier interface.
