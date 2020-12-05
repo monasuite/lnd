@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/monasuite/lnd/routing/route"
 	"github.com/stretchr/testify/require"
 )
 
