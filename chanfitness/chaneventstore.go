@@ -23,7 +23,6 @@ import (
 	"github.com/monasuite/lnd/peernotifier"
 	"github.com/monasuite/lnd/routing/route"
 	"github.com/monasuite/lnd/subscribe"
-
 )
 
 const (
