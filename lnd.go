@@ -22,15 +22,10 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcutil"
+	proxy "github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/lightningnetwork/lnd/cert"
 	"github.com/monaarchives/btcwallet/wallet"
 	"github.com/monaarchives/btcwallet/walletdb"
-	proxy "github.com/grpc-ecosystem/grpc-gateway/runtime"
-	"golang.org/x/crypto/acme/autocert"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"gopkg.in/macaroon-bakery.v2/bakery"
-	"gopkg.in/macaroon.v2"
-	"github.com/lightningnetwork/lnd/cert"
 	"github.com/monasuite/lnd/autopilot"
 	"github.com/monasuite/lnd/build"
 	"github.com/monasuite/lnd/chainreg"
@@ -49,6 +44,11 @@ import (
 	"github.com/monasuite/lnd/watchtower/wtdb"
 	"github.com/monasuite/neutrino"
 	"github.com/monasuite/neutrino/headerfs"
+	"golang.org/x/crypto/acme/autocert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"gopkg.in/macaroon-bakery.v2/bakery"
+	"gopkg.in/macaroon.v2"
 )
 
 // WalletUnlockerAuthOptions returns a list of DialOptions that can be used to
