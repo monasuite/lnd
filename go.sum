@@ -195,6 +195,8 @@ github.com/monaarchives/btcwallet v0.12.2 h1:C4aS/eT3qQy32zG0w8MBsRZnBgA7f/gTyYj
 github.com/monaarchives/btcwallet v0.12.2/go.mod h1:EjBmdQhAz5cJKEb/iiIJEJwuBaKtLQOg5XbZJCVVkvs=
 github.com/monaarchives/btcwallet v0.12.3-0.20201011095755-9591d0c7ac59 h1:/4TiSOM5gbPLG0H6Xc2PZT6298w4qHGd3RsOQ5Uxm4E=
 github.com/monaarchives/btcwallet v0.12.3-0.20201011095755-9591d0c7ac59/go.mod h1:CEiJxitElPisUEgpSBtCNNUUkl3doM/WkFrfUU69oJ4=
+github.com/monaarchives/btcwallet v0.12.3-0.20201204220812-b37545d0f57f h1:hNyqueMcMTIAKVatrRGYzPnQ8Z+hZ/c5tKq0Qwi1gxQ=
+github.com/monaarchives/btcwallet v0.12.3-0.20201204220812-b37545d0f57f/go.mod h1:CEiJxitElPisUEgpSBtCNNUUkl3doM/WkFrfUU69oJ4=
 github.com/monaarchives/btcwallet v0.12.3-0.20201204234238-41a2879e3f27 h1:rBlO/qLyf4gkSas+q4CKHall5fH9EFr0jqPqJTqYL24=
 github.com/monaarchives/btcwallet v0.12.3-0.20201204234238-41a2879e3f27/go.mod h1:CEiJxitElPisUEgpSBtCNNUUkl3doM/WkFrfUU69oJ4=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0 h1:ksF3WKNj2SJX3yVWUuANQlS23Xe+9jpY1rrWlp9SalU=
