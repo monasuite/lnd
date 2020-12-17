@@ -18,8 +18,8 @@ import (
 	"github.com/monasuite/lnd/channeldb/migration12"
 	"github.com/monasuite/lnd/channeldb/migration13"
 	"github.com/monasuite/lnd/channeldb/migration16"
-	"github.com/monasuite/lnd/channeldb/migration_01_to_11"
 	"github.com/monasuite/lnd/channeldb/migration20"
+	"github.com/monasuite/lnd/channeldb/migration_01_to_11"
 	"github.com/monasuite/lnd/lnwire"
 )
 

@@ -98,7 +98,7 @@ jobs:
 
       - name: fetch and rebase on master
         run: |
-          git remote add upstream https://github.com/lightningnetwork/lnd
+          git remote add upstream https://github.com/monasuite/lnd
           git fetch upstream
           export GIT_COMMITTER_EMAIL="lnd-ci@example.com"
           export GIT_COMMITTER_NAME="LND CI"
