@@ -209,6 +209,8 @@ github.com/monaarchives/btcwallet/walletdb v1.1.0/go.mod h1:aRAkDxfj8PZil0BA+Pxg
 github.com/monaarchives/btcwallet/walletdb v1.2.0/go.mod h1:36eHRDquWOXxu/zPvc7pvUvh68kRu3GXVZuZDT2yuaw=
 github.com/monaarchives/btcwallet/walletdb v1.3.3 h1:eBi4UouW2EfrbiiwQxaSl/3C5093lgNIzhakep0jvsM=
 github.com/monaarchives/btcwallet/walletdb v1.3.3/go.mod h1:cTxlRgu7vsHZ+3HZSPaMzWKrZlmy+ux7HajNTOhCpZk=
+github.com/monaarchives/btcwallet/walletdb v1.3.4 h1:lWlJClSLLEJMWW0FHc3erCWrdAvFKGHmgbX89eJOjAc=
+github.com/monaarchives/btcwallet/walletdb v1.3.4/go.mod h1:cTxlRgu7vsHZ+3HZSPaMzWKrZlmy+ux7HajNTOhCpZk=
 github.com/monaarchives/btcwallet/wtxmgr v1.0.0/go.mod h1:XqMElePwLqnOJAd1MzG54vVo5Byo9NMutl6WNYfG79U=
 github.com/monaarchives/btcwallet/wtxmgr v1.2.0 h1:nQ0V3Y8+z+0tN0jm0uXo+xmFaB6BDANMPLQo0uXOwCI=
 github.com/monaarchives/btcwallet/wtxmgr v1.2.0/go.mod h1:gul6CfWnsuDQ1OFcPsstWG0M6iqI7qMYoNyBsCni3VA=

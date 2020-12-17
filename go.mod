@@ -53,7 +53,7 @@ require (
 	github.com/monaarchives/btcwallet v0.12.3-0.20201204220812-b37545d0f57f
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
-	github.com/monaarchives/btcwallet/walletdb v1.3.3
+	github.com/monaarchives/btcwallet/walletdb v1.3.4
 	github.com/monaarchives/btcwallet/wtxmgr v1.2.0
 	github.com/monasuite/monad v0.22.3-beta.0.20201009204152-fdfc222c5098
 	github.com/monasuite/neutrino v0.12.1-0.20201010095042-8eb571bc136e
