@@ -366,6 +366,10 @@ type fundingConfig struct {
 	// RegisteredChains keeps track of all chains that have been registered
 	// with the daemon.
 	RegisteredChains *chainreg.ChainRegistry
+
+	// MaxAnchorsCommitFeeRate is the max commitment fee rate we'll use as
+	// the initiator for channels of the anchor type.
+	MaxAnchorsCommitFeeRate chainfee.SatPerKWeight
 }
 
 // fundingManager acts as an orchestrator/bridge between the wallet's
@@ -1137,20 +1141,21 @@ func (f *fundingManager) ProcessFundingMsg(msg lnwire.Message, peer lnpeer.Peer)
 func commitmentType(localFeatures,
 	remoteFeatures *lnwire.FeatureVector) lnwallet.CommitmentType {
 
-	// If both peers are signalling support for anchor commitments, this
-	// implicitly mean we'll create the channel of this type. Note that
-	// this also enables tweakless commitments, as anchor commitments are
-	// always tweakless.
-	localAnchors := localFeatures.HasFeature(
-		lnwire.AnchorsOptional,
+	// If both peers are signalling support for anchor commitments with
+	// zero-fee HTLC transactions, we'll use this type.
+	localZeroFee := localFeatures.HasFeature(
+		lnwire.AnchorsZeroFeeHtlcTxOptional,
 	)
-	remoteAnchors := remoteFeatures.HasFeature(
-		lnwire.AnchorsOptional,
+	remoteZeroFee := remoteFeatures.HasFeature(
+		lnwire.AnchorsZeroFeeHtlcTxOptional,
 	)
-	if localAnchors && remoteAnchors {
-		return lnwallet.CommitmentTypeAnchors
+	if localZeroFee && remoteZeroFee {
+		return lnwallet.CommitmentTypeAnchorsZeroFeeHtlcTx
 	}
 
+	// Since we don't want to support the "legacy" anchor type, we will
+	// fall back to static remote key if the nodes don't support the zero
+	// fee HTLC tx anchor type.
 	localTweakless := localFeatures.HasFeature(
 		lnwire.StaticRemoteKeyOptional,
 	)
@@ -1306,10 +1311,9 @@ func (f *fundingManager) handleFundingOpen(peer lnpeer.Peer,
 	// responding side of a single funder workflow, we don't commit any
 	// funds to the channel ourselves.
 	//
-	// Before we init the channel, we'll also check to see if we've
-	// negotiated the new tweakless commitment format. This is only the
-	// case if *both* us and the remote peer are signaling the proper
-	// feature bit.
+	// Before we init the channel, we'll also check to see what commitment
+	// format we can use with this peer. This is dependent on *both* us and
+	// the remote peer are signaling the proper feature bit.
 	commitType := commitmentType(
 		peer.LocalFeatures(), peer.RemoteFeatures(),
 	)
@@ -3116,22 +3120,11 @@ func (f *fundingManager) handleInitFundingMsg(msg *initFundingMsg) {
 	case chainreg.MonacoinChain:
 		ourDustLimit = chainreg.DefaultMonacoinDustLimit
 	}
-
 	fndgLog.Infof("Initiating fundingRequest(local_amt=%v "+
 		"(subtract_fees=%v), push_amt=%v, chain_hash=%v, peer=%x, "+
 		"dust_limit=%v, min_confs=%v)", localAmt, msg.subtractFees,
 		msg.pushAmt, msg.chainHash, peerKey.SerializeCompressed(),
 		ourDustLimit, msg.minConfs)
-
-	// First, we'll query the fee estimator for a fee that should get the
-	// commitment transaction confirmed by the next few blocks (conf target
-	// of 3). We target the near blocks here to ensure that we'll be able
-	// to execute a timely unilateral channel closure if needed.
-	commitFeePerKw, err := f.cfg.FeeEstimator.EstimateFeePerKW(3)
-	if err != nil {
-		msg.err <- err
-		return
-	}
 
 	// We set the channel flags to indicate whether we want this channel to
 	// be announced to the network.
@@ -3185,13 +3178,31 @@ func (f *fundingManager) handleInitFundingMsg(msg *initFundingMsg) {
 	// wallet doesn't have enough funds to commit to this channel, then the
 	// request will fail, and be aborted.
 	//
-	// Before we init the channel, we'll also check to see if we've
-	// negotiated the new tweakless commitment format. This is only the
-	// case if *both* us and the remote peer are signaling the proper
-	// feature bit.
+	// Before we init the channel, we'll also check to see what commitment
+	// format we can use with this peer. This is dependent on *both* us and
+	// the remote peer are signaling the proper feature bit.
 	commitType := commitmentType(
 		msg.peer.LocalFeatures(), msg.peer.RemoteFeatures(),
 	)
+
+	// First, we'll query the fee estimator for a fee that should get the
+	// commitment transaction confirmed by the next few blocks (conf target
+	// of 3). We target the near blocks here to ensure that we'll be able
+	// to execute a timely unilateral channel closure if needed.
+	commitFeePerKw, err := f.cfg.FeeEstimator.EstimateFeePerKW(3)
+	if err != nil {
+		msg.err <- err
+		return
+	}
+
+	// For anchor channels cap the initial commit fee rate at our defined
+	// maximum.
+	if commitType == lnwallet.CommitmentTypeAnchorsZeroFeeHtlcTx &&
+		commitFeePerKw > f.cfg.MaxAnchorsCommitFeeRate {
+
+		commitFeePerKw = f.cfg.MaxAnchorsCommitFeeRate
+	}
+
 	req := &lnwallet.InitFundingReserveMsg{
 		ChainHash:        &msg.chainHash,
 		PendingChanID:    chanID,

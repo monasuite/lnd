@@ -1194,7 +1194,7 @@ func (r *rpcServer) SendCoins(ctx context.Context,
 	}
 
 	rpcsLog.Infof("[sendcoins] addr=%v, amt=%v, sat/kw=%v, min_confs=%v, "+
-		"sweep_all=%v",
+		"send_all=%v",
 		in.Addr, btcutil.Amount(in.Amount), int64(feePerKw), minConfs,
 		in.SendAll)
 
@@ -5509,11 +5509,13 @@ func marshallTopologyChange(topChange *routing.TopologyChange) *lnrpc.GraphTopol
 		}
 
 		nodeUpdates[i] = &lnrpc.NodeUpdate{
-			Addresses:      addrs,
-			IdentityKey:    encodeKey(nodeUpdate.IdentityKey),
-			GlobalFeatures: nodeUpdate.GlobalFeatures,
-			Alias:          nodeUpdate.Alias,
-			Color:          nodeUpdate.Color,
+			Addresses:   addrs,
+			IdentityKey: encodeKey(nodeUpdate.IdentityKey),
+			Alias:       nodeUpdate.Alias,
+			Color:       nodeUpdate.Color,
+			Features: invoicesrpc.CreateRPCFeatures(
+				nodeUpdate.Features,
+			),
 		}
 	}
 

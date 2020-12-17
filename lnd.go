@@ -411,7 +411,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 		// Create the macaroon authentication/authorization service.
 		macaroonService, err = macaroons.NewService(
 			cfg.networkDir, "lnd", walletInitParams.StatelessInit,
-			macaroons.IPLockChecker,
+			cfg.DB.Bolt.DBTimeout, macaroons.IPLockChecker,
 		)
 		if err != nil {
 			err := fmt.Errorf("unable to set up macaroon "+
@@ -521,6 +521,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 		Birthday:                    walletInitParams.Birthday,
 		RecoveryWindow:              walletInitParams.RecoveryWindow,
 		Wallet:                      walletInitParams.Wallet,
+		DBTimeOut:                   cfg.DB.Bolt.DBTimeout,
 		NeutrinoCS:                  neutrinoCS,
 		ActiveNetParams:             cfg.ActiveNetParams,
 		FeeURL:                      cfg.FeeURL,
@@ -563,7 +564,9 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 	var towerClientDB *wtdb.ClientDB
 	if cfg.WtClient.Active {
 		var err error
-		towerClientDB, err = wtdb.OpenClientDB(cfg.localDatabaseDir())
+		towerClientDB, err = wtdb.OpenClientDB(
+			cfg.localDatabaseDir(), cfg.DB.Bolt.DBTimeout,
+		)
 		if err != nil {
 			err := fmt.Errorf("unable to open watchtower client "+
 				"database: %v", err)
@@ -604,7 +607,9 @@ func Main(cfg *Config, lisCfg ListenerCfg, shutdownChan <-chan struct{}) error {
 			lncfg.NormalizeNetwork(cfg.ActiveNetParams.Name),
 		)
 
-		towerDB, err := wtdb.OpenTowerDB(towerDBDir)
+		towerDB, err := wtdb.OpenTowerDB(
+			towerDBDir, cfg.DB.Bolt.DBTimeout,
+		)
 		if err != nil {
 			err := fmt.Errorf("unable to open watchtower "+
 				"database: %v", err)
@@ -1139,7 +1144,8 @@ func waitForWalletPassword(cfg *Config, restEndpoints []net.Addr,
 	}
 	pwService := walletunlocker.New(
 		chainConfig.ChainDir, cfg.ActiveNetParams.Params,
-		!cfg.SyncFreelist, macaroonFiles,
+		!cfg.SyncFreelist, macaroonFiles, cfg.DB.Bolt.DBTimeout,
+		cfg.ResetWalletTransactions,
 	)
 
 	// Set up a new PasswordService, which will listen for passwords
@@ -1263,7 +1269,7 @@ func waitForWalletPassword(cfg *Config, restEndpoints []net.Addr,
 		)
 		loader := wallet.NewLoader(
 			cfg.ActiveNetParams.Params, netDir, !cfg.SyncFreelist,
-			recoveryWindow,
+			cfg.DB.Bolt.DBTimeout, recoveryWindow,
 		)
 
 		// With the seed, we can now use the wallet loader to create
@@ -1307,21 +1313,10 @@ func waitForWalletPassword(cfg *Config, restEndpoints []net.Addr,
 		// remind the user to turn off the setting again after
 		// successful completion.
 		if cfg.ResetWalletTransactions {
-			ltndLog.Warnf("Dropping all transaction history from " +
+			ltndLog.Warnf("Dropped all transaction history from " +
 				"on-chain wallet. Remember to disable " +
 				"reset-wallet-transactions flag for next " +
 				"start of lnd")
-
-			err := wallet.DropTransactionHistory(
-				unlockMsg.Wallet.Database(), true,
-			)
-			if err != nil {
-				if err := unlockMsg.UnloadWallet(); err != nil {
-					ltndLog.Errorf("Could not unload "+
-						"wallet: %v", err)
-				}
-				return nil, shutdown, err
-			}
 		}
 
 		return &WalletUnlockParams{
@@ -1483,7 +1478,9 @@ func initNeutrinoBackend(cfg *Config, chainDir string) (*neutrino.ChainService,
 	}
 
 	dbName := filepath.Join(dbPath, "neutrino.db")
-	db, err := walletdb.Create("bdb", dbName, !cfg.SyncFreelist)
+	db, err := walletdb.Create(
+		"bdb", dbName, !cfg.SyncFreelist, cfg.DB.Bolt.DBTimeout,
+	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create neutrino "+
 			"database: %v", err)

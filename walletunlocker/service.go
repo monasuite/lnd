@@ -129,11 +129,20 @@ type UnlockerService struct {
 	// different access permissions. These might not exist in a stateless
 	// initialization of lnd.
 	macaroonFiles []string
+
+	// dbTimeout specifies the timeout value to use when opening the wallet
+	// database.
+	dbTimeout time.Duration
+
+	// resetWalletTransactions indicates that the wallet state should be
+	// reset on unlock to force a full chain rescan.
+	resetWalletTransactions bool
 }
 
 // New creates and returns a new UnlockerService.
 func New(chainDir string, params *chaincfg.Params, noFreelistSync bool,
-	macaroonFiles []string) *UnlockerService {
+	macaroonFiles []string, dbTimeout time.Duration,
+	resetWalletTransactions bool) *UnlockerService {
 
 	return &UnlockerService{
 		InitMsgs:   make(chan *WalletInitMsg, 1),
@@ -141,10 +150,13 @@ func New(chainDir string, params *chaincfg.Params, noFreelistSync bool,
 
 		// Make sure we buffer the channel is buffered so the main lnd
 		// goroutine isn't blocking on writing to it.
-		MacResponseChan: make(chan []byte, 1),
-		chainDir:        chainDir,
-		netParams:       params,
-		macaroonFiles:   macaroonFiles,
+		MacResponseChan:         make(chan []byte, 1),
+		chainDir:                chainDir,
+		netParams:               params,
+		macaroonFiles:           macaroonFiles,
+		dbTimeout:               dbTimeout,
+		noFreelistSync:          noFreelistSync,
+		resetWalletTransactions: resetWalletTransactions,
 	}
 }
 
@@ -162,7 +174,9 @@ func (u *UnlockerService) GenSeed(_ context.Context,
 	// Before we start, we'll ensure that the wallet hasn't already created
 	// so we don't show a *new* seed to the user if one already exists.
 	netDir := btcwallet.NetworkDir(u.chainDir, u.netParams)
-	loader := wallet.NewLoader(u.netParams, netDir, u.noFreelistSync, 0)
+	loader := wallet.NewLoader(
+		u.netParams, netDir, u.noFreelistSync, u.dbTimeout, 0,
+	)
 	walletExists, err := loader.WalletExists()
 	if err != nil {
 		return nil, err
@@ -292,7 +306,8 @@ func (u *UnlockerService) InitWallet(ctx context.Context,
 	// wallet's files so we can check if the wallet already exists.
 	netDir := btcwallet.NetworkDir(u.chainDir, u.netParams)
 	loader := wallet.NewLoader(
-		u.netParams, netDir, u.noFreelistSync, uint32(recoveryWindow),
+		u.netParams, netDir, u.noFreelistSync,
+		u.dbTimeout, uint32(recoveryWindow),
 	)
 
 	walletExists, err := loader.WalletExists()
@@ -368,7 +383,8 @@ func (u *UnlockerService) UnlockWallet(ctx context.Context,
 
 	netDir := btcwallet.NetworkDir(u.chainDir, u.netParams)
 	loader := wallet.NewLoader(
-		u.netParams, netDir, u.noFreelistSync, recoveryWindow,
+		u.netParams, netDir, u.noFreelistSync,
+		u.dbTimeout, recoveryWindow,
 	)
 
 	// Check if wallet already exists.
@@ -388,6 +404,37 @@ func (u *UnlockerService) UnlockWallet(ctx context.Context,
 		// Could not open wallet, most likely this means that provided
 		// password was incorrect.
 		return nil, err
+	}
+
+	// The user requested to drop their whole wallet transaction state to
+	// force a full chain rescan for wallet addresses. Dropping the state
+	// only properly takes effect after opening the wallet. That's why we
+	// start, drop, stop and start again.
+	if u.resetWalletTransactions {
+		dropErr := wallet.DropTransactionHistory(
+			unlockedWallet.Database(), true,
+		)
+
+		// Even if dropping the history fails, we'll want to unload the
+		// wallet. If unloading fails, that error is probably more
+		// important to be returned to the user anyway.
+		if err := loader.UnloadWallet(); err != nil {
+			return nil, fmt.Errorf("could not unload "+
+				"wallet (tx history drop err: %v): %v", dropErr,
+				err)
+		}
+
+		// If dropping failed but unloading didn't, we'll still abort
+		// and inform the user.
+		if dropErr != nil {
+			return nil, dropErr
+		}
+
+		// All looks good, let's now open the wallet again.
+		unlockedWallet, err = loader.OpenExistingWallet(password, false)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// We successfully opened the wallet and pass the instance back to
@@ -435,7 +482,9 @@ func (u *UnlockerService) ChangePassword(ctx context.Context,
 	in *lnrpc.ChangePasswordRequest) (*lnrpc.ChangePasswordResponse, error) {
 
 	netDir := btcwallet.NetworkDir(u.chainDir, u.netParams)
-	loader := wallet.NewLoader(u.netParams, netDir, u.noFreelistSync, 0)
+	loader := wallet.NewLoader(
+		u.netParams, netDir, u.noFreelistSync, u.dbTimeout, 0,
+	)
 
 	// First, we'll make sure the wallet exists for the specific chain and
 	// network.
@@ -513,7 +562,7 @@ func (u *UnlockerService) ChangePassword(ctx context.Context,
 	// Attempt to open the macaroon DB, unlock it and then change
 	// the passphrase.
 	macaroonService, err := macaroons.NewService(
-		netDir, "lnd", in.StatelessInit,
+		netDir, "lnd", in.StatelessInit, u.dbTimeout,
 	)
 	if err != nil {
 		return nil, err

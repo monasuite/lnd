@@ -404,7 +404,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	featureMgr, err := feature.NewManager(feature.Config{
 		NoTLVOnion:        cfg.ProtocolOptions.LegacyOnion(),
 		NoStaticRemoteKey: cfg.ProtocolOptions.NoStaticRemoteKey(),
-		NoAnchors:         !cfg.ProtocolOptions.AnchorCommitments(),
+		NoAnchors:         cfg.ProtocolOptions.NoAnchorCommitments(),
 		NoWumbo:           !cfg.ProtocolOptions.Wumbo(),
 	})
 	if err != nil {
@@ -1185,6 +1185,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		NotifyPendingOpenChannelEvent: s.channelNotifier.NotifyPendingOpenChannelEvent,
 		EnableUpfrontShutdown:         cfg.EnableUpfrontShutdown,
 		RegisteredChains:              cfg.registeredChains,
+		MaxAnchorsCommitFeeRate: chainfee.SatPerKVByte(
+			s.cfg.MaxCommitFeeRateAnchors * 1000).FeePerKWeight(),
 	})
 	if err != nil {
 		return nil, err
@@ -3119,7 +3121,9 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		UnsafeReplay:            s.cfg.UnsafeReplay,
 		MaxOutgoingCltvExpiry:   s.cfg.MaxOutgoingCltvExpiry,
 		MaxChannelFeeAllocation: s.cfg.MaxChannelFeeAllocation,
-		Quit:                    s.quit,
+		MaxAnchorsCommitFeeRate: chainfee.SatPerKVByte(
+			s.cfg.MaxCommitFeeRateAnchors * 1000).FeePerKWeight(),
+		Quit: s.quit,
 	}
 
 	copy(pCfg.PubKeyBytes[:], peerAddr.IdentityKey.SerializeCompressed())

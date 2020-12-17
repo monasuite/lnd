@@ -101,6 +101,10 @@ type Config struct {
 	// FeeURL defines the URL for fee estimation we will use. This field is
 	// optional.
 	FeeURL string
+
+	// DBTimeOut specifies the timeout value to use when opening the wallet
+	// database.
+	DBTimeOut time.Duration
 }
 
 const (
@@ -273,6 +277,7 @@ func NewChainControl(cfg *Config) (*ChainControl, error) {
 		NetParams:      cfg.ActiveNetParams.Params,
 		CoinType:       cfg.ActiveNetParams.CoinType,
 		Wallet:         cfg.Wallet,
+		DBTimeOut:      cfg.DBTimeOut,
 	}
 
 	var err error
@@ -577,8 +582,18 @@ func NewChainControl(cfg *Config) (*ChainControl, error) {
 			homeChainConfig.Node)
 	}
 
+	switch {
+	// If the fee URL isn't set, and the user is running mainnet, then
+	// we'll return an error to instruct them to set a proper fee
+	// estimator.
+	case cfg.FeeURL == "" && cfg.Bitcoin.MainNet &&
+		homeChainConfig.Node == "neutrino":
+
+		return nil, fmt.Errorf("--feeurl parameter required when " +
+			"running neutrino on mainnet")
+
 	// Override default fee estimator if an external service is specified.
-	if cfg.FeeURL != "" {
+	case cfg.FeeURL != "":
 		// Do not cache fees on regtest to make it easier to execute
 		// manual or automated test cases.
 		cacheFees := !cfg.Bitcoin.RegTest

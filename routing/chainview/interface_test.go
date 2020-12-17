@@ -26,6 +26,7 @@ import (
 	"github.com/monasuite/monad/btcjson"
 
 	"github.com/monasuite/lnd/channeldb"
+	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/neutrino"
 )
 
@@ -846,7 +847,9 @@ var interfaceImpls = []struct {
 			}
 
 			dbName := filepath.Join(spvDir, "neutrino.db")
-			spvDatabase, err := walletdb.Create("bdb", dbName, true)
+			spvDatabase, err := walletdb.Create(
+				"bdb", dbName, true, kvdb.DefaultDBTimeout,
+			)
 			if err != nil {
 				return nil, nil, err
 			}
