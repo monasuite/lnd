@@ -30,9 +30,11 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monaarchives/btcwallet/walletdb"
-	_ "github.com/monaarchives/btcwallet/walletdb/bdb"
 	"github.com/monasuite/neutrino"
 	"github.com/stretchr/testify/require"
+
+	// bdb database
+	_ "github.com/monaarchives/btcwallet/walletdb/bdb"
 
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chainntnfs/btcdnotify"
