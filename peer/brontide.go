@@ -26,7 +26,7 @@ import (
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/discovery"
 	"github.com/monasuite/lnd/feature"
-	"github.com/monasuite/lnd/fmgr"
+	"github.com/monasuite/lnd/funding"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/htlcswitch/hodl"
 	"github.com/monasuite/lnd/htlcswitch/hop"
@@ -273,8 +273,8 @@ type Config struct {
 	FetchLastChanUpdate func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate,
 		error)
 
-	// FundingManager is an implementation of the fmgr.Manager interface.
-	FundingManager fmgr.Manager
+	// FundingManager is an implementation of the funding.Controller interface.
+	FundingManager funding.Controller
 
 	// Hodl is used when creating ChannelLinks to specify HodlFlags as
 	// breakpoints in dev builds.
@@ -2775,6 +2775,7 @@ func (p *Brontide) RemoteFeatures() *lnwire.FeatureVector {
 // our currently supported local and global features.
 func (p *Brontide) sendInitMsg(legacyChan bool) error {
 	features := p.cfg.Features.Clone()
+	legacyFeatures := p.cfg.LegacyFeatures.Clone()
 
 	// If we have a legacy channel open with a peer, we downgrade static
 	// remote required to optional in case the peer does not understand the
@@ -2786,12 +2787,18 @@ func (p *Brontide) sendInitMsg(legacyChan bool) error {
 			"downgrading static remote required feature bit to "+
 			"optional", p.PubKey())
 
+		// Unset and set in both the local and global features to
+		// ensure both sets are consistent and merge able by old and
+		// new nodes.
 		features.Unset(lnwire.StaticRemoteKeyRequired)
+		legacyFeatures.Unset(lnwire.StaticRemoteKeyRequired)
+
 		features.Set(lnwire.StaticRemoteKeyOptional)
+		legacyFeatures.Set(lnwire.StaticRemoteKeyOptional)
 	}
 
 	msg := lnwire.NewInitMessage(
-		p.cfg.LegacyFeatures.RawFeatureVector,
+		legacyFeatures.RawFeatureVector,
 		features.RawFeatureVector,
 	)
 

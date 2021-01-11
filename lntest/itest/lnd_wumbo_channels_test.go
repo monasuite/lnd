@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/btcsuite/btcutil"
-	"github.com/monasuite/lnd"
+	"github.com/monasuite/lnd/funding"
 	"github.com/monasuite/lnd/lntest"
 )
 
@@ -48,7 +48,7 @@ func testWumboChannels(net *lntest.NetworkHarness, t *harnessTest) {
 		t.Fatalf("unable to connect peers: %v", err)
 	}
 
-	chanAmt := lnd.MaxBtcFundingAmount + 1
+	chanAmt := funding.MaxBtcFundingAmount + 1
 	_, err = net.OpenChannel(
 		ctxb, wumboNode, miniNode, lntest.OpenChannelParams{
 			Amt: chanAmt,

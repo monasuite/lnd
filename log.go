@@ -17,6 +17,7 @@ import (
 	"github.com/monasuite/lnd/channelnotifier"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/discovery"
+	"github.com/monasuite/lnd/funding"
 	"github.com/monasuite/lnd/healthcheck"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/invoices"
@@ -81,7 +82,6 @@ var (
 	ltndLog = addLndPkgLogger("LTND")
 	rpcsLog = addLndPkgLogger("RPCS")
 	srvrLog = addLndPkgLogger("SRVR")
-	fndgLog = addLndPkgLogger("FNDG")
 	utxnLog = addLndPkgLogger("UTXN")
 	brarLog = addLndPkgLogger("BRAR")
 	atplLog = addLndPkgLogger("ATPL")
@@ -135,6 +135,7 @@ func SetupLoggers(root *build.RotatingLogWriter) {
 	AddSubLogger(root, healthcheck.Subsystem, healthcheck.UseLogger)
 	AddSubLogger(root, chainreg.Subsystem, chainreg.UseLogger)
 	AddSubLogger(root, chanacceptor.Subsystem, chanacceptor.UseLogger)
+	AddSubLogger(root, funding.Subsystem, funding.UseLogger)
 }
 
 // AddSubLogger is a helper method to conveniently create and register the
