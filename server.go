@@ -992,8 +992,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	maxRemoteDelay := funding.MaxBtcRemoteDelay
 	if primaryChain == chainreg.MonacoinChain {
 		chainCfg = cfg.Monacoin
-		minRemoteDelay = funding.minMonaRemoteDelay
-		maxRemoteDelay = funding.maxMonaRemoteDelay
+		minRemoteDelay = funding.MinMonaRemoteDelay
+		maxRemoteDelay = funding.MaxMonaRemoteDelay
 	}
 
 	var chanIDSeed [32]byte
