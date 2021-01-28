@@ -18,7 +18,7 @@ func (c ChainCode) String() string {
 	case BitcoinChain:
 		return "bitcoin"
 	case MonacoinChain:
-		return "Monacoin"
+		return "monacoin"
 	default:
 		return "kekcoin"
 	}
