@@ -19,6 +19,6 @@ node and channel announcements, outgoing payments, and invoices
 
 ## Installation and Updating
 
-```bash
-$ go get -u github.com/monasuite/lnd/channeldb
+```shell
+⛰  go get -u github.com/monasuite/lnd/channeldb
 ```

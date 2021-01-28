@@ -93,10 +93,10 @@ const (
 	// HostAnnouncer will wait between DNS resolutions to check if the
 	// backing IP of a host has changed.
 	defaultHostSampleInterval = time.Minute * 5
-	defaultChainInterval      = time.Minute
-	defaultChainTimeout       = time.Second * 10
-	defaultChainBackoff       = time.Second * 30
-	defaultChainAttempts      = 3
+	defaultChainInterval = time.Minute
+	defaultChainTimeout  = time.Second * 30
+	defaultChainBackoff  = time.Minute * 2
+	defaultChainAttempts = 3
 
 	// Set defaults for a health check which ensures that we have space
 	// available on disk. Although this check is off by default so that we
@@ -237,7 +237,7 @@ type Config struct {
 	MaxPendingChannels int    `long:"maxpendingchannels" description:"The maximum number of incoming pending channels permitted per peer."`
 	BackupFilePath     string `long:"backupfilepath" description:"The target location of the channel backup file"`
 
-	FeeURL string `long:"feeurl" description:"Optional URL for external fee estimation. If no URL is specified, the method for fee estimation will depend on the chosen backend and network."`
+	FeeURL string `long:"feeurl" description:"Optional URL for external fee estimation. If no URL is specified, the method for fee estimation will depend on the chosen backend and network. Must be set for neutrino on mainnet."`
 
 	Bitcoin      *lncfg.Chain    `group:"Bitcoin" namespace:"bitcoin"`
 	BtcdMode     *lncfg.Btcd     `group:"btcd" namespace:"btcd"`
