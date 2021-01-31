@@ -1668,7 +1668,8 @@ func (s *server) Start() error {
 		// connections.
 		if !s.cfg.NoNetBootstrap &&
 			!(s.cfg.Bitcoin.SimNet || s.cfg.Litecoin.SimNet) &&
-			!(s.cfg.Bitcoin.RegTest || s.cfg.Litecoin.RegTest) {
+			!(s.cfg.Bitcoin.RegTest || s.cfg.Litecoin.RegTest) &&
+			!(s.cfg.Bitcoin.SigNet) {
 
 			bootstrappers, err := initNetworkBootstrappers(s)
 			if err != nil {
