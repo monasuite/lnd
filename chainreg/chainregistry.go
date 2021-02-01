@@ -700,6 +700,15 @@ func getBitcoindHealthCheckCmd(client *rpcclient.Client) (string, error) {
 }
 
 var (
+	// BitcoinSignetGenesis is the genesis hash of Bitcoin's testnet
+	// chain.
+	BitcoinSignetGenesis = chainhash.Hash([chainhash.HashSize]byte{
+		0xf6, 0x1e, 0xee, 0x3b, 0x63, 0xa3, 0x80, 0xa4,
+		0x77, 0xa0, 0x63, 0xaf, 0x32, 0xb2, 0xbb, 0xc9,
+		0x7c, 0x9f, 0xf9, 0xf0, 0x1f, 0x2c, 0x42, 0x25,
+		0xe9, 0x73, 0x98, 0x81, 0x08, 0x00, 0x00, 0x00,
+	})
+
 	// BitcoinTestnetGenesis is the genesis hash of Bitcoin's testnet
 	// chain.
 	BitcoinTestnetGenesis = chainhash.Hash([chainhash.HashSize]byte{
@@ -737,6 +746,8 @@ var (
 	// chainMap is a simple index that maps a chain's genesis hash to the
 	// ChainCode enum for that chain.
 	chainMap = map[chainhash.Hash]ChainCode{
+		BitcoinSignetGenesis:   BitcoinChain,
+
 		BitcoinTestnetGenesis:  BitcoinChain,
 		MonacoinTestnetGenesis: MonacoinChain,
 

@@ -10,6 +10,58 @@ import (
 	monacoinWire "github.com/monasuite/monad/wire"
 )
 
+// !!temp!! signet params struct
+type SignetParamStruct struct {
+	Name             string
+	Net              bitcoinWire.BitcoinNet
+	Checkpoints      []Checkpoint
+	DefaultPort	 string
+	DNSSeeds         []DNSSeed
+	GenesisHash      chainhash.Hash
+}
+
+// !!temp!! signet params values
+var SignetParam = SignetParamStruct{
+	Name:             "signet",
+	Net:              0x6a70c7f0,
+	Checkpoints:      nil,
+	DefaultPort:      "38333",
+	DNSSeeds:         []DNSSeed{
+		{"178.128.221.177", false},
+		{"2a01:7c8:d005:390::5", false},
+	},
+	GenesisHash:      chainhash.Hash([chainhash.HashSize]byte{
+		0xf6, 0x1e, 0xee, 0x3b, 0x63, 0xa3, 0x80, 0xa4,
+		0x77, 0xa0, 0x63, 0xaf, 0x32, 0xb2, 0xbb, 0xc9,
+		0x7c, 0x9f, 0xf9, 0xf0, 0x1f, 0x2c, 0x42, 0x25,
+		0xe9, 0x73, 0x98, 0x81, 0x08, 0x00, 0x00, 0x00,
+	}),
+}
+
+// !! temp !!
+// Checkpoint identifies a known good point in the block chain.  Using
+// checkpoints allows a few optimizations for old blocks during initial download
+// and also prevents forks from old blocks.
+//
+// Each checkpoint is selected based upon several factors.  See the
+// documentation for blockchain.IsCheckpointCandidate for details on the
+// selection criteria.
+type Checkpoint struct {
+	Height int32
+	Hash   *chainhash.Hash
+}
+
+// !! temp !!
+// DNSSeed identifies a DNS seed.
+type DNSSeed struct {
+	// Host defines the hostname of the seed.
+	Host string
+
+	// HasFiltering defines whether the seed supports filtering
+	// by service flags (wire.ServiceFlag).
+	HasFiltering bool
+}
+
 // BitcoinNetParams couples the p2p parameters of a network with the
 // corresponding RPC port of a daemon running on the particular network.
 type BitcoinNetParams struct {
@@ -47,6 +99,14 @@ var BitcoinMainNetParams = BitcoinNetParams{
 var BitcoinSimNetParams = BitcoinNetParams{
 	Params:   &bitcoinCfg.SimNetParams,
 	RPCPort:  "18556",
+	CoinType: keychain.CoinTypeTestnet,
+}
+
+// BitcoinSigNetParams contains parameters specific to the signature version of the
+// test network.
+var BitcoinSigNetParams = BitcoinNetParams{
+	Params:   &bitcoinCfg.TestNet3Params,
+	RPCPort:  "38334",
 	CoinType: keychain.CoinTypeTestnet,
 }
 
@@ -88,6 +148,44 @@ var BitcoinRegTestNetParams = BitcoinNetParams{
 	Params:   &bitcoinCfg.RegressionNetParams,
 	RPCPort:  "18334",
 	CoinType: keychain.CoinTypeTestnet,
+}
+
+// !! temp !!
+// ApplySignetParams applies the relevant chain configuration parameters that
+// differ for signet to the chain parameters typed for btcsuite derivation.
+// This function is used in place of using something like interface{} to
+// abstract over _which_ chain (or fork) the parameters are for.
+func ApplySignetParams(params *BitcoinNetParams,
+	signetParams *BitcoinNetParams) {
+
+	params.Name = SignetParam.Name
+	params.Net = SignetParam.Net
+	params.DefaultPort = SignetParam.DefaultPort
+
+	copy(params.GenesisHash[:], SignetParam.GenesisHash[:])
+
+	dnsSeeds := make([]chaincfg.DNSSeed, len(SignetParam.DNSSeeds))
+	for i := 0; i < len(SignetParam.DNSSeeds); i++ {
+		dnsSeeds[i] = chaincfg.DNSSeed{
+			Host:         SignetParam.DNSSeeds[i].Host,
+			HasFiltering: SignetParam.DNSSeeds[i].HasFiltering,
+		}
+	}
+	params.DNSSeeds = dnsSeeds
+
+	checkPoints := make([]chaincfg.Checkpoint, len(SignetParam.Checkpoints))
+	for i := 0; i < len(SignetParam.Checkpoints); i++ {
+		var chainHash chainhash.Hash
+		copy(chainHash[:], SignetParam.Checkpoints[i].Hash[:])
+
+		checkPoints[i] = chaincfg.Checkpoint{
+			Height: SignetParam.Checkpoints[i].Height,
+			Hash:   &chainHash,
+		}
+	}
+	params.Checkpoints = checkPoints
+
+	params.RPCPort = BitcoinSigNetParams.RPCPort
 }
 
 // applyMonacoinParams applies the relevant chain configuration parameters that

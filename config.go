@@ -951,6 +951,7 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 		// number of network flags passed; assign active network params
 		// while we're at it.
 		numNets := 0
+		var signetParams chainreg.BitcoinNetParams
 		if cfg.Bitcoin.MainNet {
 			numNets++
 			cfg.ActiveNetParams = chainreg.BitcoinMainNetParams
@@ -967,13 +968,19 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 			numNets++
 			cfg.ActiveNetParams = chainreg.BitcoinSimNetParams
 		}
+		if cfg.Bitcoin.SigNet {
+			numNets++
+			signetParams = chainreg.BitcoinSigNetParams
+		}
 		if numNets > 1 {
 			str := "%s: The mainnet, testnet, regtest, and " +
 				"simnet params can't be used together -- " +
-				"choose one of the four"
+				"choose one of the five"
 			err := fmt.Errorf(str, funcName)
 			return nil, err
 		}
+
+		chainreg.ApplySignetParams(&cfg.ActiveNetParams, &signetParams)
 
 		// The target network must be provided, otherwise, we won't
 		// know how to initialize the daemon.
