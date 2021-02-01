@@ -12,25 +12,25 @@ import (
 
 // !!temp!! signet params struct
 type SignetParamStruct struct {
-	Name             string
-	Net              bitcoinWire.BitcoinNet
-	Checkpoints      []Checkpoint
-	DefaultPort	 string
-	DNSSeeds         []DNSSeed
-	GenesisHash      chainhash.Hash
+	Name        string
+	Net         bitcoinWire.BitcoinNet
+	Checkpoints []Checkpoint
+	DefaultPort string
+	DNSSeeds    []DNSSeed
+	GenesisHash chainhash.Hash
 }
 
 // !!temp!! signet params values
 var SignetParam = SignetParamStruct{
-	Name:             "signet",
-	Net:              0x6a70c7f0,
-	Checkpoints:      nil,
-	DefaultPort:      "38333",
-	DNSSeeds:         []DNSSeed{
+	Name:        "signet",
+	Net:         0x6a70c7f0,
+	Checkpoints: nil,
+	DefaultPort: "38333",
+	DNSSeeds: []DNSSeed{
 		{"178.128.221.177", false},
 		{"2a01:7c8:d005:390::5", false},
 	},
-	GenesisHash:      chainhash.Hash([chainhash.HashSize]byte{
+	GenesisHash: chainhash.Hash([chainhash.HashSize]byte{
 		0xf6, 0x1e, 0xee, 0x3b, 0x63, 0xa3, 0x80, 0xa4,
 		0x77, 0xa0, 0x63, 0xaf, 0x32, 0xb2, 0xbb, 0xc9,
 		0x7c, 0x9f, 0xf9, 0xf0, 0x1f, 0x2c, 0x42, 0x25,
