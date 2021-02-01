@@ -746,7 +746,7 @@ var (
 	// chainMap is a simple index that maps a chain's genesis hash to the
 	// ChainCode enum for that chain.
 	chainMap = map[chainhash.Hash]ChainCode{
-		BitcoinSignetGenesis:   BitcoinChain,
+		BitcoinSignetGenesis: BitcoinChain,
 
 		BitcoinTestnetGenesis:  BitcoinChain,
 		MonacoinTestnetGenesis: MonacoinChain,

@@ -14,7 +14,7 @@ type Chain struct {
 	MainNet  bool   `long:"mainnet" description:"Use the main network"`
 	TestNet3 bool   `long:"testnet" description:"Use the test network"`
 	SimNet   bool   `long:"simnet" description:"Use the simulation test network"`
-	SigNet   bool `long:"signet" description:"Use the signature test network"`
+	SigNet   bool   `long:"signet" description:"Use the signature test network"`
 	RegTest  bool   `long:"regtest" description:"Use the regression test network"`
 
 	DefaultNumChanConfs int                 `long:"defaultchanconfs" description:"The default number of confirmations a channel must have before it's considered open. If this is not set, we will scale the value according to the channel size."`
