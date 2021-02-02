@@ -10,7 +10,7 @@ import (
 	monacoinWire "github.com/monasuite/monad/wire"
 )
 
-// !!temp!! SignetParam struct
+// SignetParam struct !!temp!!
 type SignetParamStruct struct {
 	Name        string
 	Net         bitcoinWire.BitcoinNet
@@ -20,7 +20,7 @@ type SignetParamStruct struct {
 	GenesisHash chainhash.Hash
 }
 
-// !!temp!! SignetParam values
+// SignetParam values !!temp!!
 var SignetParam = SignetParamStruct{
 	Name:        "signet",
 	Net:         0x6a70c7f0,
