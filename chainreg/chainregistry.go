@@ -778,6 +778,12 @@ var (
 			},
 		},
 
+		BitcoinSignetGenesis: {
+			{
+				"lseed.wakiyamap.dev",
+			},
+		},
+
 		BitcoinTestnetGenesis: {
 			{
 				"test.nodes.lightning.directory",
