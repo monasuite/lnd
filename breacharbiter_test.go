@@ -29,6 +29,7 @@ import (
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/keychain"
+	"github.com/monasuite/lnd/lntest/channels"
 	"github.com/monasuite/lnd/lntest/mock"
 	"github.com/monasuite/lnd/lntest/wait"
 	"github.com/monasuite/lnd/lnwallet"
@@ -1679,7 +1680,7 @@ func createTestArbiter(t *testing.T, contractBreaches chan *ContractBreachEvent,
 	})
 
 	aliceKeyPriv, _ := btcec.PrivKeyFromBytes(btcec.S256(),
-		alicesPrivKey)
+		channels.AlicesPrivKey)
 	signer := &mock.SingleSigner{Privkey: aliceKeyPriv}
 
 	// Assemble our test arbiter.
@@ -1714,9 +1715,9 @@ func createTestArbiter(t *testing.T, contractBreaches chan *ContractBreachEvent,
 func createInitChannels(revocationWindow int) (*lnwallet.LightningChannel, *lnwallet.LightningChannel, func(), error) {
 
 	aliceKeyPriv, aliceKeyPub := btcec.PrivKeyFromBytes(btcec.S256(),
-		alicesPrivKey)
+		channels.AlicesPrivKey)
 	bobKeyPriv, bobKeyPub := btcec.PrivKeyFromBytes(btcec.S256(),
-		bobsPrivKey)
+		channels.BobsPrivKey)
 
 	channelCapacity, err := btcutil.NewAmount(10)
 	if err != nil {
@@ -1730,7 +1731,7 @@ func createInitChannels(revocationWindow int) (*lnwallet.LightningChannel, *lnwa
 	csvTimeoutBob := uint32(4)
 
 	prevOut := &wire.OutPoint{
-		Hash:  chainhash.Hash(testHdSeed),
+		Hash:  channels.TestHdSeed,
 		Index: 0,
 	}
 	fundingTxIn := wire.NewTxIn(prevOut, nil, nil)
@@ -1887,7 +1888,7 @@ func createInitChannels(revocationWindow int) (*lnwallet.LightningChannel, *lnwa
 		RemoteCommitment:        aliceCommit,
 		Db:                      dbAlice,
 		Packager:                channeldb.NewChannelPackager(shortChanID),
-		FundingTxn:              testTx,
+		FundingTxn:              channels.TestFundingTx,
 	}
 	bobChannelState := &channeldb.OpenChannel{
 		LocalChanCfg:            bobCfg,

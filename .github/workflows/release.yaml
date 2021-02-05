@@ -16,7 +16,7 @@ env:
   # /dev.Dockerfile
   # /make/builder.Dockerfile
   # /.github/workflows/main.yml
-  GO_VERSION: 1.15.6
+  GO_VERSION: 1.15.7
 
 jobs:
   main:
@@ -51,7 +51,7 @@ jobs:
         run: SKIP_VERSION_CHECK=1 make release tag=${{ env.RELEASE_VERSION }}
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: lightninglabs/gh-actions/action-gh-release@2021.01.25.00
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -104,7 +104,7 @@ jobs:
 
             ## Verifying the Release Binaries
 
-            Our release binaries are fully reproducible. Third parties are able to verify that the release binaries were produced properly without having to trust the release manager(s). See our [reproducible builds guide](https://github.com/lightningnetwork/lnd/tree/master/build/release) for how this can be achieved.
+            Our release binaries are fully reproducible. Third parties are able to verify that the release binaries were produced properly without having to trust the release manager(s). See our [reproducible builds guide](https://github.com/monasuite/lnd/tree/master/build/release) for how this can be achieved.
             The release binaries are compiled with `go${{ env.GO_VERSION }}`, which is required by verifiers to arrive at the same ones.
             They include the following build tags: `autopilotrpc`, `signrpc`, `walletrpc`, `chainrpc`, `invoicesrpc`, `routerrpc`, and `watchtowerrpc`. Note that these are already included in the release script, so they do not need to be provided.
 
@@ -139,8 +139,8 @@ jobs:
             ```
             tar -xvzf vendor.tar.gz
             tar -xvzf lnd-source-${{ env.RELEASE_VERSION }}.tar.gz
-            GO111MODULE=on go install -v -mod=vendor -ldflags "-X github.com/lightningnetwork/lnd/build.Commit=${{ env.RELEASE_VERSION }}" ./cmd/lnd
-            GO111MODULE=on go install -v -mod=vendor -ldflags "-X github.com/lightningnetwork/lnd/build.Commit=${{ env.RELEASE_VERSION }}" ./cmd/lncli
+            GO111MODULE=on go install -v -mod=vendor -ldflags "-X github.com/monasuite/lnd/build.Commit=${{ env.RELEASE_VERSION }}" ./cmd/lnd
+            GO111MODULE=on go install -v -mod=vendor -ldflags "-X github.com/monasuite/lnd/build.Commit=${{ env.RELEASE_VERSION }}" ./cmd/lncli
             ```
 
             The `-mod=vendor` flag tells the `go build` command that it doesn't need to fetch the dependencies, and instead, they're all enclosed in the local vendor directory. 

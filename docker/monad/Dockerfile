@@ -1,15 +1,14 @@
-FROM golang:1.12-alpine as builder
+FROM golang:1.15.7-alpine as builder
 
 LABEL maintainer="wakiyamap <wakiyamap@gmail.com>"
 
-# Install build dependencies such as git and glide.
-RUN apk add --no-cache git gcc musl-dev
-
+# Grab and install the latest version of roasbeef's fork of monad and all
+# related dependencies.
 WORKDIR $GOPATH/src/github.com/monasuite/monad
-
-# Grab and install the latest version of of monad and all related dependencies.
-RUN git clone https://github.com/monasuite/monad.git . \
-    &&  GO111MODULE=on go install -v . ./cmd/...
+RUN apk add --no-cache --update alpine-sdk git
+RUN git clone https://github.com/monasuite/monad ./
+RUN GO111MODULE=on go install -v . ./cmd/...
+RUN GO111MODULE=on go install . ./cmd/monactl ./cmd/gencerts
 
 # Start a new image
 FROM alpine as final
@@ -24,10 +23,8 @@ EXPOSE 19403 19400
 EXPOSE 18555 18556
 
 # Copy the compiled binaries from the builder image.
-COPY --from=builder /go/bin/addblock /bin/
 COPY --from=builder /go/bin/monactl /bin/
 COPY --from=builder /go/bin/monad /bin/
-COPY --from=builder /go/bin/findcheckpoint /bin/
 COPY --from=builder /go/bin/gencerts /bin/
 
 COPY "start-monactl.sh" .
@@ -36,16 +33,15 @@ COPY "start-monad.sh" .
 RUN apk add --no-cache \
     bash \
     ca-certificates \
-&&  mkdir "/rpc" "/root/.monad" "/root/.monactl" \
-&&  touch "/root/.monad/monad.conf" \
 &&  chmod +x start-monactl.sh \
 &&  chmod +x start-monad.sh \
-# Manually generate certificate and add all domains, it is needed to connect
+&&  mkdir "/rpc" "/root/.monad" "/root/.monactl" \
+&&  touch "/root/.monad/monad.conf" \
 # "monactl" and "lnd" to "monad" over docker links.
-&& "/bin/gencerts" --host="*" --directory="/rpc" --force
+&&  "/bin/gencerts" --host="*" --directory="/rpc" --force
 
 # Create a volume to house pregenerated RPC credentials. This will be
-# shared with any lnd, monactl containers so they can securely query monad's RPC
+# shared with any lnd, btcctl containers so they can securely query monad's RPC
 # server.
 # You should NOT do this before certificate generation!
 # Otherwise manually generated certificate will be overridden with shared
