@@ -10,7 +10,7 @@ defaults:
     shell: bash
 
 env:
-  DOCKER_REPO: lightninglabs
+  DOCKER_REPO: wakiyamap
   DOCKER_IMAGE: lnd
 
 jobs:
