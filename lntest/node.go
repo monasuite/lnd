@@ -252,8 +252,8 @@ func (cfg NodeConfig) genArgs() []string {
 	switch cfg.NetParams {
 	case &chaincfg.TestNet3Params:
 		args = append(args, "--bitcoin.testnet")
-	case &chaincfg.SigNetParams:
-		args = append(args, "--bitcoin.signet")
+	//case &chaincfg.SigNetParams:
+	//	args = append(args, "--bitcoin.signet")
 	case &chaincfg.SimNetParams:
 		args = append(args, "--bitcoin.simnet")
 	case &chaincfg.RegressionNetParams:
