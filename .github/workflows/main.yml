@@ -94,13 +94,12 @@ jobs:
         run: |
           git remote add upstream https://github.com/monasuite/lnd
           git fetch upstream
-          git fetch --tags
           export GIT_COMMITTER_EMAIL="lnd-ci@example.com"
           export GIT_COMMITTER_NAME="LND CI"
-          git rebase v0.12.0-beta
+          git rebase upstream/master
 
       - name: check commits
-        run: scripts/check-each-commit.sh v0.12.0-beta
+        run: scripts/check-each-commit.sh upstream/master
 
   ########################
   # lint code
