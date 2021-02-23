@@ -3,6 +3,7 @@ package routing
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -914,7 +915,28 @@ func (r *ChannelRouter) networkHandler() {
 
 	// We'll use this validation barrier to ensure that we process all jobs
 	// in the proper order during parallel validation.
-	validationBarrier := NewValidationBarrier(1000, r.quit)
+	//
+	// NOTE: For AssumeChannelValid, we bump up the maximum number of
+	// concurrent validation requests since there are no blocks being
+	// fetched. This significantly increases the performance of IGD for
+	// neutrino nodes.
+	//
+	// However, we dial back to use multiple of the number of cores when
+	// fully validating, to avoid fetching up to 1000 blocks from the
+	// backend. On bitcoind, this will empirically cause massive latency
+	// spikes when executing this many concurrent RPC calls. Critical
+	// subsystems or basic rpc calls that rely on calls such as GetBestBlock
+	// will hang due to excessive load.
+	//
+	// See https://github.com/lightningnetwork/lnd/issues/4892.
+	var validationBarrier *ValidationBarrier
+	if r.cfg.AssumeChannelValid {
+		validationBarrier = NewValidationBarrier(1000, r.quit)
+	} else {
+		validationBarrier = NewValidationBarrier(
+			4*runtime.NumCPU(), r.quit,
+		)
+	}
 
 	for {
 
@@ -1684,6 +1706,14 @@ type LightningPayment struct {
 	// MaxParts is the maximum number of partial payments that may be used
 	// to complete the full amount.
 	MaxParts uint32
+
+	// MaxShardAmt is the largest shard that we'll attempt to split using.
+	// If this field is set, and we need to split, rather than attempting
+	// half of the original payment amount, we'll use this value if half
+	// the payment amount is greater than it.
+	//
+	// NOTE: This field is _optional_.
+	MaxShardAmt *lnwire.MilliSatoshi
 }
 
 // SendPayment attempts to send a payment as described within the passed

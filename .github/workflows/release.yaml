@@ -73,10 +73,10 @@ jobs:
             curl https://keybase.io/roasbeef/pgp_keys.asc | gpg --import
             ```
 
-            Once you have the required PGP keys, you can verify the release (assuming `manifest-roasbeef-${{ env.RELEASE_VERSION }}.txt.asc` is in the current directory) with:
+            Once you have the required PGP keys, you can verify the release (assuming `manifest-roasbeef-${{ env.RELEASE_VERSION }}.sig` and `manifest-${{ env.RELEASE_VERSION }}.txt` are in the current directory) with:
 
             ```
-            gpg --verify manifest-roasbeef-${{ env.RELEASE_VERSION }}.txt.asc
+            gpg --verify manifest-roasbeef-${{ env.RELEASE_VERSION }}.sig manifest-${{ env.RELEASE_VERSION }}.txt
             ```
 
             You should see the following if the verification was successful:
@@ -95,7 +95,7 @@ jobs:
 
             Assuming you have the opentimestamps client installed locally, the timestamps can be verified with the following commands: 
             ```
-            ots verify manifest-roasbeef-${{ env.RELEASE_VERSION }}.txt.asc.ots -f manifest-roasbeef-${{ env.RELEASE_VERSION }}.txt.asc
+            ots verify manifest-roasbeef-${{ env.RELEASE_VERSION }}.sig.ots -f manifest-roasbeef-${{ env.RELEASE_VERSION }}.sig
             ```
 
             Alternatively, [the open timestamps website](https://opentimestamps.org/) can be used to verify timestamps if one doesn't have a `bitcoind` instance accessible locally. 
@@ -124,11 +124,10 @@ jobs:
             To verify the `lnd` and `lncli` binaries inside the docker images against the signed, reproducible release binaries, there is a verification script in the image that can be called (before starting the container for example):
 
             ```shell
-            $ docker pull lightninglabs/lnd:${{ env.RELEASE_VERSION }}
-            $ docker run --rm --entrypoint="" lightninglabs/lnd:${{ env.RELEASE_VERSION }} /verify-install.sh
+            $ docker run --rm --entrypoint="" wakiyamap/lnd:${{ env.RELEASE_VERSION }} /verify-install.sh ${{ env.RELEASE_VERSION }}
             $ OK=$?
             $ if [ "$OK" -ne "0" ]; then echo "Verification failed!"; exit 1; done
-            $ docker run lightninglabs/lnd [command-line options]
+            $ docker run wakiyamap/lnd [command-line options]
             ```
 
             # Building the Contained Release 
