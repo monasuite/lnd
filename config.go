@@ -975,6 +975,7 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 		if cfg.Bitcoin.SigNet {
 			numNets++
 			signetParams = chainreg.BitcoinSigNetParams
+			chainreg.ApplySignetParams(&cfg.ActiveNetParams, &signetParams)
 		}
 		if numNets > 1 {
 			str := "%s: The mainnet, testnet, regtest, and " +
@@ -983,8 +984,6 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 			err := fmt.Errorf(str, funcName)
 			return nil, err
 		}
-
-		chainreg.ApplySignetParams(&cfg.ActiveNetParams, &signetParams)
 
 		// The target network must be provided, otherwise, we won't
 		// know how to initialize the daemon.
