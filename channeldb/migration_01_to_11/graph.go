@@ -14,7 +14,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd/channeldb/kvdb"
-	"github.com/monasuite/lnd/lnwire"
+	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
 )
 
 var (

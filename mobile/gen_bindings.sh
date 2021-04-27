@@ -16,7 +16,7 @@ then
         version="v$($falafel -v)"
         if [ $version != $falafelVersion ]
         then
-                echo "falafel version $falafelVersion required"
+                echo "falafel version $falafelVersion required, had $version"
                 exit 1
         fi
         echo "Using plugin $falafel $version"
@@ -33,13 +33,13 @@ target_pkg="github.com/monasuite/lnd/lnrpc"
 
 # A mapping from grpc service to name of the custom listeners. The grpc server
 # must be configured to listen on these.
-listeners="lightning=lightningLis walletunlocker=walletUnlockerLis"
+listeners="lightning=lightningLis walletunlocker=lightningLis state=lightningLis"
 
 # Set to 1 to create boiler plate grpc client code and listeners. If more than
 # one proto file is being parsed, it should only be done once.
 mem_rpc=1
 
-PROTOS="rpc.proto walletunlocker.proto"
+PROTOS="rpc.proto walletunlocker.proto stateservice.proto"
 
 opts="package_name=$pkg,target_package=$target_pkg,listeners=$listeners,mem_rpc=$mem_rpc"
 
@@ -57,7 +57,7 @@ done
 # If prefix=1 is specified, prefix the generated methods with subserver name.
 # This must be enabled to support subservers with name conflicts.
 use_prefix="0"
-if [ "$prefix" = "1" ]
+if [ "$SUBSERVER_PREFIX" = "1" ]
 then
     echo "Prefixing methods with subserver name"
     use_prefix="1"

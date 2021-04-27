@@ -35,7 +35,7 @@ BTCD_COMMIT := $(shell cat go.mod | \
 		awk -F "/" '{ print $$1 }')
 
 LINT_COMMIT := v1.18.0
-GOACC_COMMIT := ddc355013f90fea78d83d3a6c71f1d37ac07ecd5
+GOACC_COMMIT :=80342ae2e0fcf265e99e76bcc4efd022c7c3811b 
 GOFUZZ_COMMIT := 21309f307f61
 
 DEPGET := cd /tmp && GO111MODULE=on go get -v
@@ -194,6 +194,10 @@ unit: btcd
 	@$(call print, "Running unit tests.")
 	$(UNIT)
 
+unit-debug: btcd
+	@$(call print, "Running debug unit tests.")
+	$(UNIT_DEBUG)
+
 unit-cover: $(GOACC_BIN)
 	@$(call print, "Running unit coverage tests.")
 	$(GOACC_BIN) $(COVER_PKG) -- -tags="$(DEV_TAGS) $(LOG_TAGS)"
@@ -278,8 +282,8 @@ sample-conf-check:
 	for flag in $$(GO_FLAGS_COMPLETION=1 go run -tags="$(RELEASE_TAGS)" $(PKG)/cmd/lnd -- | grep -v help | cut -c3-); do if ! grep -q $$flag sample-lnd.conf; then echo "Command line flag --$$flag not added to sample-lnd.conf"; exit 1; fi; done
 
 mobile-rpc:
-	@$(call print, "Creating mobile RPC from protos.")
-	cd ./lnrpc; COMPILE_MOBILE=1 ./gen_protos_docker.sh
+	@$(call print, "Creating mobile RPC from protos (prefix=$(prefix)).")
+	cd ./lnrpc; COMPILE_MOBILE=1 SUBSERVER_PREFIX=$(prefix) ./gen_protos_docker.sh
 
 vendor:
 	@$(call print, "Re-creating vendor directory.")
@@ -318,6 +322,7 @@ clean-mobile:
 	itest-only \
 	itest \
 	unit \
+	unit-debug \
 	unit-cover \
 	unit-race \
 	goveralls \

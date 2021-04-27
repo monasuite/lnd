@@ -194,6 +194,10 @@ const (
 	// A tlv type definition used to serialize an outpoint's indexStatus
 	// for use in the outpoint index.
 	indexStatusType tlv.Type = 0
+
+	// A tlv type definition used to serialize and deserialize a KeyLocator
+	// from the database.
+	keyLocType tlv.Type = 1
 )
 
 // indexStatus is an enum-like type that describes what state the
@@ -718,6 +722,11 @@ type OpenChannel struct {
 	// LastWasRevoke is a boolean that determines if the last update we sent
 	// was a revocation (true) or a commitment signature (false).
 	LastWasRevoke bool
+
+	// RevocationKeyLocator stores the KeyLocator information that we will
+	// need to derive the shachain root for this channel. This allows us to
+	// have private key isolation from lnd.
+	RevocationKeyLocator keychain.KeyLocator
 
 	// TODO(roasbeef): eww
 	Db *DB
@@ -1791,14 +1800,19 @@ type LogUpdate struct {
 	UpdateMsg lnwire.Message
 }
 
-// Encode writes a log update to the provided io.Writer.
-func (l *LogUpdate) Encode(w io.Writer) error {
+// serializeLogUpdate writes a log update to the provided io.Writer.
+func serializeLogUpdate(w io.Writer, l *LogUpdate) error {
 	return WriteElements(w, l.LogIndex, l.UpdateMsg)
 }
 
-// Decode reads a log update from the provided io.Reader.
-func (l *LogUpdate) Decode(r io.Reader) error {
-	return ReadElements(r, &l.LogIndex, &l.UpdateMsg)
+// deserializeLogUpdate reads a log update from the provided io.Reader.
+func deserializeLogUpdate(r io.Reader) (*LogUpdate, error) {
+	l := &LogUpdate{}
+	if err := ReadElements(r, &l.LogIndex, &l.UpdateMsg); err != nil {
+		return nil, err
+	}
+
+	return l, nil
 }
 
 // CircuitKey is used by a channel to uniquely identify the HTLCs it receives
@@ -1960,12 +1974,12 @@ func deserializeLogUpdates(r io.Reader) ([]LogUpdate, error) {
 	return logUpdates, nil
 }
 
-func serializeCommitDiff(w io.Writer, diff *CommitDiff) error {
+func serializeCommitDiff(w io.Writer, diff *CommitDiff) error { // nolint: dupl
 	if err := serializeChanCommit(w, &diff.Commitment); err != nil {
 		return err
 	}
 
-	if err := diff.CommitSig.Encode(w, 0); err != nil {
+	if err := WriteElements(w, diff.CommitSig); err != nil {
 		return err
 	}
 
@@ -2011,10 +2025,16 @@ func deserializeCommitDiff(r io.Reader) (*CommitDiff, error) {
 		return nil, err
 	}
 
-	d.CommitSig = &lnwire.CommitSig{}
-	if err := d.CommitSig.Decode(r, 0); err != nil {
+	var msg lnwire.Message
+	if err := ReadElements(r, &msg); err != nil {
 		return nil, err
 	}
+	commitSig, ok := msg.(*lnwire.CommitSig)
+	if !ok {
+		return nil, fmt.Errorf("expected lnwire.CommitSig, instead "+
+			"read: %T", msg)
+	}
+	d.CommitSig = commitSig
 
 	d.LogUpdates, err = deserializeLogUpdates(r)
 	if err != nil {
@@ -3275,6 +3295,20 @@ func putChanInfo(chanBucket kvdb.RwBucket, channel *OpenChannel) error {
 		return err
 	}
 
+	// Write the RevocationKeyLocator as the first entry in a tlv stream.
+	keyLocRecord := MakeKeyLocRecord(
+		keyLocType, &channel.RevocationKeyLocator,
+	)
+
+	tlvStream, err := tlv.NewStream(keyLocRecord)
+	if err != nil {
+		return err
+	}
+
+	if err := tlvStream.Encode(&w); err != nil {
+		return err
+	}
+
 	if err := chanBucket.Put(chanInfoKey, w.Bytes()); err != nil {
 		return err
 	}
@@ -3464,6 +3498,16 @@ func fetchChanInfo(chanBucket kvdb.RBucket, channel *OpenChannel) error {
 		}
 	}
 
+	keyLocRecord := MakeKeyLocRecord(keyLocType, &channel.RevocationKeyLocator)
+	tlvStream, err := tlv.NewStream(keyLocRecord)
+	if err != nil {
+		return err
+	}
+
+	if err := tlvStream.Decode(r); err != nil {
+		return err
+	}
+
 	channel.Packager = NewChannelPackager(channel.ShortChannelID)
 
 	// Finally, read the optional shutdown scripts.
@@ -3645,4 +3689,39 @@ func storeThawHeight(chanBucket kvdb.RwBucket, height uint32) error {
 
 func deleteThawHeight(chanBucket kvdb.RwBucket) error {
 	return chanBucket.Delete(frozenChanKey)
+}
+
+// EKeyLocator is an encoder for keychain.KeyLocator.
+func EKeyLocator(w io.Writer, val interface{}, buf *[8]byte) error {
+	if v, ok := val.(*keychain.KeyLocator); ok {
+		err := tlv.EUint32T(w, uint32(v.Family), buf)
+		if err != nil {
+			return err
+		}
+
+		return tlv.EUint32T(w, v.Index, buf)
+	}
+	return tlv.NewTypeForEncodingErr(val, "keychain.KeyLocator")
+}
+
+// DKeyLocator is a decoder for keychain.KeyLocator.
+func DKeyLocator(r io.Reader, val interface{}, buf *[8]byte, l uint64) error {
+	if v, ok := val.(*keychain.KeyLocator); ok {
+		var family uint32
+		err := tlv.DUint32(r, &family, buf, 4)
+		if err != nil {
+			return err
+		}
+		v.Family = keychain.KeyFamily(family)
+
+		return tlv.DUint32(r, &v.Index, buf, 4)
+	}
+	return tlv.NewTypeForDecodingErr(val, "keychain.KeyLocator", l, 8)
+}
+
+// MakeKeyLocRecord creates a Record out of a KeyLocator using the passed
+// Type and the EKeyLocator and DKeyLocator functions. The size will always be
+// 8 as KeyFamily is uint32 and the Index is uint32.
+func MakeKeyLocRecord(typ tlv.Type, keyLoc *keychain.KeyLocator) tlv.Record {
+	return tlv.MakeStaticRecord(typ, keyLoc, 8, EKeyLocator, DKeyLocator)
 }

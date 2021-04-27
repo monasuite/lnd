@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/monasuite/lnd/lnwire"
+	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
 )
 
 var (

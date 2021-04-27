@@ -434,7 +434,7 @@ project uses [v3.4.0](https://github.com/google/protobuf/releases/tag/v3.4.0)
 of `protoc`.
 
 The following two libraries must be installed with the exact commit hash as
-described in [lnrpc README](https://github.com/lightningnetwork/lnd/blob/master/lnrpc/README.md)
+described in [lnrpc README](https://github.com/monasuite/lnd/blob/master/lnrpc/README.md)
 otherwise the CI pipeline on Travis will fail:
 - grpc-ecosystem/grpc-gateway
 - golang/protobuf

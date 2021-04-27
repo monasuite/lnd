@@ -35,6 +35,7 @@ import (
 	"github.com/monasuite/lnd/lnrpc/signrpc"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/routing"
+	"github.com/monasuite/lnd/signal"
 	"github.com/monasuite/lnd/tor"
 	"github.com/monasuite/neutrino"
 )
@@ -78,6 +79,11 @@ const (
 	defaultTorV2PrivateKeyFilename = "v2_onion_private_key"
 	defaultTorV3PrivateKeyFilename = "v3_onion_private_key"
 
+	// DefaultAutogenValidity is the default validity of a self-signed
+	// certificate. The value corresponds to 14 months
+	// (14 months * 30 days * 24 hours).
+	defaultTLSCertDuration = 14 * 30 * 24 * time.Hour
+
 	// minTimeLockDelta is the minimum timelock we require for incoming
 	// HTLCs on our channels.
 	minTimeLockDelta = routing.MinCLTVDelta
@@ -88,6 +94,13 @@ const (
 
 	defaultAlias = ""
 	defaultColor = "#3399FF"
+
+	// defaultCoopCloseTargetConfs is the default confirmation target
+	// that will be used to estimate a fee rate to use during a
+	// cooperative channel closure initiated by a remote peer. By default
+	// we'll set this to a lax value since we weren't the ones that
+	// initiated the channel closure.
+	defaultCoopCloseTargetConfs = 6
 
 	// defaultHostSampleInterval is the default amount of time that the
 	// HostAnnouncer will wait between DNS resolutions to check if the
@@ -127,6 +140,15 @@ const (
 	// commitment output.
 	// TODO(halseth): find a more scientific choice of value.
 	defaultMaxLocalCSVDelay = 10000
+
+	// defaultChannelCommitInterval is the default maximum time between receiving a
+	// channel state update and signing a new commitment.
+	defaultChannelCommitInterval = 50 * time.Millisecond
+
+	// defaultChannelCommitBatchSize is the default maximum number of
+	// channel state updates that is accumulated before signing a new
+	// commitment.
+	defaultChannelCommitBatchSize = 10
 )
 
 var (
@@ -169,6 +191,8 @@ var (
 	defaultBitcoindEstimateMode = "CONSERVATIVE"
 	bitcoindEstimateModes       = [2]string{"ECONOMICAL", defaultBitcoindEstimateMode}
 
+	defaultPrunedNodeMaxPeers = 4
+
 	defaultSphinxDbName = "sphinxreplay.db"
 )
 
@@ -184,12 +208,13 @@ type Config struct {
 	DataDir      string `short:"b" long:"datadir" description:"The directory to store lnd's data within"`
 	SyncFreelist bool   `long:"sync-freelist" description:"Whether the databases used within lnd should sync their freelist to disk. This is disabled by default resulting in improved memory performance during operation, but with an increase in startup time."`
 
-	TLSCertPath        string   `long:"tlscertpath" description:"Path to write the TLS certificate for lnd's RPC and REST services"`
-	TLSKeyPath         string   `long:"tlskeypath" description:"Path to write the TLS private key for lnd's RPC and REST services"`
-	TLSExtraIPs        []string `long:"tlsextraip" description:"Adds an extra ip to the generated certificate"`
-	TLSExtraDomains    []string `long:"tlsextradomain" description:"Adds an extra domain to the generated certificate"`
-	TLSAutoRefresh     bool     `long:"tlsautorefresh" description:"Re-generate TLS certificate and key if the IPs or domains are changed"`
-	TLSDisableAutofill bool     `long:"tlsdisableautofill" description:"Do not include the interface IPs or the system hostname in TLS certificate, use first --tlsextradomain as Common Name instead, if set"`
+	TLSCertPath        string        `long:"tlscertpath" description:"Path to write the TLS certificate for lnd's RPC and REST services"`
+	TLSKeyPath         string        `long:"tlskeypath" description:"Path to write the TLS private key for lnd's RPC and REST services"`
+	TLSExtraIPs        []string      `long:"tlsextraip" description:"Adds an extra ip to the generated certificate"`
+	TLSExtraDomains    []string      `long:"tlsextradomain" description:"Adds an extra domain to the generated certificate"`
+	TLSAutoRefresh     bool          `long:"tlsautorefresh" description:"Re-generate TLS certificate and key if the IPs or domains are changed"`
+	TLSDisableAutofill bool          `long:"tlsdisableautofill" description:"Do not include the interface IPs or the system hostname in TLS certificate, use first --tlsextradomain as Common Name instead, if set"`
+	TLSCertDuration    time.Duration `long:"tlscertduration" description:"The duration for which the auto-generated TLS certificate will be valid for"`
 
 	NoMacaroons     bool          `long:"no-macaroons" description:"Disable macaroon authentication, can only be used if server is not listening on a public interface."`
 	AdminMacPath    string        `long:"adminmacaroonpath" description:"Path to write the admin macaroon for lnd's RPC and REST services if it doesn't exist"`
@@ -230,7 +255,7 @@ type Config struct {
 
 	CPUProfile string `long:"cpuprofile" description:"Write CPU profile to the specified file"`
 
-	Profile string `long:"profile" description:"Enable HTTP profiling on given port -- NOTE port must be between 1024 and 65535"`
+	Profile string `long:"profile" description:"Enable HTTP profiling on either a port or host:port"`
 
 	UnsafeDisconnect   bool   `long:"unsafe-disconnect" description:"DEPRECATED: Allows the rpcserver to intentionally disconnect from peers with open channels. THIS FLAG WILL BE REMOVED IN 0.10.0"`
 	UnsafeReplay       bool   `long:"unsafe-replay" description:"Causes a link to replay the adds on its commitment txn after starting up, this enables testing of the sphinx replay logic."`
@@ -272,6 +297,10 @@ type Config struct {
 	Color                         string        `long:"color" description:"The color of the node in hex format (i.e. '#3399FF'). Used to customize node appearance in intelligence services"`
 	MinChanSize                   int64         `long:"minchansize" description:"The smallest channel size (in satoshis) that we should accept. Incoming channels smaller than this will be rejected"`
 	MaxChanSize                   int64         `long:"maxchansize" description:"The largest channel size (in satoshis) that we should accept. Incoming channels larger than this will be rejected"`
+	CoopCloseTargetConfs          uint32        `long:"coop-close-target-confs" description:"The target number of blocks that a cooperative channel close transaction should confirm in. This is used to estimate the fee to use as the lower bound during fee negotiation for the channel closure."`
+
+	ChannelCommitInterval  time.Duration `long:"channel-commit-interval" description:"The maximum time that is allowed to pass between receiving a channel state update and signing the next commitment. Setting this to a longer duration allows for more efficient channel operations at the cost of latency."`
+	ChannelCommitBatchSize uint32        `long:"channel-commit-batch-size" description:"The maximum number of channel state updates that is accumulated before signing a new commitment."`
 
 	DefaultRemoteMaxHtlcs uint16 `long:"default-remote-max-htlcs" description:"The default max_htlc applied when opening or accepting channels. This value limits the number of concurrent HTLCs that the remote party can add to the commitment. The maximum possible value is 483."`
 
@@ -354,6 +383,7 @@ func DefaultConfig() Config {
 		DebugLevel:        defaultLogLevel,
 		TLSCertPath:       defaultTLSCertPath,
 		TLSKeyPath:        defaultTLSKeyPath,
+		TLSCertDuration:   defaultTLSCertDuration,
 		LetsEncryptDir:    defaultLetsEncryptDir,
 		LetsEncryptListen: defaultLetsEncryptListen,
 		LogDir:            defaultLogDir,
@@ -375,9 +405,10 @@ func DefaultConfig() Config {
 			RPCCert: defaultBtcdRPCCertFile,
 		},
 		BitcoindMode: &lncfg.Bitcoind{
-			Dir:          defaultBitcoindDir,
-			RPCHost:      defaultRPCHost,
-			EstimateMode: defaultBitcoindEstimateMode,
+			Dir:                defaultBitcoindDir,
+			RPCHost:            defaultRPCHost,
+			EstimateMode:       defaultBitcoindEstimateMode,
+			PrunedNodeMaxPeers: defaultPrunedNodeMaxPeers,
 		},
 		Monacoin: &lncfg.Chain{
 			MinHTLCIn:     chainreg.DefaultMonacoinMinHTLCInMSat,
@@ -394,9 +425,10 @@ func DefaultConfig() Config {
 			RPCCert: defaultMonadRPCCertFile,
 		},
 		MonacoindMode: &lncfg.Bitcoind{
-			Dir:          defaultMonacoindDir,
-			RPCHost:      defaultRPCHost,
-			EstimateMode: defaultBitcoindEstimateMode,
+			Dir:                defaultMonacoindDir,
+			RPCHost:            defaultRPCHost,
+			EstimateMode:       defaultBitcoindEstimateMode,
+			PrunedNodeMaxPeers: defaultPrunedNodeMaxPeers,
 		},
 		NeutrinoMode: &lncfg.Neutrino{
 			UserAgentName:    neutrino.UserAgentName,
@@ -433,6 +465,7 @@ func DefaultConfig() Config {
 		Color:                         defaultColor,
 		MinChanSize:                   int64(funding.MinChanFundingSize),
 		MaxChanSize:                   int64(0),
+		CoopCloseTargetConfs:          defaultCoopCloseTargetConfs,
 		DefaultRemoteMaxHtlcs:         defaultRemoteMaxHtlcs,
 		NumGraphSyncPeers:             defaultMinPeers,
 		HistoricalSyncInterval:        discovery.DefaultHistoricalSyncInterval,
@@ -478,7 +511,10 @@ func DefaultConfig() Config {
 				Backoff:  defaultTLSBackoff,
 			},
 		},
-		Gossip:                  &lncfg.Gossip{},
+		Gossip: &lncfg.Gossip{
+			MaxChannelUpdateBurst: discovery.DefaultMaxChannelUpdateBurst,
+			ChannelUpdateInterval: discovery.DefaultChannelUpdateInterval,
+		},
 		MaxOutgoingCltvExpiry:   htlcswitch.DefaultMaxOutgoingCltvExpiry,
 		MaxChannelFeeAllocation: htlcswitch.DefaultMaxLinkFeeAllocation,
 		MaxCommitFeeRateAnchors: lnwallet.DefaultAnchorsCommitMaxFeeRateSatPerVByte,
@@ -486,6 +522,8 @@ func DefaultConfig() Config {
 		DB:                      lncfg.DefaultDB(),
 		registeredChains:        chainreg.NewChainRegistry(),
 		ActiveNetParams:         chainreg.BitcoinTestNetParams,
+		ChannelCommitInterval:   defaultChannelCommitInterval,
+		ChannelCommitBatchSize:  defaultChannelCommitBatchSize,
 	}
 }
 
@@ -497,7 +535,7 @@ func DefaultConfig() Config {
 // 	2) Pre-parse the command line to check for an alternative config file
 // 	3) Load configuration file overwriting defaults with any specified options
 // 	4) Parse CLI options and overwrite/add any specified options
-func LoadConfig() (*Config, error) {
+func LoadConfig(interceptor signal.Interceptor) (*Config, error) {
 	// Pre-parse the command line options to pick up an alternative config
 	// file.
 	preCfg := DefaultConfig()
@@ -550,7 +588,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Make sure everything we just loaded makes sense.
-	cleanCfg, err := ValidateConfig(cfg, usageMessage)
+	cleanCfg, err := ValidateConfig(cfg, usageMessage, interceptor)
 	if err != nil {
 		return nil, err
 	}
@@ -568,7 +606,8 @@ func LoadConfig() (*Config, error) {
 // ValidateConfig check the given configuration to be sane. This makes sure no
 // illegal values or combination of values are set. All file system paths are
 // normalized. The cleaned up config is returned on success.
-func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
+func ValidateConfig(cfg Config, usageMessage string,
+	interceptor signal.Interceptor) (*Config, error) {
 	// If the provided lnd directory is not the default, we'll modify the
 	// path to all of the files and directories that will live within it.
 	lndDir := CleanAndExpandPath(cfg.LndDir)
@@ -1080,15 +1119,34 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 		cfg.Autopilot.MaxChannelSize = int64(MaxFundingAmount)
 	}
 
-	// Validate profile port number.
+	// Validate profile port or host:port.
 	if cfg.Profile != "" {
-		profilePort, err := strconv.Atoi(cfg.Profile)
-		if err != nil || profilePort < 1024 || profilePort > 65535 {
-			str := "%s: The profile port must be between 1024 and 65535"
-			err := fmt.Errorf(str, funcName)
-			_, _ = fmt.Fprintln(os.Stderr, err)
-			_, _ = fmt.Fprintln(os.Stderr, usageMessage)
-			return nil, err
+		str := "%s: The profile port must be between 1024 and 65535"
+
+		// Try to parse Profile as a host:port.
+		_, hostPort, err := net.SplitHostPort(cfg.Profile)
+		if err == nil {
+			// Determine if the port is valid.
+			profilePort, err := strconv.Atoi(hostPort)
+			if err != nil || profilePort < 1024 || profilePort > 65535 {
+				err = fmt.Errorf(str, funcName)
+				_, _ = fmt.Fprintln(os.Stderr, err)
+				_, _ = fmt.Fprintln(os.Stderr, usageMessage)
+				return nil, err
+			}
+		} else {
+			// Try to parse Profile as a port.
+			profilePort, err := strconv.Atoi(cfg.Profile)
+			if err != nil || profilePort < 1024 || profilePort > 65535 {
+				err = fmt.Errorf(str, funcName)
+				_, _ = fmt.Fprintln(os.Stderr, err)
+				_, _ = fmt.Fprintln(os.Stderr, usageMessage)
+				return nil, err
+			}
+
+			// Since the user just set a port, we will serve debugging
+			// information over localhost.
+			cfg.Profile = net.JoinHostPort("127.0.0.1", cfg.Profile)
 		}
 	}
 
@@ -1147,7 +1205,7 @@ func ValidateConfig(cfg Config, usageMessage string) (*Config, error) {
 	}
 
 	// Initialize logging at the default logging level.
-	SetupLoggers(cfg.LogWriter)
+	SetupLoggers(cfg.LogWriter, interceptor)
 	err = cfg.LogWriter.InitLogRotator(
 		filepath.Join(cfg.LogDir, defaultLogFilename),
 		cfg.MaxLogFileSize, cfg.MaxLogFiles,

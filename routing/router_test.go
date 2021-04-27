@@ -93,13 +93,15 @@ func createTestCtxFromGraphInstanceAssumeValid(startingHeight uint32,
 	}
 
 	mcConfig := &MissionControlConfig{
-		PenaltyHalfLife:       time.Hour,
-		AprioriHopProbability: 0.9,
-		AprioriWeight:         0.5,
+		ProbabilityEstimatorCfg: ProbabilityEstimatorCfg{
+			PenaltyHalfLife:       time.Hour,
+			AprioriHopProbability: 0.9,
+			AprioriWeight:         0.5,
+		},
 	}
 
 	mc, err := NewMissionControl(
-		graphInstance.graph.Database(),
+		graphInstance.graph.Database(), route.Vertex{},
 		mcConfig,
 	)
 	if err != nil {
@@ -1539,6 +1541,9 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		Control:            makeMockControlTower(),
 		ChannelPruneExpiry: time.Hour * 24,
 		GraphPruneInterval: time.Hour * 2,
+
+		// We'll set the delay to zero to prune immediately.
+		FirstTimePruneDelay: 0,
 	})
 	if err != nil {
 		t.Fatalf("unable to create router %v", err)
@@ -2155,6 +2160,9 @@ func testPruneChannelGraphDoubleDisabled(t *testing.T, assumeValid bool) {
 	if !assumeValid {
 		assertChannelsPruned(t, ctx.graph, testChannels)
 	} else {
+		// Sleep to allow the pruning to finish.
+		time.Sleep(200 * time.Millisecond)
+
 		prunedChannel := testChannels[len(testChannels)-1].ChannelID
 		assertChannelsPruned(t, ctx.graph, testChannels, prunedChannel)
 	}

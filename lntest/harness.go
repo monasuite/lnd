@@ -211,7 +211,7 @@ func (n *NetworkHarness) SetUp(testCase string, lndArgs []string) error {
 
 	// We generate several blocks in order to give the outputs created
 	// above a good number of confirmations.
-	if _, err := n.Miner.Node.Generate(10); err != nil {
+	if _, err := n.Miner.Client.Generate(10); err != nil {
 		return err
 	}
 
@@ -300,8 +300,12 @@ func (n *NetworkHarness) NewNodeWithSeed(name string, extraArgs []string,
 
 	ctxt, cancel := context.WithTimeout(ctxb, DefaultTimeout)
 	defer cancel()
-	genSeedResp, err := node.GenSeed(ctxt, genSeedReq)
-	if err != nil {
+
+	var genSeedResp *lnrpc.GenSeedResponse
+	if err := wait.NoError(func() error {
+		genSeedResp, err = node.GenSeed(ctxt, genSeedReq)
+		return err
+	}, DefaultTimeout); err != nil {
 		return nil, nil, nil, err
 	}
 
@@ -799,7 +803,7 @@ func (n *NetworkHarness) WaitForTxInMempool(ctx context.Context,
 
 		case <-ticker.C:
 			var err error
-			mempool, err = n.Miner.Node.GetRawMempool()
+			mempool, err = n.Miner.Client.GetRawMempool()
 			if err != nil {
 				return err
 			}
@@ -841,6 +845,10 @@ type OpenChannelParams struct {
 	// FundingShim is an optional funding shim that the caller can specify
 	// in order to modify the channel funding workflow.
 	FundingShim *lnrpc.FundingShim
+
+	// SatPerVByte is the amount of satoshis to spend in chain fees per virtual
+	// byte of the transaction.
+	SatPerVByte btcutil.Amount
 }
 
 // OpenChannel attempts to open a channel between srcNode and destNode with the
@@ -878,6 +886,7 @@ func (n *NetworkHarness) OpenChannel(ctx context.Context,
 		MinHtlcMsat:        int64(p.MinHtlc),
 		RemoteMaxHtlcs:     uint32(p.RemoteMaxHtlcs),
 		FundingShim:        p.FundingShim,
+		SatPerByte:         int64(p.SatPerVByte),
 	}
 
 	respStream, err := srcNode.OpenChannel(ctx, openReq)
@@ -1374,7 +1383,7 @@ func (n *NetworkHarness) sendCoins(ctx context.Context, amt btcutil.Amount,
 	// Otherwise, we'll generate 6 new blocks to ensure the output gains a
 	// sufficient number of confirmations and wait for the balance to
 	// reflect what's expected.
-	if _, err := n.Miner.Node.Generate(6); err != nil {
+	if _, err := n.Miner.Client.Generate(6); err != nil {
 		return err
 	}
 

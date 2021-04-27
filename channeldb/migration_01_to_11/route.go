@@ -11,7 +11,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	sphinx "github.com/lightningnetwork/lightning-onion"
-	"github.com/monasuite/lnd/lnwire"
+	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
 	"github.com/monasuite/lnd/record"
 	"github.com/monasuite/lnd/tlv"
 )

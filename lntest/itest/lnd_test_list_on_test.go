@@ -72,6 +72,10 @@ var allTestCases = []*testCase{
 		test: testListChannels,
 	},
 	{
+		name: "update channel status",
+		test: testUpdateChanStatus,
+	},
+	{
 		name: "list outgoing payments",
 		test: testListPayments,
 	},
@@ -263,6 +267,10 @@ var allTestCases = []*testCase{
 		test: testSendToRouteMultiPath,
 	},
 	{
+		name: "sendtoroute amp",
+		test: testSendToRouteAMP,
+	},
+	{
 		name: "send multi path payment",
 		test: testSendMultiPathPayment,
 	},
@@ -289,5 +297,13 @@ var allTestCases = []*testCase{
 	{
 		name: "stateless init",
 		test: testStatelessInit,
+	},
+	{
+		name: "wallet import account",
+		test: testWalletImportAccount,
+	},
+	{
+		name: "wallet import pubkey",
+		test: testWalletImportPubKey,
 	},
 }

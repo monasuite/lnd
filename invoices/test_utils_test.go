@@ -14,20 +14,25 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/lightningnetwork/lnd/clock"
-	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/record"
 	"github.com/monasuite/lnd/zpay32"
+	"github.com/stretchr/testify/require"
 )
 
 type mockPayload struct {
 	mpp           *record.MPP
+	amp           *record.AMP
 	customRecords record.CustomSet
 }
 
 func (p *mockPayload) MultiPath() *record.MPP {
 	return p.mpp
+}
+
+func (p *mockPayload) AMPRecord() *record.AMP {
+	return p.amp
 }
 
 func (p *mockPayload) CustomRecords() record.CustomSet {
@@ -40,6 +45,16 @@ func (p *mockPayload) CustomRecords() record.CustomSet {
 	return p.customRecords
 }
 
+const (
+	testHtlcExpiry = uint32(5)
+
+	testInvoiceCltvDelta = uint32(4)
+
+	testFinalCltvRejectDelta = int32(4)
+
+	testCurrentHeight = int32(1)
+)
+
 var (
 	testTimeout = 5 * time.Second
 
@@ -48,14 +63,6 @@ var (
 	testInvoicePreimage = lntypes.Preimage{1}
 
 	testInvoicePaymentHash = testInvoicePreimage.Hash()
-
-	testHtlcExpiry = uint32(5)
-
-	testInvoiceCltvDelta = uint32(4)
-
-	testFinalCltvRejectDelta = int32(4)
-
-	testCurrentHeight = int32(1)
 
 	testPrivKeyBytes, _ = hex.DecodeString(
 		"e126f68f7eafcc8b74f54d269fe206be715000f94dac067d1c04a8ca3b2db734")
@@ -106,7 +113,10 @@ var (
 			Value:           testInvoiceAmt,
 			Expiry:          time.Hour,
 			Features: lnwire.NewFeatureVector(
-				lnwire.NewRawFeatureVector(lnwire.PaymentAddrRequired),
+				lnwire.NewRawFeatureVector(
+					lnwire.TLVOnionPayloadOptional,
+					lnwire.PaymentAddrRequired,
+				),
 				lnwire.Features,
 			),
 		},
@@ -119,7 +129,10 @@ var (
 			Value:           testInvoiceAmt,
 			Expiry:          time.Hour,
 			Features: lnwire.NewFeatureVector(
-				lnwire.NewRawFeatureVector(lnwire.PaymentAddrOptional),
+				lnwire.NewRawFeatureVector(
+					lnwire.TLVOnionPayloadOptional,
+					lnwire.PaymentAddrOptional,
+				),
 				lnwire.Features,
 			),
 		},
@@ -319,4 +332,33 @@ func generateInvoiceExpiryTestData(
 	}
 
 	return testData
+}
+
+// checkSettleResolution asserts the resolution is a settle with the correct
+// preimage. If successful, the HtlcSettleResolution is returned in case further
+// checks are desired.
+func checkSettleResolution(t *testing.T, res HtlcResolution,
+	expPreimage lntypes.Preimage) *HtlcSettleResolution {
+
+	t.Helper()
+
+	settleResolution, ok := res.(*HtlcSettleResolution)
+	require.True(t, ok)
+	require.Equal(t, expPreimage, settleResolution.Preimage)
+
+	return settleResolution
+}
+
+// checkFailResolution asserts the resolution is a fail with the correct reason.
+// If successful, the HtlcFailResolutionis returned in case further checks are
+// desired.
+func checkFailResolution(t *testing.T, res HtlcResolution,
+	expOutcome FailResolutionResult) *HtlcFailResolution {
+
+	t.Helper()
+	failResolution, ok := res.(*HtlcFailResolution)
+	require.True(t, ok)
+	require.Equal(t, expOutcome, failResolution.Outcome)
+
+	return failResolution
 }

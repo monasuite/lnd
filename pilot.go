@@ -12,6 +12,7 @@ import (
 	"github.com/monasuite/lnd/chainreg"
 	"github.com/monasuite/lnd/funding"
 	"github.com/monasuite/lnd/lncfg"
+	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/tor"
 )
@@ -180,7 +181,9 @@ func initAutoPilot(svr *server, cfg *lncfg.AutoPilot,
 			netParams:     netParams,
 		},
 		WalletBalance: func() (btcutil.Amount, error) {
-			return svr.cc.Wallet.ConfirmedBalance(cfg.MinConfs)
+			return svr.cc.Wallet.ConfirmedBalance(
+				cfg.MinConfs, lnwallet.DefaultAccountName,
+			)
 		},
 		Graph:       autopilot.ChannelGraphFromDatabase(svr.localChanDB.ChannelGraph()),
 		Constraints: atplConstraints,

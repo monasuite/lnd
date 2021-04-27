@@ -298,10 +298,25 @@ type Config struct {
 	// initiator for anchor channel commitments.
 	MaxAnchorsCommitFeeRate chainfee.SatPerKWeight
 
+	// CoopCloseTargetConfs is the confirmation target that will be used
+	// to estimate the fee rate to use during a cooperative channel
+	// closure initiated by the remote peer.
+	CoopCloseTargetConfs uint32
+
 	// ServerPubKey is the serialized, compressed public key of our lnd node.
 	// It is used to determine which policy (channel edge) to pass to the
 	// ChannelLink.
 	ServerPubKey [33]byte
+
+	// ChannelCommitInterval is the maximum time that is allowed to pass between
+	// receiving a channel state update and signing the next commitment.
+	// Setting this to a longer duration allows for more efficient channel
+	// operations at the cost of latency.
+	ChannelCommitInterval time.Duration
+
+	// ChannelCommitBatchSize is the maximum number of channel state updates
+	// that is accumulated before signing a new commitment.
+	ChannelCommitBatchSize uint32
 
 	// Quit is the server's quit channel. If this is closed, we halt operation.
 	Quit chan struct{}
@@ -808,10 +823,10 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 		UpdateContractSignals:   updateContractSignals,
 		OnChannelFailure:        onChannelFailure,
 		SyncStates:              syncStates,
-		BatchTicker:             ticker.New(50 * time.Millisecond),
+		BatchTicker:             ticker.New(p.cfg.ChannelCommitInterval),
 		FwdPkgGCTicker:          ticker.New(time.Hour),
 		PendingCommitTicker:     ticker.New(time.Minute),
-		BatchSize:               10,
+		BatchSize:               p.cfg.ChannelCommitBatchSize,
 		UnsafeReplay:            p.cfg.UnsafeReplay,
 		MinFeeUpdateTimeout:     htlcswitch.DefaultMinLinkFeeUpdateTimeout,
 		MaxFeeUpdateTimeout:     htlcswitch.DefaultMaxLinkFeeUpdateTimeout,
@@ -2038,7 +2053,7 @@ func (p *Brontide) ChannelSnapshots() []*channeldb.ChannelSnapshot {
 // the case of a cooperative channel close negotiation.
 func (p *Brontide) genDeliveryScript() ([]byte, error) {
 	deliveryAddr, err := p.cfg.Wallet.NewAddress(
-		lnwallet.WitnessPubKey, false,
+		lnwallet.WitnessPubKey, false, lnwallet.DefaultAccountName,
 	)
 	if err != nil {
 		return nil, err
@@ -2285,8 +2300,11 @@ func (p *Brontide) reenableActiveChannels() {
 	// disabled bit to false and send out a new ChannelUpdate. If this
 	// channel is already active, the update won't be sent.
 	for _, chanPoint := range activePublicChans {
-		err := p.cfg.ChanStatusMgr.RequestEnable(chanPoint)
-		if err != nil {
+		err := p.cfg.ChanStatusMgr.RequestEnable(chanPoint, false)
+		if err == netann.ErrEnableManuallyDisabledChan {
+			peerLog.Debugf("Channel(%v) was manually disabled, ignoring "+
+				"automatic enable request", chanPoint)
+		} else if err != nil {
 			peerLog.Errorf("Unable to enable channel %v: %v",
 				chanPoint, err)
 		}
@@ -2325,10 +2343,14 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 				"channel w/ active htlcs")
 		}
 
-		// We'll create a valid closing state machine in order to respond to the
-		// initiated cooperative channel closure. First, we set the delivery
-		// script that our funds will be paid out to. If an upfront shutdown script
-		// was set, we will use it. Otherwise, we get a fresh delivery script.
+		// We'll create a valid closing state machine in order to
+		// respond to the initiated cooperative channel closure. First,
+		// we set the delivery script that our funds will be paid out
+		// to. If an upfront shutdown script was set, we will use it.
+		// Otherwise, we get a fresh delivery script.
+		//
+		// TODO: Expose option to allow upfront shutdown script from
+		// watch-only accounts.
 		deliveryScript := channel.LocalUpfrontShutdownScript()
 		if len(deliveryScript) == 0 {
 			var err error
@@ -2340,9 +2362,10 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 		}
 
 		// In order to begin fee negotiations, we'll first compute our
-		// target ideal fee-per-kw. We'll set this to a lax value, as
-		// we weren't the ones that initiated the channel closure.
-		feePerKw, err := p.cfg.FeeEstimator.EstimateFeePerKW(6)
+		// target ideal fee-per-kw.
+		feePerKw, err := p.cfg.FeeEstimator.EstimateFeePerKW(
+			p.cfg.CoopCloseTargetConfs,
+		)
 		if err != nil {
 			peerLog.Errorf("unable to query fee estimator: %v", err)
 
@@ -2360,7 +2383,9 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 				Channel:           channel,
 				UnregisterChannel: p.cfg.Switch.RemoveLink,
 				BroadcastTx:       p.cfg.Wallet.PublishTransaction,
-				DisableChannel:    p.cfg.ChanStatusMgr.RequestDisable,
+				DisableChannel: func(chanPoint wire.OutPoint) error {
+					return p.cfg.ChanStatusMgr.RequestDisable(chanPoint, false)
+				},
 				Disconnect: func() error {
 					return p.cfg.DisconnectPeer(p.IdentityKey())
 				},
@@ -2476,7 +2501,9 @@ func (p *Brontide) handleLocalCloseReq(req *htlcswitch.ChanClose) {
 				Channel:           channel,
 				UnregisterChannel: p.cfg.Switch.RemoveLink,
 				BroadcastTx:       p.cfg.Wallet.PublishTransaction,
-				DisableChannel:    p.cfg.ChanStatusMgr.RequestDisable,
+				DisableChannel: func(chanPoint wire.OutPoint) error {
+					return p.cfg.ChanStatusMgr.RequestDisable(chanPoint, false)
+				},
 				Disconnect: func() error {
 					return p.cfg.DisconnectPeer(p.IdentityKey())
 				},

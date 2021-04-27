@@ -11,8 +11,8 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	_ "github.com/monaarchives/btcwallet/walletdb/bdb"
+	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
 	"github.com/monasuite/lnd/keychain"
-	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/shachain"
 )
 

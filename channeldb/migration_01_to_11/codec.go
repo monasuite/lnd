@@ -10,8 +10,8 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
+	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
 	"github.com/monasuite/lnd/keychain"
-	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/shachain"
 )
 

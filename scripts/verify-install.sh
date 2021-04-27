@@ -29,24 +29,9 @@ function check_command() {
   fi
 }
 
-
-if [[ $# -eq 0 ]]; then
-  echo "ERROR: missing expected version!"
-  echo "Usage: verify-install.sh expected-version [path-to-lnd-binary path-to-lncli-binary]"
-  exit 1
-fi
-
-# The first argument should be the expected version of the binaries.
-VERSION=$1
-shift
-
-# Verify that the expected version is well-formed.
-version_regex="^v[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]"
-if [[ ! "$VERSION" =~ $version_regex ]]; then
-  echo "ERROR: Invalid expected version detected: $VERSION"
-  exit 1
-fi
-echo "Expected version for binaries: $VERSION"
+# By default we're picking up lnd and lncli from the system $PATH.
+LND_BIN=$(which lnd)
+LNCLI_BIN=$(which lncli)
 
 # If exactly two parameters are specified, we expect the first one to be lnd and
 # the second one to be lncli.
@@ -64,22 +49,21 @@ if [[ $# -eq 2 ]]; then
     exit 1
   fi
 elif [[ $# -eq 0 ]]; then
-  # By default we're picking up lnd and lncli from the system $PATH.
-  LND_BIN=$(which lnd)
-  LNCLI_BIN=$(which lncli)
+  # Make sure both binaries can be found and are executable.
+  check_command lnd
+  check_command lncli
 else
   echo "ERROR: invalid number of parameters!"
   echo "Usage: verify-install.sh [lnd-binary lncli-binary]"
   exit 1
 fi
 
-# Make sure both binaries can be found and are executable.
-check_command lnd
-check_command lncli
-
 check_command curl
 check_command jq
 check_command gpg
+
+LND_VERSION=$($LND_BIN --version | cut -d'=' -f2)
+LNCLI_VERSION=$($LNCLI_BIN --version | cut -d'=' -f2)
 
 # Make this script compatible with both linux and *nix.
 SHA_CMD="sha256sum"
@@ -94,6 +78,21 @@ fi
 LND_SUM=$($SHA_CMD $LND_BIN | cut -d' ' -f1)
 LNCLI_SUM=$($SHA_CMD $LNCLI_BIN | cut -d' ' -f1)
 
+echo "Detected lnd $LND_BIN version $LND_VERSION with SHA256 sum $LND_SUM"
+echo "Detected lncli $LNCLI_BIN version $LNCLI_VERSION with SHA256 sum $LNCLI_SUM"
+
+# Make sure lnd and lncli are installed with the same version and is an actual
+# version string.
+if [[ "$LNCLI_VERSION" != "$LND_VERSION" ]]; then
+  echo "ERROR: Version $LNCLI_VERSION of lncli does not match $LND_VERSION of lnd!"
+  exit 1
+fi
+version_regex="^v[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]"
+if [[ ! "$LND_VERSION" =~ $version_regex ]]; then
+  echo "ERROR: Invalid version of lnd detected: $LND_VERSION"
+  exit 1
+fi
+
 # Make sure the hash was actually calculated by looking at its length.
 if [[ ${#LND_SUM} -ne 64 ]]; then
   echo "ERROR: Invalid hash for lnd: $LND_SUM!"
@@ -103,9 +102,6 @@ if [[ ${#LNCLI_SUM} -ne 64 ]]; then
   echo "ERROR: Invalid hash for lncli: $LNCLI_SUM!"
   exit 1
 fi
-
-echo "Verifying lnd $LND_BIN as version $VERSION with SHA256 sum $LND_SUM"
-echo "Verifying lncli $LNCLI_BIN as version $VERSION with SHA256 sum $LNCLI_SUM"
 
 # If we're inside the docker image, there should be a shasums.txt file in the
 # root directory. If that's the case, we first want to make sure we still have
@@ -154,7 +150,7 @@ SIGNATURES=$(echo $ASSETS | jq -r "$SIGNATURE_SELECTOR")
 # the detached signatures.
 TEMP_DIR=$(mktemp -d /tmp/lnd-sig-verification-XXXXXX)
 echo "Downloading $MANIFEST"
-curl -L -s -o "$TEMP_DIR/$MANIFEST" "$RELEASE_URL/download/$VERSION/$MANIFEST"
+curl -L -s -o "$TEMP_DIR/$MANIFEST" "$RELEASE_URL/download/$LND_VERSION/$MANIFEST"
 
 for signature in $SIGNATURES; do
   echo "Downloading $signature"
@@ -197,7 +193,7 @@ if [[ $NUM_CHECKS -lt $MIN_REQUIRED_SIGNATURES ]]; then
   echo "  Valid signatures found: $NUM_CHECKS"
   echo "  Valid signatures required: $MIN_REQUIRED_SIGNATURES"
   echo
-  echo "  Make sure the release $VERSION contains the required "
+  echo "  Make sure the release $LND_VERSION contains the required "
   echo "  number of signatures on the manifest, or wait until more "
   echo "  signatures have been added to the release."
   exit 1

@@ -89,7 +89,7 @@ const (
 	MaxBtcFundingAmountWumbo = btcutil.Amount(1000000000)
 
 	// MaxLtcFundingAmount is a soft-limit of the maximum channel size
-	// currently accepted on the Litecoin chain within the Lightning
+	// currently accepted on the Monacoin chain within the Lightning
 	// Protocol.
 	MaxMonaFundingAmount = MaxBtcFundingAmount * chainreg.BtcToMonaConversionRate
 
@@ -1372,7 +1372,10 @@ func (f *Manager) handleFundingOpen(peer lnpeer.Peer,
 	shutdown, err := getUpfrontShutdownScript(
 		f.cfg.EnableUpfrontShutdown, peer, acceptorResp.UpfrontShutdown,
 		func() (lnwire.DeliveryAddress, error) {
-			addr, err := f.cfg.Wallet.NewAddress(lnwallet.WitnessPubKey, false)
+			addr, err := f.cfg.Wallet.NewAddress(
+				lnwallet.WitnessPubKey, false,
+				lnwallet.DefaultAccountName,
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -3153,6 +3156,7 @@ func (f *Manager) handleInitFundingMsg(msg *InitFundingMsg) {
 		func() (lnwire.DeliveryAddress, error) {
 			addr, err := f.cfg.Wallet.NewAddress(
 				lnwallet.WitnessPubKey, false,
+				lnwallet.DefaultAccountName,
 			)
 			if err != nil {
 				return nil, err

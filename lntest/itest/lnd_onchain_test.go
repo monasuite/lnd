@@ -24,7 +24,7 @@ import (
 func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 	// Skip this test for neutrino, as it's not aware of mempool
 	// transactions.
-	if net.BackendCfg.Name() == "neutrino" {
+	if net.BackendCfg.Name() == lntest.NeutrinoBackendName {
 		t.Skipf("skipping CPFP test for neutrino backend")
 	}
 
@@ -58,14 +58,14 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 		t.Fatalf("unable to send coins to bob: %v", err)
 	}
 
-	txid, err := waitForTxInMempool(net.Miner.Node, minerMempoolTimeout)
+	txid, err := waitForTxInMempool(net.Miner.Client, minerMempoolTimeout)
 	if err != nil {
 		t.Fatalf("expected one mempool transaction: %v", err)
 	}
 
 	// We'll then extract the raw transaction from the mempool in order to
 	// determine the index of Bob's output.
-	tx, err := net.Miner.Node.GetRawTransaction(txid)
+	tx, err := net.Miner.Client.GetRawTransaction(txid)
 	if err != nil {
 		t.Fatalf("unable to extract raw transaction from mempool: %v",
 			err)
@@ -97,8 +97,10 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 	// We'll attempt to bump the fee of this transaction by performing a
 	// CPFP from Alice's point of view.
 	bumpFeeReq := &walletrpc.BumpFeeRequest{
-		Outpoint:   op,
-		SatPerByte: uint32(sweep.DefaultMaxFeeRate.FeePerKVByte() / 2000),
+		Outpoint: op,
+		SatPerVbyte: uint64(
+			sweep.DefaultMaxFeeRate.FeePerKVByte() / 2000,
+		),
 	}
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	_, err = net.Bob.WalletKitClient.BumpFee(ctxt, bumpFeeReq)
@@ -108,7 +110,7 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// We should now expect to see two transactions within the mempool, a
 	// parent and its child.
-	_, err = waitForNTxsInMempool(net.Miner.Node, 2, minerMempoolTimeout)
+	_, err = waitForNTxsInMempool(net.Miner.Client, 2, minerMempoolTimeout)
 	if err != nil {
 		t.Fatalf("expected two mempool transactions: %v", err)
 	}
@@ -136,9 +138,9 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 		t.Fatalf("expected output index %v, got %v", op.OutputIndex,
 			pendingSweep.Outpoint.OutputIndex)
 	}
-	if pendingSweep.SatPerByte != bumpFeeReq.SatPerByte {
-		t.Fatalf("expected sweep sat per byte %v, got %v",
-			bumpFeeReq.SatPerByte, pendingSweep.SatPerByte)
+	if pendingSweep.SatPerVbyte != bumpFeeReq.SatPerVbyte {
+		t.Fatalf("expected sweep sat per vbyte %v, got %v",
+			bumpFeeReq.SatPerVbyte, pendingSweep.SatPerVbyte)
 	}
 
 	// Mine a block to clean up the unconfirmed transactions.

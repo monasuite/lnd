@@ -13,7 +13,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcutil/bech32"
-	"github.com/monasuite/lnd/lnwire"
+	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
 )
 
 // Decode parses the provided encoded invoice and returns a decoded Invoice if

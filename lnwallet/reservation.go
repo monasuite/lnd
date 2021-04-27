@@ -10,6 +10,7 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/input"
+	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwallet/chanfunding"
 	"github.com/monasuite/lnd/lnwire"
@@ -161,6 +162,10 @@ type ChannelReservation struct {
 	chanFunder chanfunding.Assembler
 
 	fundingIntent chanfunding.Intent
+
+	// nextRevocationKeyLoc stores the key locator information for this
+	// channel.
+	nextRevocationKeyLoc keychain.KeyLocator
 }
 
 // NewChannelReservation creates a new channel reservation. This function is

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/wire"
+	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
 	"github.com/monasuite/lnd/lntypes"
-	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/tlv"
 )
 
