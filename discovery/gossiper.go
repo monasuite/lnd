@@ -1800,55 +1800,6 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 			}(cu)
 		}
 
-		// If we earlier received any ChannelUpdates for this channel,
-		// we can now process them, as the channel is added to the
-		// graph.
-		shortChanID := msg.ShortChannelID.ToUint64()
-		var channelUpdates []*networkMsg
-
-		d.pChanUpdMtx.Lock()
-		channelUpdates = append(channelUpdates, d.prematureChannelUpdates[shortChanID]...)
-
-		// Now delete the premature ChannelUpdates, since we added them
-		// all to the queue of network messages.
-		delete(d.prematureChannelUpdates, shortChanID)
-		d.pChanUpdMtx.Unlock()
-
-		// Launch a new goroutine to handle each ChannelUpdate, this to
-		// ensure we don't block here, as we can handle only one
-		// announcement at a time.
-		for _, cu := range channelUpdates {
-			d.wg.Add(1)
-			go func(nMsg *networkMsg) {
-				defer d.wg.Done()
-
-				switch msg := nMsg.msg.(type) {
-
-				// Reprocess the message, making sure we return
-				// an error to the original caller in case the
-				// gossiper shuts down.
-				case *lnwire.ChannelUpdate:
-					log.Debugf("Reprocessing"+
-						" ChannelUpdate for "+
-						"shortChanID=%v",
-						msg.ShortChannelID.ToUint64())
-
-					select {
-					case d.networkMsgs <- nMsg:
-					case <-d.quit:
-						nMsg.err <- ErrGossiperShuttingDown
-					}
-
-				// We don't expect any other message type than
-				// ChannelUpdate to be in this map.
-				default:
-					log.Errorf("Unsupported message type "+
-						"found among ChannelUpdates: "+
-						"%T", msg)
-				}
-			}(cu)
-		}
-
 		// Channel announcement was successfully proceeded and know it
 		// might be broadcast to other connected nodes if it was
 		// announcement with proof (remote).

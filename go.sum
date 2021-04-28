@@ -108,6 +108,7 @@ github.com/golang/groupcache v0.0.0-20200121045136-8c9f03a8e57e/go.mod h1:cIg4er
 github.com/golang/lint v0.0.0-20180702182130-06c8688daad7/go.mod h1:tluoj9z5200jBnyusfRPU2LqT6J+DAorxEvtC7LHB+E=
 github.com/golang/mock v1.1.1/go.mod h1:oTYuIxOrZwtPieC+H1uAHpcLFnEyAGVDL/k47Jfbm0A=
 github.com/golang/protobuf v1.2.0/go.mod h1:6lQm79b+lXiMfvg/cZm0SGofjICqVBUtrP5yJMmIC1U=
+github.com/golang/protobuf v1.2.1-0.20181127190454-8d0c54c12466/go.mod h1:Qd/q+1AKNOZr9uGQzbzCmRO6sUih6GTPZv6a1/R87v0=
 github.com/golang/protobuf v1.3.1/go.mod h1:6lQm79b+lXiMfvg/cZm0SGofjICqVBUtrP5yJMmIC1U=
 github.com/golang/protobuf v1.3.2 h1:6nsPYzhq5kReh6QImI3k5qWzO4PEbvbIW2cwSfR/6xs=
 github.com/golang/protobuf v1.3.2/go.mod h1:6lQm79b+lXiMfvg/cZm0SGofjICqVBUtrP5yJMmIC1U=
@@ -205,12 +206,20 @@ github.com/monaarchives/btcwallet v0.12.3-0.20201204220812-b37545d0f57f h1:hNyqu
 github.com/monaarchives/btcwallet v0.12.3-0.20201204220812-b37545d0f57f/go.mod h1:CEiJxitElPisUEgpSBtCNNUUkl3doM/WkFrfUU69oJ4=
 github.com/monaarchives/btcwallet v0.12.3-0.20201204234238-41a2879e3f27 h1:rBlO/qLyf4gkSas+q4CKHall5fH9EFr0jqPqJTqYL24=
 github.com/monaarchives/btcwallet v0.12.3-0.20201204234238-41a2879e3f27/go.mod h1:CEiJxitElPisUEgpSBtCNNUUkl3doM/WkFrfUU69oJ4=
+github.com/monaarchives/btcwallet v0.12.3-0.20210428051406-624ec292cf88 h1:MiHDJzwMnXtNaoEQUeeleAWPTlA24eRKlF2wG52fDTA=
+github.com/monaarchives/btcwallet v0.12.3-0.20210428051406-624ec292cf88/go.mod h1:lyrf+kQfMevCTCgzEXgF4zo0GGJ/xM1DRizqorH8z4s=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0 h1:ksF3WKNj2SJX3yVWUuANQlS23Xe+9jpY1rrWlp9SalU=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0/go.mod h1:AtTKdIUCYgF07/DoNnJKJ8Sde4TN7nxS3AcqTf59Ea4=
+github.com/monaarchives/btcwallet/wallet/txauthor v1.0.1-0.20210428051406-624ec292cf88 h1:n/ytwbZ1pYYAOh4I2bFX3GJ+tC4Y/HtR00KlXfIy93E=
+github.com/monaarchives/btcwallet/wallet/txauthor v1.0.1-0.20210428051406-624ec292cf88/go.mod h1:yi6JT986pJq0gj93ZYUJVMV4wIpXBlL+/2cCsPbMBlU=
 github.com/monaarchives/btcwallet/wallet/txrules v1.0.0 h1:4I2V23buSnS1fv91oZlZ3kKOrCGsBf15YwLX1vu9mSI=
 github.com/monaarchives/btcwallet/wallet/txrules v1.0.0/go.mod h1:KectFWTFTEW2oiwrqGCD8+FJOR2CYGeBHYR+O9NKNC4=
+github.com/monaarchives/btcwallet/wallet/txrules v1.0.1-0.20210426201341-0066ab20ddd4 h1:5hCEVjNHEmat0cTAGcaLioangZ4XvZdRZb9XAhzfmwI=
+github.com/monaarchives/btcwallet/wallet/txrules v1.0.1-0.20210426201341-0066ab20ddd4/go.mod h1:KectFWTFTEW2oiwrqGCD8+FJOR2CYGeBHYR+O9NKNC4=
 github.com/monaarchives/btcwallet/wallet/txsizes v1.0.0 h1:MeAJdbVov9w87Mj66RDAXXC2ZV0SkCNKgeAmqXsZQbg=
 github.com/monaarchives/btcwallet/wallet/txsizes v1.0.0/go.mod h1:QV8BMFtav4do4x2lrcgE221nMKspubG/I0i9+QKyjdU=
+github.com/monaarchives/btcwallet/wallet/txsizes v1.0.1-0.20210426201341-0066ab20ddd4 h1:kybw4XcVJWjfqVqYKCSZSDshlHyIfMg1Co0vmZlEh/I=
+github.com/monaarchives/btcwallet/wallet/txsizes v1.0.1-0.20210426201341-0066ab20ddd4/go.mod h1:QV8BMFtav4do4x2lrcgE221nMKspubG/I0i9+QKyjdU=
 github.com/monaarchives/btcwallet/walletdb v1.1.0/go.mod h1:aRAkDxfj8PZil0BA+PxgDMfgoTtlbyldcBsFZnwucM4=
 github.com/monaarchives/btcwallet/walletdb v1.2.0/go.mod h1:36eHRDquWOXxu/zPvc7pvUvh68kRu3GXVZuZDT2yuaw=
 github.com/monaarchives/btcwallet/walletdb v1.3.3 h1:eBi4UouW2EfrbiiwQxaSl/3C5093lgNIzhakep0jvsM=
@@ -220,6 +229,8 @@ github.com/monaarchives/btcwallet/walletdb v1.3.4/go.mod h1:cTxlRgu7vsHZ+3HZSPaM
 github.com/monaarchives/btcwallet/wtxmgr v1.0.0/go.mod h1:XqMElePwLqnOJAd1MzG54vVo5Byo9NMutl6WNYfG79U=
 github.com/monaarchives/btcwallet/wtxmgr v1.2.0 h1:nQ0V3Y8+z+0tN0jm0uXo+xmFaB6BDANMPLQo0uXOwCI=
 github.com/monaarchives/btcwallet/wtxmgr v1.2.0/go.mod h1:gul6CfWnsuDQ1OFcPsstWG0M6iqI7qMYoNyBsCni3VA=
+github.com/monaarchives/btcwallet/wtxmgr v1.2.1-0.20210426201341-0066ab20ddd4 h1:ca58gf3cPImR1jTJXzcm86WT4bbqXzi2W+6QwZnlG/8=
+github.com/monaarchives/btcwallet/wtxmgr v1.2.1-0.20210426201341-0066ab20ddd4/go.mod h1:NJGSbiVPcFYaUwZYMyvFRGXFBLvC7FqKMPOwV2cemTc=
 github.com/monasuite/monad v0.21.0-beta/go.mod h1:3Xp+i5gmkjEl2pUvj558OUuLsMqjB5S3663Nr0yRa58=
 github.com/monasuite/monad v0.22.0-beta/go.mod h1:ZHQyEBbhHEPYyhDn9VxJoWW2GJ5lZgOUtIw4xMVOAVE=
 github.com/monasuite/monad v0.22.1-beta/go.mod h1:Z8IF4S54MQMjSoQ+2KAJdewQVuJsYGZ7i1fOtHgk5Zc=
@@ -395,6 +406,7 @@ golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543/go.mod h1:I/5z698sn9Ka8T
 google.golang.org/appengine v1.1.0/go.mod h1:EbEs0AVv82hx2wNQdGPgUI5lhzA/G0D9YwlJXL52JkM=
 google.golang.org/appengine v1.4.0/go.mod h1:xpcJRLb0r/rnEns0DIKYYv+WjYCduHsrkT7/EB5XEv4=
 google.golang.org/genproto v0.0.0-20180817151627-c66870c02cf8/go.mod h1:JiN7NxoALGmiZfu7CAH4rXhgtRTLTxftemlI0sWmxmc=
+google.golang.org/genproto v0.0.0-20180831171423-11092d34479b/go.mod h1:JiN7NxoALGmiZfu7CAH4rXhgtRTLTxftemlI0sWmxmc=
 google.golang.org/genproto v0.0.0-20190201180003-4b09977fb922/go.mod h1:L3J43x8/uS+qIUoksaLKe6OS3nUKxOKuIFz1sl2/jx4=
 google.golang.org/genproto v0.0.0-20190927181202-20e1ac93f88c h1:hrpEMCZ2O7DR5gC1n2AJGVhrwiEjOi35+jxtIuZpTMo=
 google.golang.org/genproto v0.0.0-20190927181202-20e1ac93f88c/go.mod h1:IbNlFCBrqXvoKpeg0TB2l7cyZUmoaFKYIwrEpbDKLA8=

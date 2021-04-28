@@ -39,6 +39,8 @@ import (
 	"github.com/monasuite/lnd/sweep"
 	"github.com/monasuite/lnd/watchtower"
 	"github.com/monasuite/lnd/watchtower/wtclient"
+	"github.com/monasuite/neutrino"
+
 )
 
 // replaceableLogger is a thin wrapper around a logger that is used so the

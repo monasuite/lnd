@@ -51,11 +51,11 @@ require (
 	github.com/mattn/goveralls v0.0.6 // indirect
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
 	github.com/modern-go/reflect2 v1.0.1 // indirect
-	github.com/monaarchives/btcwallet v0.12.3-0.20201204220812-b37545d0f57f
-	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0
-	github.com/monaarchives/btcwallet/wallet/txrules v1.0.0
+	github.com/monaarchives/btcwallet v0.12.3-0.20210428051406-624ec292cf88
+	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.1-0.20210428051406-624ec292cf88
+	github.com/monaarchives/btcwallet/wallet/txrules v1.0.1-0.20210426201341-0066ab20ddd4
 	github.com/monaarchives/btcwallet/walletdb v1.3.4
-	github.com/monaarchives/btcwallet/wtxmgr v1.2.0
+	github.com/monaarchives/btcwallet/wtxmgr v1.2.1-0.20210426201341-0066ab20ddd4
 	github.com/monasuite/monad v0.22.3-beta.0.20201009204152-fdfc222c5098
 	github.com/monasuite/neutrino v0.12.1-0.20201010095042-8eb571bc136e
 	github.com/prometheus/client_golang v0.9.3
