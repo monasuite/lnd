@@ -12,7 +12,6 @@ import (
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/record"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
