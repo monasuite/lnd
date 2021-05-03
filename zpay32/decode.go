@@ -45,8 +45,17 @@ func Decode(invoice string, net *chaincfg.Params) (*Invoice, error) {
 	}
 
 	// The next characters should be a valid prefix for a segwit BIP173
-	// address that match the active network.
-	if !strings.HasPrefix(hrp[2:], net.Bech32HRPSegwit) {
+	// address that match the active network except for signet where we add
+	// an additional "s" to differentiate it from the older testnet3 (Core
+	// devs decided to use the same hrp for signet as for testnet3 which is
+	// not optimal for LN). See
+	// https://github.com/lightningnetwork/lightning-rfc/pull/844 for more
+	// information.
+	expectedPrefix := net.Bech32HRPSegwit
+	if net.Name == chaincfg.SigNetParams.Name {
+		expectedPrefix = "tbs"
+	}
+	if !strings.HasPrefix(hrp[2:], expectedPrefix) {
 		return nil, fmt.Errorf(
 			"invoice not for current active network '%s'", net.Name)
 	}
