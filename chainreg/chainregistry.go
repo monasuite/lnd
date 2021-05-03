@@ -790,6 +790,7 @@ var (
 
 		BitcoinSignetGenesis: {
 			{
+				"ln.signet.secp.tech",
 				"lseed.wakiyamap.dev",
 			},
 		},
