@@ -768,6 +768,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.controlTower = routing.NewControlTower(paymentControl)
 
+	strictPruning := (cfg.Bitcoin.Node == "neutrino" ||
+		cfg.Routing.StrictZombiePruning)
 	s.chanRouter, err = routing.New(routing.Config{
 		Graph:               chanGraph,
 		Chain:               cc.ChainIO,
@@ -784,6 +786,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		NextPaymentID:       sequencer.NextID,
 		PathFindingConfig:   pathFindingConfig,
 		Clock:               clock.NewDefaultClock(),
+		StrictZombiePruning: strictPruning,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create router: %v", err)
@@ -946,10 +949,26 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		},
 		IsOurAddress: cc.Wallet.IsOurAddress,
 		ContractBreach: func(chanPoint wire.OutPoint,
-			breachRet *lnwallet.BreachRetribution) error {
+			breachRet *lnwallet.BreachRetribution,
+			markClosed func() error) error {
+
+			// processACK will handle the breachArbiter ACKing the
+			// event.
+			finalErr := make(chan error, 1)
+			processACK := func(brarErr error) {
+				if brarErr != nil {
+					finalErr <- brarErr
+					return
+				}
+
+				// If the breachArbiter successfully handled
+				// the event, we can mark the channel closed.
+				finalErr <- markClosed()
+			}
+
 			event := &ContractBreachEvent{
 				ChanPoint:         chanPoint,
-				ProcessACK:        make(chan error, 1),
+				ProcessACK:        processACK,
 				BreachRetribution: breachRet,
 			}
 
@@ -960,9 +979,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 				return ErrServerShuttingDown
 			}
 
-			// Wait for the breachArbiter to ACK the event.
+			// We'll wait for a final error to be available, either
+			// from the breachArbiter or from our markClosed
+			// function closure.
 			select {
-			case err := <-event.ProcessACK:
+			case err := <-finalErr:
 				return err
 			case <-s.quit:
 				return ErrServerShuttingDown
@@ -1432,17 +1453,45 @@ func (s *server) Started() bool {
 	return atomic.LoadInt32(&s.active) != 0
 }
 
+// cleaner is used to aggregate "cleanup" functions during an operation that
+// starts several subsystems. In case one of the subsystem fails to start
+// and a proper resource cleanup is required, the "run" method achieves this
+// by running all these added "cleanup" functions
+type cleaner []func() error
+
+// add is used to add a cleanup function to be called when
+// the run function is executed
+func (c cleaner) add(cleanup func() error) cleaner {
+	return append(c, cleanup)
+}
+
+// run is used to run all the previousely added cleanup functions
+func (c cleaner) run() {
+	for i := len(c) - 1; i >= 0; i-- {
+		if err := c[i](); err != nil {
+			srvrLog.Infof("Cleanup failed: %v", err)
+		}
+	}
+}
+
 // Start starts the main daemon server, all requested listeners, and any helper
 // goroutines.
 // NOTE: This function is safe for concurrent access.
 func (s *server) Start() error {
 	var startErr error
+
+	// If one sub system fails to start, the following code ensures that the
+	// previous started ones are stopped. It also ensures a proper wallet
+	// shutdown which is important for releasing its resources (boltdb, etc...)
+	cleanup := cleaner{}
+
 	s.start.Do(func() {
 		if s.torController != nil {
 			if err := s.createNewHiddenService(); err != nil {
 				startErr = err
 				return
 			}
+			cleanup = cleanup.add(s.torController.Stop)
 		}
 
 		if s.natTraversal != nil {
@@ -1455,6 +1504,7 @@ func (s *server) Start() error {
 				startErr = err
 				return
 			}
+			cleanup = cleanup.add(s.hostAnn.Stop)
 		}
 
 		if s.livelinessMonitor != nil {
@@ -1462,6 +1512,7 @@ func (s *server) Start() error {
 				startErr = err
 				return
 			}
+			cleanup = cleanup.add(s.livelinessMonitor.Stop)
 		}
 
 		// Start the notification server. This is used so channel
@@ -1473,91 +1524,134 @@ func (s *server) Start() error {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.sigPool.Stop)
+
 		if err := s.writePool.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.writePool.Stop)
+
 		if err := s.readPool.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.readPool.Stop)
+
 		if err := s.cc.ChainNotifier.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.cc.ChainNotifier.Stop)
+
 		if err := s.channelNotifier.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.channelNotifier.Stop)
+
 		if err := s.peerNotifier.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(func() error {
+			return s.peerNotifier.Stop()
+		})
 		if err := s.htlcNotifier.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.htlcNotifier.Stop)
+
 		if err := s.sphinx.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.sphinx.Stop)
+
 		if s.towerClient != nil {
 			if err := s.towerClient.Start(); err != nil {
 				startErr = err
 				return
 			}
+			cleanup = cleanup.add(s.towerClient.Stop)
 		}
 		if s.anchorTowerClient != nil {
 			if err := s.anchorTowerClient.Start(); err != nil {
 				startErr = err
 				return
 			}
+			cleanup = cleanup.add(s.anchorTowerClient.Stop)
 		}
+
 		if err := s.htlcSwitch.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.htlcSwitch.Stop)
+
 		if err := s.sweeper.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.sweeper.Stop)
+
 		if err := s.utxoNursery.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.utxoNursery.Stop)
+
 		if err := s.chainArb.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.chainArb.Stop)
+
 		if err := s.breachArbiter.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.breachArbiter.Stop)
+
 		if err := s.authGossiper.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.authGossiper.Stop)
+
 		if err := s.chanRouter.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.chanRouter.Stop)
+
 		if err := s.fundingMgr.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.fundingMgr.Stop)
+
 		if err := s.invoices.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.invoices.Stop)
+
 		if err := s.chanStatusMgr.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.chanStatusMgr.Stop)
 
 		if err := s.chanEventStore.Start(); err != nil {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(func() error {
+			s.chanEventStore.Stop()
+			return nil
+		})
 
 		// Before we start the connMgr, we'll check to see if we have
 		// any backups to recover. We do this now as we want to ensure
@@ -1595,8 +1689,13 @@ func (s *server) Start() error {
 			startErr = err
 			return
 		}
+		cleanup = cleanup.add(s.chanSubSwapper.Stop)
 
 		s.connMgr.Start()
+		cleanup = cleanup.add(func() error {
+			s.connMgr.Stop()
+			return nil
+		})
 
 		// With all the relevant sub-systems started, we'll now attempt
 		// to establish persistent connections to our direct channel
@@ -1690,6 +1789,9 @@ func (s *server) Start() error {
 		atomic.StoreInt32(&s.active, 1)
 	})
 
+	if startErr != nil {
+		cleanup.run()
+	}
 	return startErr
 }
 
@@ -1708,30 +1810,49 @@ func (s *server) Stop() error {
 		if err := s.cc.ChainNotifier.Stop(); err != nil {
 			srvrLog.Warnf("Unable to stop ChainNotifier: %v", err)
 		}
-		s.chanRouter.Stop()
-		s.htlcSwitch.Stop()
-		s.sphinx.Stop()
-		s.utxoNursery.Stop()
-		s.breachArbiter.Stop()
-		s.authGossiper.Stop()
-		s.chainArb.Stop()
-		s.sweeper.Stop()
-		s.channelNotifier.Stop()
-		s.peerNotifier.Stop()
-		s.htlcNotifier.Stop()
-		if err := s.cc.Wallet.Shutdown(); err != nil {
-			srvrLog.Warnf("Unable to stop Wallet: %v", err)
+		if err := s.chanRouter.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop chanRouter: %v", err)
 		}
-		if err := s.cc.ChainView.Stop(); err != nil {
-			srvrLog.Warnf("Unable to stop ChainView: %v", err)
+		if err := s.htlcSwitch.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop htlcSwitch: %v", err)
+		}
+		if err := s.sphinx.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop sphinx: %v", err)
+		}
+		if err := s.utxoNursery.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop utxoNursery: %v", err)
+		}
+		if err := s.breachArbiter.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop breachArbiter: %v", err)
+		}
+		if err := s.authGossiper.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop authGossiper: %v", err)
+		}
+		if err := s.chainArb.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop chainArb: %v", err)
+		}
+		if err := s.sweeper.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop sweeper: %v", err)
+		}
+		if err := s.channelNotifier.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop channelNotifier: %v", err)
+		}
+		if err := s.peerNotifier.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop peerNotifier: %v", err)
+		}
+		if err := s.htlcNotifier.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop htlcNotifier: %v", err)
 		}
 		s.connMgr.Stop()
-		if err := s.cc.FeeEstimator.Stop(); err != nil {
-			srvrLog.Warnf("Unable to stop FeeEstimator: %v", err)
+		if err := s.invoices.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop invoices: %v", err)
 		}
-		s.invoices.Stop()
-		s.fundingMgr.Stop()
-		s.chanSubSwapper.Stop()
+		if err := s.fundingMgr.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop fundingMgr: %v", err)
+		}
+		if err := s.chanSubSwapper.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop chanSubSwapper: %v", err)
+		}
 		s.chanEventStore.Stop()
 
 		// Disconnect from each active peers to ensure that

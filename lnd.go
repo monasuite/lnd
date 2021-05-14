@@ -27,6 +27,7 @@ import (
 	"github.com/monaarchives/btcwallet/wallet"
 	"github.com/monaarchives/btcwallet/walletdb"
 	"github.com/monasuite/lnd/autopilot"
+	"github.com/monasuite/lnd/blockcache"
 	"github.com/monasuite/lnd/build"
 	"github.com/monasuite/lnd/chainreg"
 	"github.com/monasuite/lnd/chanacceptor"
@@ -235,16 +236,12 @@ func Main(cfg *Config, lisCfg ListenerCfg, interceptor signal.Interceptor) error
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	localChanDB, remoteChanDB, cleanUp, err := initializeDatabases(ctx, cfg)
-	switch {
-	case err == channeldb.ErrDryRunMigrationOK:
-		ltndLog.Infof("%v, exiting", err)
-		return nil
-	case err != nil:
-		return fmt.Errorf("unable to open databases: %v", err)
+	// Run configuration dependent DB pre-initialization. Note that this
+	// needs to be done early and once during the startup process, before
+	// any DB access.
+	if err := cfg.DB.Init(ctx, cfg.localDatabaseDir()); err != nil {
+		return err
 	}
-
-	defer cleanUp()
 
 	// Only process macaroons if --no-macaroons isn't set.
 	serverOpts, restDialOpts, restListen, cleanUp, err := getTLSConfig(cfg)
@@ -256,6 +253,9 @@ func Main(cfg *Config, lisCfg ListenerCfg, interceptor signal.Interceptor) error
 
 	defer cleanUp()
 
+	// Initialize a new block cache.
+	blockCache := blockcache.NewBlockCache(cfg.BlockCacheSize)
+
 	// Before starting the wallet, we'll create and start our Neutrino
 	// light client instance, if enabled, in order to allow it to sync
 	// while the rest of the daemon continues startup.
@@ -266,7 +266,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, interceptor signal.Interceptor) error
 	var neutrinoCS *neutrino.ChainService
 	if mainChain.Node == "neutrino" {
 		neutrinoBackend, neutrinoCleanUp, err := initNeutrinoBackend(
-			cfg, mainChain.ChainDir,
+			cfg, mainChain.ChainDir, blockCache,
 		)
 		if err != nil {
 			err := fmt.Errorf("unable to initialize neutrino "+
@@ -318,18 +318,10 @@ func Main(cfg *Config, lisCfg ListenerCfg, interceptor signal.Interceptor) error
 		}
 	}
 
-	// We'll create the WalletUnlockerService and check whether the wallet
-	// already exists.
-	pwService := createWalletUnlockerService(cfg)
-	walletExists, err := pwService.WalletExists()
-	if err != nil {
-		return err
-	}
-
 	// Create a new RPC interceptor that we'll add to the GRPC server. This
 	// will be used to log the API calls invoked on the GRPC server.
 	interceptorChain := rpcperms.NewInterceptorChain(
-		rpcsLog, cfg.NoMacaroons, walletExists,
+		rpcsLog, cfg.NoMacaroons,
 	)
 	if err := interceptorChain.Start(); err != nil {
 		return err
@@ -348,12 +340,13 @@ func Main(cfg *Config, lisCfg ListenerCfg, interceptor signal.Interceptor) error
 	grpcServer := grpc.NewServer(serverOpts...)
 	defer grpcServer.Stop()
 
-	// Register the WalletUnlockerService with the GRPC server.
-	lnrpc.RegisterWalletUnlockerServer(grpcServer, pwService)
-
 	// We'll also register the RPC interceptor chain as the StateServer, as
 	// it can be used to query for the current state of the wallet.
 	lnrpc.RegisterStateServer(grpcServer, interceptorChain)
+
+	// Register the WalletUnlockerService with the GRPC server.
+	pwService := createWalletUnlockerService(cfg)
+	lnrpc.RegisterWalletUnlockerServer(grpcServer, pwService)
 
 	// Initialize, and register our implementation of the gRPC interface
 	// exported by the rpcServer.
@@ -387,11 +380,111 @@ func Main(cfg *Config, lisCfg ListenerCfg, interceptor signal.Interceptor) error
 	}
 	defer stopProxy()
 
+	// Start leader election if we're running on etcd. Continuation will be
+	// blocked until this instance is elected as the current leader or
+	// shutting down.
+	elected := false
+	if cfg.Cluster.EnableLeaderElection {
+		electionCtx, cancelElection := context.WithCancel(ctx)
+
+		go func() {
+			<-interceptor.ShutdownChannel()
+			cancelElection()
+		}()
+
+		ltndLog.Infof("Using %v leader elector",
+			cfg.Cluster.LeaderElector)
+
+		leaderElector, err := cfg.Cluster.MakeLeaderElector(
+			electionCtx, cfg.DB,
+		)
+		if err != nil {
+			return err
+		}
+
+		defer func() {
+			if !elected {
+				return
+			}
+
+			ltndLog.Infof("Attempting to resign from leader role "+
+				"(%v)", cfg.Cluster.ID)
+
+			if err := leaderElector.Resign(); err != nil {
+				ltndLog.Errorf("Leader elector failed to "+
+					"resign: %v", err)
+			}
+		}()
+
+		ltndLog.Infof("Starting leadership campaign (%v)",
+			cfg.Cluster.ID)
+
+		if err := leaderElector.Campaign(electionCtx); err != nil {
+			ltndLog.Errorf("Leadership campaign failed: %v", err)
+			return err
+		}
+
+		elected = true
+		ltndLog.Infof("Elected as leader (%v)", cfg.Cluster.ID)
+	}
+
+	localChanDB, remoteChanDB, cleanUp, err := initializeDatabases(ctx, cfg)
+	switch {
+	case err == channeldb.ErrDryRunMigrationOK:
+		ltndLog.Infof("%v, exiting", err)
+		return nil
+	case err != nil:
+		return fmt.Errorf("unable to open databases: %v", err)
+	}
+
+	defer cleanUp()
+
+	var loaderOpt btcwallet.LoaderOption
+	if cfg.Cluster.EnableLeaderElection {
+		// The wallet loader will attempt to use/create the wallet in
+		// the replicated remote DB if we're running in a clustered
+		// environment. This will ensure that all members of the cluster
+		// have access to the same wallet state.
+		loaderOpt = btcwallet.LoaderWithExternalWalletDB(
+			remoteChanDB.Backend,
+		)
+	} else {
+		// When "running locally", LND will use the bbolt wallet.db to
+		// store the wallet located in the chain data dir, parametrized
+		// by the active network.
+		chainConfig := cfg.Bitcoin
+		if cfg.registeredChains.PrimaryChain() == chainreg.MonacoinChain {
+			chainConfig = cfg.Monacoin
+		}
+
+		dbDirPath := btcwallet.NetworkDir(
+			chainConfig.ChainDir, cfg.ActiveNetParams.Params,
+		)
+		loaderOpt = btcwallet.LoaderWithLocalWalletDB(
+			dbDirPath, !cfg.SyncFreelist, cfg.DB.Bolt.DBTimeout,
+		)
+	}
+
+	pwService.SetLoaderOpts([]btcwallet.LoaderOption{loaderOpt})
+	walletExists, err := pwService.WalletExists()
+	if err != nil {
+		return err
+	}
+
+	if !walletExists {
+		interceptorChain.SetWalletNotCreated()
+	} else {
+		interceptorChain.SetWalletLocked()
+	}
+
 	// We wait until the user provides a password over RPC. In case lnd is
 	// started with the --noseedbackup flag, we use the default password
 	// for wallet encryption.
 	if !cfg.NoSeedBackup {
-		params, err := waitForWalletPassword(cfg, pwService, interceptor.ShutdownChannel())
+		params, err := waitForWalletPassword(
+			cfg, pwService, []btcwallet.LoaderOption{loaderOpt},
+			interceptor.ShutdownChannel(),
+		)
 		if err != nil {
 			err := fmt.Errorf("unable to set up wallet password "+
 				"listeners: %v", err)
@@ -541,16 +634,24 @@ func Main(cfg *Config, lisCfg ListenerCfg, interceptor signal.Interceptor) error
 		Birthday:                    walletInitParams.Birthday,
 		RecoveryWindow:              walletInitParams.RecoveryWindow,
 		Wallet:                      walletInitParams.Wallet,
-		DBTimeOut:                   cfg.DB.Bolt.DBTimeout,
 		NeutrinoCS:                  neutrinoCS,
 		ActiveNetParams:             cfg.ActiveNetParams,
 		FeeURL:                      cfg.FeeURL,
 		Dialer: func(addr string) (net.Conn, error) {
 			return cfg.net.Dial("tcp", addr, cfg.ConnectionTimeout)
 		},
+		BlockCacheSize: cfg.BlockCacheSize,
+		LoaderOptions: []btcwallet.LoaderOption{
+			loaderOpt,
+		},
 	}
 
-	activeChainControl, err := chainreg.NewChainControl(chainControlCfg)
+	activeChainControl, cleanup, err := chainreg.NewChainControl(
+		chainControlCfg, blockCache,
+	)
+	if cleanup != nil {
+		defer cleanup()
+	}
 	if err != nil {
 		err := fmt.Errorf("unable to create chain control: %v", err)
 		ltndLog.Error(err)
@@ -1149,10 +1250,11 @@ func createWalletUnlockerService(cfg *Config) *walletunlocker.UnlockerService {
 	macaroonFiles := []string{
 		cfg.AdminMacPath, cfg.ReadMacPath, cfg.InvoiceMacPath,
 	}
+
 	return walletunlocker.New(
 		chainConfig.ChainDir, cfg.ActiveNetParams.Params,
 		!cfg.SyncFreelist, macaroonFiles, cfg.DB.Bolt.DBTimeout,
-		cfg.ResetWalletTransactions,
+		cfg.ResetWalletTransactions, nil,
 	)
 }
 
@@ -1264,7 +1366,10 @@ func startRestProxy(cfg *Config, rpcServer *rpcServer, restDialOpts []grpc.DialO
 	}
 
 	// Wrap the default grpc-gateway handler with the WebSocket handler.
-	restHandler := lnrpc.NewWebSocketProxy(mux, rpcsLog)
+	restHandler := lnrpc.NewWebSocketProxy(
+		mux, rpcsLog, cfg.WSPingInterval, cfg.WSPongWait,
+		lnrpc.LndClientStreamingURIs,
+	)
 
 	// Use a WaitGroup so we can be sure the instructions on how to input the
 	// password is the last thing to be printed to the console.
@@ -1316,12 +1421,8 @@ func startRestProxy(cfg *Config, rpcServer *rpcServer, restDialOpts []grpc.DialO
 // this RPC server.
 func waitForWalletPassword(cfg *Config,
 	pwService *walletunlocker.UnlockerService,
-	shutdownChan <-chan struct{}) (*WalletUnlockParams, error) {
-
-	chainConfig := cfg.Bitcoin
-	if cfg.registeredChains.PrimaryChain() == chainreg.MonacoinChain {
-		chainConfig = cfg.Monacoin
-	}
+	loaderOpts []btcwallet.LoaderOption, shutdownChan <-chan struct{}) (
+	*WalletUnlockParams, error) {
 
 	// Wait for user to provide the password.
 	ltndLog.Infof("Waiting for wallet encryption password. Use `lncli " +
@@ -1353,13 +1454,13 @@ func waitForWalletPassword(cfg *Config,
 				keychain.KeyDerivationVersion)
 		}
 
-		netDir := btcwallet.NetworkDir(
-			chainConfig.ChainDir, cfg.ActiveNetParams.Params,
+		loader, err := btcwallet.NewWalletLoader(
+			cfg.ActiveNetParams.Params, recoveryWindow,
+			loaderOpts...,
 		)
-		loader := wallet.NewLoader(
-			cfg.ActiveNetParams.Params, netDir, !cfg.SyncFreelist,
-			cfg.DB.Bolt.DBTimeout, recoveryWindow,
-		)
+		if err != nil {
+			return nil, err
+		}
 
 		// With the seed, we can now use the wallet loader to create
 		// the wallet, then pass it back to avoid unlocking it again.
@@ -1444,9 +1545,7 @@ func initializeDatabases(ctx context.Context,
 
 	startOpenTime := time.Now()
 
-	databaseBackends, err := cfg.DB.GetBackends(
-		ctx, cfg.localDatabaseDir(), cfg.networkName(),
-	)
+	databaseBackends, err := cfg.DB.GetBackends(ctx, cfg.localDatabaseDir())
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("unable to obtain database "+
 			"backends: %v", err)
@@ -1552,7 +1651,8 @@ func initializeDatabases(ctx context.Context,
 
 // initNeutrinoBackend inits a new instance of the neutrino light client
 // backend given a target chain directory to store the chain state.
-func initNeutrinoBackend(cfg *Config, chainDir string) (*neutrino.ChainService,
+func initNeutrinoBackend(cfg *Config, chainDir string,
+	blockCache *blockcache.BlockCache) (*neutrino.ChainService,
 	func(), error) {
 
 	// Both channel validation flags are false by default but their meaning
@@ -1660,6 +1760,9 @@ func initNeutrinoBackend(cfg *Config, chainDir string) (*neutrino.ChainService,
 			return ips, nil
 		},
 		AssertFilterHeader: headerStateAssertion,
+		BlockCache:         blockCache.Cache,
+		BroadcastTimeout:   cfg.NeutrinoMode.BroadcastTimeout,
+		PersistToDisk:      cfg.NeutrinoMode.PersistFilters,
 	}
 
 	neutrino.MaxPeers = 8

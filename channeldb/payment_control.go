@@ -173,8 +173,10 @@ func (p *PaymentControl) InitPayment(paymentHash lntypes.Hash,
 
 		// Once we have obtained a sequence number, we add an entry
 		// to our index bucket which will map the sequence number to
-		// our payment hash.
-		err = createPaymentIndexEntry(tx, sequenceNum, info.PaymentHash)
+		// our payment identifier.
+		err = createPaymentIndexEntry(
+			tx, sequenceNum, info.PaymentIdentifier,
+		)
 		if err != nil {
 			return err
 		}
@@ -220,12 +222,12 @@ const paymentIndexTypeHash paymentIndexType = 0
 
 // createPaymentIndexEntry creates a payment hash typed index for a payment. The
 // index produced contains a payment index type (which can be used in future to
-// signal different payment index types) and the payment hash.
+// signal different payment index types) and the payment identifier.
 func createPaymentIndexEntry(tx kvdb.RwTx, sequenceNumber []byte,
-	hash lntypes.Hash) error {
+	id lntypes.Hash) error {
 
 	var b bytes.Buffer
-	if err := WriteElements(&b, paymentIndexTypeHash, hash[:]); err != nil {
+	if err := WriteElements(&b, paymentIndexTypeHash, id[:]); err != nil {
 		return err
 	}
 
@@ -290,16 +292,17 @@ func (p *PaymentControl) RegisterAttempt(paymentHash lntypes.Hash,
 			return err
 		}
 
-		// Ensure the payment is in-flight.
-		if err := ensureInFlight(p); err != nil {
-			return err
-		}
-
 		// We cannot register a new attempt if the payment already has
-		// reached a terminal condition:
+		// reached a terminal condition. We check this before
+		// ensureInFlight because it is a more general check.
 		settle, fail := p.TerminalInfo()
 		if settle != nil || fail != nil {
 			return ErrPaymentTerminal
+		}
+
+		// Ensure the payment is in-flight.
+		if err := ensureInFlight(p); err != nil {
+			return err
 		}
 
 		// Make sure any existing shards match the new one with regards
@@ -675,16 +678,9 @@ func ensureInFlight(payment *MPPayment) error {
 	}
 }
 
-// InFlightPayment is a wrapper around the info for a payment that has status
-// InFlight.
-type InFlightPayment struct {
-	// Info is the PaymentCreationInfo of the in-flight payment.
-	Info *PaymentCreationInfo
-}
-
 // FetchInFlightPayments returns all payments with status InFlight.
-func (p *PaymentControl) FetchInFlightPayments() ([]*InFlightPayment, error) {
-	var inFlights []*InFlightPayment
+func (p *PaymentControl) FetchInFlightPayments() ([]*MPPayment, error) {
+	var inFlights []*MPPayment
 	err := kvdb.View(p.db, func(tx kvdb.RTx) error {
 		payments := tx.ReadBucket(paymentsRootBucket)
 		if payments == nil {
@@ -707,15 +703,12 @@ func (p *PaymentControl) FetchInFlightPayments() ([]*InFlightPayment, error) {
 				return nil
 			}
 
-			inFlight := &InFlightPayment{}
-
-			// Get the CreationInfo.
-			inFlight.Info, err = fetchCreationInfo(bucket)
+			p, err := fetchPayment(bucket)
 			if err != nil {
 				return err
 			}
 
-			inFlights = append(inFlights, inFlight)
+			inFlights = append(inFlights, p)
 			return nil
 		})
 	}, func() {

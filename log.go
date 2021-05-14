@@ -13,6 +13,7 @@ import (
 	"github.com/monasuite/lnd/chanfitness"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/channelnotifier"
+	"github.com/monasuite/lnd/cluster"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/discovery"
 	"github.com/monasuite/lnd/funding"
@@ -157,6 +158,7 @@ func SetupLoggers(root *build.RotatingLogWriter, interceptor signal.Interceptor)
 	AddSubLogger(root, chainreg.Subsystem, interceptor, chainreg.UseLogger)
 	AddSubLogger(root, chanacceptor.Subsystem, interceptor, chanacceptor.UseLogger)
 	AddSubLogger(root, funding.Subsystem, interceptor, funding.UseLogger)
+	AddSubLogger(root, cluster.Subsystem, interceptor, cluster.UseLogger)
 }
 
 // AddSubLogger is a helper method to conveniently create and register the

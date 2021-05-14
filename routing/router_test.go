@@ -69,16 +69,17 @@ func (c *testCtx) RestartRouter() error {
 	return nil
 }
 
-func createTestCtxFromGraphInstance(startingHeight uint32, graphInstance *testGraphInstance) (
-	*testCtx, func(), error) {
+func createTestCtxFromGraphInstance(startingHeight uint32, graphInstance *testGraphInstance,
+	strictPruning bool) (*testCtx, func(), error) {
 
 	return createTestCtxFromGraphInstanceAssumeValid(
-		startingHeight, graphInstance, false,
+		startingHeight, graphInstance, false, strictPruning,
 	)
 }
 
 func createTestCtxFromGraphInstanceAssumeValid(startingHeight uint32,
-	graphInstance *testGraphInstance, assumeValid bool) (*testCtx, func(), error) {
+	graphInstance *testGraphInstance, assumeValid bool,
+	strictPruning bool) (*testCtx, func(), error) {
 
 	// We'll initialize an instance of the channel router with mock
 	// versions of the chain and channel notifier. As we don't need to test
@@ -134,9 +135,10 @@ func createTestCtxFromGraphInstanceAssumeValid(startingHeight uint32,
 			next := atomic.AddUint64(&uniquePaymentID, 1)
 			return next, nil
 		},
-		PathFindingConfig:  pathFindingConfig,
-		Clock:              clock.NewTestClock(time.Unix(1, 0)),
-		AssumeChannelValid: assumeValid,
+		PathFindingConfig:   pathFindingConfig,
+		Clock:               clock.NewTestClock(time.Unix(1, 0)),
+		AssumeChannelValid:  assumeValid,
+		StrictZombiePruning: strictPruning,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create router %v", err)
@@ -187,7 +189,7 @@ func createTestCtxSingleNode(startingHeight uint32) (*testCtx, func(), error) {
 		cleanUp: cleanup,
 	}
 
-	return createTestCtxFromGraphInstance(startingHeight, graphInstance)
+	return createTestCtxFromGraphInstance(startingHeight, graphInstance, false)
 }
 
 func createTestCtxFromFile(startingHeight uint32, testGraph string) (*testCtx, func(), error) {
@@ -198,7 +200,7 @@ func createTestCtxFromFile(startingHeight uint32, testGraph string) (*testCtx, f
 		return nil, nil, fmt.Errorf("unable to create test graph: %v", err)
 	}
 
-	return createTestCtxFromGraphInstance(startingHeight, graphInstance)
+	return createTestCtxFromGraphInstance(startingHeight, graphInstance, false)
 }
 
 // TestFindRoutesWithFeeLimit asserts that routes found by the FindRoutes method
@@ -273,13 +275,13 @@ func TestSendPaymentRouteFailureFallback(t *testing.T) {
 
 	// Craft a LightningPayment struct that'll send a payment from roasbeef
 	// to luo ji for 1000 satoshis, with a maximum of 1000 satoshis in fees.
-	var payHash [32]byte
+	var payHash lntypes.Hash
 	paymentAmt := lnwire.NewMSatFromSatoshis(1000)
 	payment := LightningPayment{
 		Target:      ctx.aliases["sophon"],
 		Amount:      paymentAmt,
 		FeeLimit:    noFeeLimit,
-		PaymentHash: payHash,
+		paymentHash: &payHash,
 	}
 
 	var preImage [32]byte
@@ -365,9 +367,9 @@ func TestChannelUpdateValidation(t *testing.T) {
 
 	const startingBlockHeight = 101
 
-	ctx, cleanUp, err := createTestCtxFromGraphInstance(startingBlockHeight,
-		testGraph)
-
+	ctx, cleanUp, err := createTestCtxFromGraphInstance(
+		startingBlockHeight, testGraph, true,
+	)
 	defer cleanUp()
 	if err != nil {
 		t.Fatalf("unable to create router: %v", err)
@@ -508,13 +510,13 @@ func TestSendPaymentErrorRepeatedFeeInsufficient(t *testing.T) {
 
 	// Craft a LightningPayment struct that'll send a payment from roasbeef
 	// to luo ji for 100 satoshis.
-	var payHash [32]byte
+	var payHash lntypes.Hash
 	amt := lnwire.NewMSatFromSatoshis(1000)
 	payment := LightningPayment{
 		Target:      ctx.aliases["sophon"],
 		Amount:      amt,
 		FeeLimit:    noFeeLimit,
-		PaymentHash: payHash,
+		paymentHash: &payHash,
 	}
 
 	var preImage [32]byte
@@ -609,13 +611,13 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 
 	// Craft a LightningPayment struct that'll send a payment from roasbeef
 	// to sophon for 1k satoshis.
-	var payHash [32]byte
+	var payHash lntypes.Hash
 	amt := lnwire.NewMSatFromSatoshis(1000)
 	payment := LightningPayment{
 		Target:      ctx.aliases["sophon"],
 		Amount:      amt,
 		FeeLimit:    noFeeLimit,
-		PaymentHash: payHash,
+		paymentHash: &payHash,
 	}
 
 	var preImage [32]byte
@@ -718,7 +720,7 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 	// Once again, Roasbeef should route around Goku since they disagree
 	// w.r.t to the block height, and instead go through Pham Nuwen. We
 	// flip a bit in the payment hash to allow resending this payment.
-	payment.PaymentHash[1] ^= 1
+	payment.paymentHash[1] ^= 1
 	paymentPreImage, rt, err = ctx.router.SendPayment(&payment)
 	if err != nil {
 		t.Fatalf("unable to send payment: %v", err)
@@ -742,13 +744,13 @@ func TestSendPaymentErrorPathPruning(t *testing.T) {
 
 	// Craft a LightningPayment struct that'll send a payment from roasbeef
 	// to luo ji for 1000 satoshis, with a maximum of 1000 satoshis in fees.
-	var payHash [32]byte
+	var payHash lntypes.Hash
 	paymentAmt := lnwire.NewMSatFromSatoshis(1000)
 	payment := LightningPayment{
 		Target:      ctx.aliases["sophon"],
 		Amount:      paymentAmt,
 		FeeLimit:    noFeeLimit,
-		PaymentHash: payHash,
+		paymentHash: &payHash,
 	}
 
 	var preImage [32]byte
@@ -885,7 +887,7 @@ func TestSendPaymentErrorPathPruning(t *testing.T) {
 		})
 
 	// We flip a bit in the payment hash to allow resending this payment.
-	payment.PaymentHash[1] ^= 1
+	payment.paymentHash[1] ^= 1
 	paymentPreImage, rt, err = ctx.router.SendPayment(&payment)
 	if err != nil {
 		t.Fatalf("unable to send payment: %v", err)
@@ -1028,7 +1030,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	defer testGraph.cleanUp()
 
 	ctx, cleanUp, err := createTestCtxFromGraphInstance(
-		startingBlockHeight, testGraph,
+		startingBlockHeight, testGraph, false,
 	)
 	if err != nil {
 		t.Fatalf("unable to create router: %v", err)
@@ -1946,8 +1948,8 @@ func TestPruneChannelGraphStaleEdges(t *testing.T) {
 	freshTimestamp := time.Now()
 	staleTimestamp := time.Unix(0, 0)
 
-	// We'll create the following test graph so that only the last channel
-	// is pruned.
+	// We'll create the following test graph so that two of the channels
+	// are pruned.
 	testChannels := []*testChannel{
 		// No edges.
 		{
@@ -1960,7 +1962,7 @@ func TestPruneChannelGraphStaleEdges(t *testing.T) {
 		// Only one edge with a stale timestamp.
 		{
 			Node1: &testChannelEnd{
-				Alias: "a",
+				Alias: "d",
 				testChannelPolicy: &testChannelPolicy{
 					LastUpdate: staleTimestamp,
 				},
@@ -1968,6 +1970,20 @@ func TestPruneChannelGraphStaleEdges(t *testing.T) {
 			Node2:     &testChannelEnd{Alias: "b"},
 			Capacity:  100000,
 			ChannelID: 2,
+		},
+
+		// Only one edge with a stale timestamp, but it's the source
+		// node so it won't get pruned.
+		{
+			Node1: &testChannelEnd{
+				Alias: "a",
+				testChannelPolicy: &testChannelPolicy{
+					LastUpdate: staleTimestamp,
+				},
+			},
+			Node2:     &testChannelEnd{Alias: "b"},
+			Capacity:  100000,
+			ChannelID: 3,
 		},
 
 		// Only one edge with a fresh timestamp.
@@ -1980,10 +1996,11 @@ func TestPruneChannelGraphStaleEdges(t *testing.T) {
 			},
 			Node2:     &testChannelEnd{Alias: "b"},
 			Capacity:  100000,
-			ChannelID: 3,
+			ChannelID: 4,
 		},
 
-		// One edge fresh, one edge stale.
+		// One edge fresh, one edge stale. This will be pruned with
+		// strict pruning activated.
 		{
 			Node1: &testChannelEnd{
 				Alias: "c",
@@ -1998,47 +2015,57 @@ func TestPruneChannelGraphStaleEdges(t *testing.T) {
 				},
 			},
 			Capacity:  100000,
-			ChannelID: 4,
+			ChannelID: 5,
 		},
 
 		// Both edges fresh.
 		symmetricTestChannel("g", "h", 100000, &testChannelPolicy{
 			LastUpdate: freshTimestamp,
-		}, 5),
+		}, 6),
 
-		// Both edges stale, only one pruned.
+		// Both edges stale, only one pruned. This should be pruned for
+		// both normal and strict pruning.
 		symmetricTestChannel("e", "f", 100000, &testChannelPolicy{
 			LastUpdate: staleTimestamp,
-		}, 6),
+		}, 7),
 	}
 
-	// We'll create our test graph and router backed with these test
-	// channels we've created.
-	testGraph, err := createTestGraphFromChannels(testChannels, "a")
-	if err != nil {
-		t.Fatalf("unable to create test graph: %v", err)
+	for _, strictPruning := range []bool{true, false} {
+		// We'll create our test graph and router backed with these test
+		// channels we've created.
+		testGraph, err := createTestGraphFromChannels(testChannels, "a")
+		if err != nil {
+			t.Fatalf("unable to create test graph: %v", err)
+		}
+		defer testGraph.cleanUp()
+
+		const startingHeight = 100
+		ctx, cleanUp, err := createTestCtxFromGraphInstance(
+			startingHeight, testGraph, strictPruning,
+		)
+		if err != nil {
+			t.Fatalf("unable to create test context: %v", err)
+		}
+		defer cleanUp()
+
+		// All of the channels should exist before pruning them.
+		assertChannelsPruned(t, ctx.graph, testChannels)
+
+		// Proceed to prune the channels - only the last one should be pruned.
+		if err := ctx.router.pruneZombieChans(); err != nil {
+			t.Fatalf("unable to prune zombie channels: %v", err)
+		}
+
+		// We expect channels that have either both edges stale, or one edge
+		// stale with both known.
+		var prunedChannels []uint64
+		if strictPruning {
+			prunedChannels = []uint64{2, 5, 7}
+		} else {
+			prunedChannels = []uint64{2, 7}
+		}
+		assertChannelsPruned(t, ctx.graph, testChannels, prunedChannels...)
 	}
-	defer testGraph.cleanUp()
-
-	const startingHeight = 100
-	ctx, cleanUp, err := createTestCtxFromGraphInstance(
-		startingHeight, testGraph,
-	)
-	if err != nil {
-		t.Fatalf("unable to create test context: %v", err)
-	}
-	defer cleanUp()
-
-	// All of the channels should exist before pruning them.
-	assertChannelsPruned(t, ctx.graph, testChannels)
-
-	// Proceed to prune the channels - only the last one should be pruned.
-	if err := ctx.router.pruneZombieChans(); err != nil {
-		t.Fatalf("unable to prune zombie channels: %v", err)
-	}
-
-	prunedChannel := testChannels[len(testChannels)-1].ChannelID
-	assertChannelsPruned(t, ctx.graph, testChannels, prunedChannel)
 }
 
 // TestPruneChannelGraphDoubleDisabled test that we can properly prune channels
@@ -2147,7 +2174,7 @@ func testPruneChannelGraphDoubleDisabled(t *testing.T, assumeValid bool) {
 
 	const startingHeight = 100
 	ctx, cleanUp, err := createTestCtxFromGraphInstanceAssumeValid(
-		startingHeight, testGraph, assumeValid,
+		startingHeight, testGraph, assumeValid, false,
 	)
 	if err != nil {
 		t.Fatalf("unable to create test context: %v", err)
@@ -2529,20 +2556,21 @@ func TestUnknownErrorSource(t *testing.T) {
 
 	const startingBlockHeight = 101
 
-	ctx, cleanUp, err := createTestCtxFromGraphInstance(startingBlockHeight,
-		testGraph)
-
+	ctx, cleanUp, err := createTestCtxFromGraphInstance(
+		startingBlockHeight, testGraph, false,
+	)
 	defer cleanUp()
 	if err != nil {
 		t.Fatalf("unable to create router: %v", err)
 	}
 
 	// Create a payment to node c.
+	var payHash lntypes.Hash
 	payment := LightningPayment{
 		Target:      ctx.aliases["c"],
 		Amount:      lnwire.NewMSatFromSatoshis(1000),
 		FeeLimit:    noFeeLimit,
-		PaymentHash: lntypes.Hash{},
+		paymentHash: &payHash,
 	}
 
 	// We'll modify the SendToSwitch method so that it simulates hop b as a
@@ -2589,7 +2617,8 @@ func TestUnknownErrorSource(t *testing.T) {
 
 	// Send off the payment request to the router. We expect the payment to
 	// fail because both routes have been pruned.
-	payment.PaymentHash = lntypes.Hash{1}
+	payHash = lntypes.Hash{1}
+	payment.paymentHash = &payHash
 	_, _, err = ctx.router.SendPayment(&payment)
 	if err == nil {
 		t.Fatalf("expected payment to fail")
@@ -2668,7 +2697,7 @@ func TestSendToRouteStructuredError(t *testing.T) {
 	const startingBlockHeight = 101
 
 	ctx, cleanUp, err := createTestCtxFromGraphInstance(
-		startingBlockHeight, testGraph,
+		startingBlockHeight, testGraph, false,
 	)
 	if err != nil {
 		t.Fatalf("unable to create router: %v", err)
@@ -2904,7 +2933,7 @@ func TestSendToRouteMaxHops(t *testing.T) {
 	const startingBlockHeight = 101
 
 	ctx, cleanUp, err := createTestCtxFromGraphInstance(
-		startingBlockHeight, testGraph,
+		startingBlockHeight, testGraph, false,
 	)
 	if err != nil {
 		t.Fatalf("unable to create router: %v", err)
@@ -3018,7 +3047,7 @@ func TestBuildRoute(t *testing.T) {
 	const startingBlockHeight = 101
 
 	ctx, cleanUp, err := createTestCtxFromGraphInstance(
-		startingBlockHeight, testGraph,
+		startingBlockHeight, testGraph, false,
 	)
 	if err != nil {
 		t.Fatalf("unable to create router: %v", err)
@@ -3108,4 +3137,130 @@ func TestBuildRoute(t *testing.T) {
 	if errNoChannel.fromNode != ctx.aliases["a"] {
 		t.Fatalf("unexpected no channel error node")
 	}
+}
+
+// edgeCreationModifier is an enum-like type used to modify steps that are
+// skipped when creating a channel in the test context.
+type edgeCreationModifier uint8
+
+const (
+	// edgeCreationNoFundingTx is used to skip adding the funding
+	// transaction of an edge to the chain.
+	edgeCreationNoFundingTx edgeCreationModifier = iota
+
+	// edgeCreationNoUTXO is used to skip adding the UTXO of a channel to
+	// the UTXO set.
+	edgeCreationNoUTXO
+
+	// edgeCreationBadScript is used to create the edge, but use the wrong
+	// scrip which should cause it to fail output validation.
+	edgeCreationBadScript
+)
+
+// newChannelEdgeInfo is a helper function used to create a new channel edge,
+// possibly skipping adding it to parts of the chain/state as well.
+func newChannelEdgeInfo(ctx *testCtx, fundingHeight uint32,
+	ecm edgeCreationModifier) (*channeldb.ChannelEdgeInfo, error) {
+
+	node1, err := createTestNode()
+	if err != nil {
+		return nil, err
+	}
+	node2, err := createTestNode()
+	if err != nil {
+		return nil, err
+	}
+
+	fundingTx, _, chanID, err := createChannelEdge(
+		ctx, bitcoinKey1.SerializeCompressed(),
+		bitcoinKey2.SerializeCompressed(), 100, fundingHeight,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create edge: %w", err)
+	}
+
+	edge := &channeldb.ChannelEdgeInfo{
+		ChannelID:     chanID.ToUint64(),
+		NodeKey1Bytes: node1.PubKeyBytes,
+		NodeKey2Bytes: node2.PubKeyBytes,
+	}
+	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
+	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+
+	if ecm == edgeCreationNoFundingTx {
+		return edge, nil
+	}
+
+	fundingBlock := &wire.MsgBlock{
+		Transactions: []*wire.MsgTx{fundingTx},
+	}
+	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
+
+	if ecm == edgeCreationNoUTXO {
+		ctx.chain.delUtxo(wire.OutPoint{
+			Hash: fundingTx.TxHash(),
+		})
+	}
+
+	if ecm == edgeCreationBadScript {
+		fundingTx.TxOut[0].PkScript[0] ^= 1
+	}
+
+	return edge, nil
+}
+
+func assertChanChainRejection(t *testing.T, ctx *testCtx,
+	edge *channeldb.ChannelEdgeInfo, failCode errorCode) {
+
+	t.Helper()
+
+	err := ctx.router.AddEdge(edge)
+	if !IsError(err, failCode) {
+		t.Fatalf("validation should have failed: %v", err)
+	}
+
+	// This channel should now be present in the zombie channel index.
+	_, _, _, isZombie, err := ctx.graph.HasChannelEdge(
+		edge.ChannelID,
+	)
+	require.Nil(t, err)
+	require.True(t, isZombie, "edge should be marked as zombie")
+}
+
+// TestChannelOnChainRejectionZombie tests that if we fail validating a channel
+// due to some sort of on-chain rejection (no funding transaction, or invalid
+// UTXO), then we'll mark the channel as a zombie.
+func TestChannelOnChainRejectionZombie(t *testing.T) {
+	t.Parallel()
+
+	ctx, cleanup, err := createTestCtxSingleNode(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	// To start,  we'll make an edge for the channel, but we won't add the
+	// funding transaction to the mock blockchain, which should cause the
+	// validation to fail below.
+	edge, err := newChannelEdgeInfo(ctx, 1, edgeCreationNoFundingTx)
+	require.Nil(t, err)
+
+	// We expect this to fail as the transaction isn't present in the
+	// chain (nor the block).
+	assertChanChainRejection(t, ctx, edge, ErrNoFundingTransaction)
+
+	// Next, we'll make another channel edge, but actually add it to the
+	// graph this time.
+	edge, err = newChannelEdgeInfo(ctx, 2, edgeCreationNoUTXO)
+	require.Nil(t, err)
+
+	// Instead now, we'll remove it from the set of UTXOs which should
+	// cause the spentness validation to fail.
+	assertChanChainRejection(t, ctx, edge, ErrChannelSpent)
+
+	// If we cause the funding transaction the chain to fail validation, we
+	// should see similar behavior.
+	edge, err = newChannelEdgeInfo(ctx, 3, edgeCreationBadScript)
+	require.Nil(t, err)
+	assertChanChainRejection(t, ctx, edge, ErrInvalidFundingOutput)
 }

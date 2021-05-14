@@ -231,6 +231,10 @@ var allTestCases = []*testCase{
 		test: testHoldInvoicePersistence,
 	},
 	{
+		name: "hold invoice force close",
+		test: testHoldInvoiceForceClose,
+	},
+	{
 		name: "cpfp",
 		test: testCPFP,
 	},
@@ -271,6 +275,11 @@ var allTestCases = []*testCase{
 		test: testSendToRouteAMP,
 	},
 	{
+		name: "sendpayment amp",
+		test: testSendPaymentAMP,
+	},
+
+	{
 		name: "send multi path payment",
 		test: testSendMultiPathPayment,
 	},
@@ -305,5 +314,9 @@ var allTestCases = []*testCase{
 	{
 		name: "wallet import pubkey",
 		test: testWalletImportPubKey,
+	},
+	{
+		name: "etcd_failover",
+		test: testEtcdFailover,
 	},
 }

@@ -23,8 +23,8 @@ import (
 	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monaarchives/btcwallet/walletdb"
 	_ "github.com/monaarchives/btcwallet/walletdb/bdb" // Required to register the boltdb walletdb implementation.
-	"github.com/monasuite/monad/btcjson"
 
+	"github.com/monasuite/lnd/blockcache"
 	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/neutrino"
@@ -844,7 +844,11 @@ var interfaceImpls = []struct {
 				cleanUp2()
 			}
 
-			chainView := NewBitcoindFilteredChainView(chainConn)
+			blockCache := blockcache.NewBlockCache(10000)
+
+			chainView := NewBitcoindFilteredChainView(
+				chainConn, blockCache,
+			)
 
 			return cleanUp3, chainView, nil
 		},
@@ -890,7 +894,11 @@ var interfaceImpls = []struct {
 				os.RemoveAll(spvDir)
 			}
 
-			chainView, err := NewCfFilteredChainView(spvNode)
+			blockCache := blockcache.NewBlockCache(10000)
+
+			chainView, err := NewCfFilteredChainView(
+				spvNode, blockCache,
+			)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -901,7 +909,10 @@ var interfaceImpls = []struct {
 	{
 		name: "btcd_websockets",
 		chainViewInit: func(config rpcclient.ConnConfig, _ string) (func(), FilteredChainView, error) {
-			chainView, err := NewBtcdFilteredChainView(config)
+			blockCache := blockcache.NewBlockCache(10000)
+			chainView, err := NewBtcdFilteredChainView(
+				config, blockCache,
+			)
 			if err != nil {
 				return nil, nil, err
 			}

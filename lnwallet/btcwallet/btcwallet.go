@@ -19,11 +19,14 @@ import (
 	"github.com/btcsuite/btcutil/psbt"
 	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monaarchives/btcwallet/waddrmgr"
+	"github.com/monaarchives/btcwallet/wallet"
 	base "github.com/monaarchives/btcwallet/wallet"
 	"github.com/monaarchives/btcwallet/wallet/txauthor"
 	"github.com/monaarchives/btcwallet/wallet/txrules"
 	"github.com/monaarchives/btcwallet/walletdb"
 	"github.com/monaarchives/btcwallet/wtxmgr"
+	"github.com/monasuite/lnd/blockcache"
+	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/keychain"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwallet/chainfee"
@@ -36,6 +39,13 @@ const (
 	// UnconfirmedHeight is the special case end height that is used to
 	// obtain unconfirmed transactions from ListTransactionDetails.
 	UnconfirmedHeight int32 = -1
+
+	// walletMetaBucket is used to store wallet metadata.
+	walletMetaBucket = "lnwallet"
+
+	// walletReadyKey is used to indicate that the wallet has been
+	// initialized.
+	walletReadyKey = "ready"
 )
 
 var (
@@ -74,6 +84,8 @@ type BtcWallet struct {
 	netParams *chaincfg.Params
 
 	chainKeyScope waddrmgr.KeyScope
+
+	blockCache *blockcache.BlockCache
 }
 
 // A compile time check to ensure that BtcWallet implements the
@@ -83,10 +95,7 @@ var _ lnwallet.BlockChainIO = (*BtcWallet)(nil)
 
 // New returns a new fully initialized instance of BtcWallet given a valid
 // configuration struct.
-func New(cfg Config) (*BtcWallet, error) {
-	// Ensure the wallet exists or create it when the create flag is set.
-	netDir := NetworkDir(cfg.DataDir, cfg.NetParams)
-
+func New(cfg Config, blockCache *blockcache.BlockCache) (*BtcWallet, error) {
 	// Create the key scope for the coin type being managed by this wallet.
 	chainKeyScope := waddrmgr.KeyScope{
 		Purpose: keychain.BIP0043Purpose,
@@ -105,10 +114,13 @@ func New(cfg Config) (*BtcWallet, error) {
 		} else {
 			pubPass = cfg.PublicPass
 		}
-		loader := base.NewLoader(
-			cfg.NetParams, netDir, cfg.NoFreelistSync,
-			cfg.DBTimeOut, cfg.RecoveryWindow,
+
+		loader, err := NewWalletLoader(
+			cfg.NetParams, cfg.RecoveryWindow, cfg.LoaderOptions...,
 		)
+		if err != nil {
+			return nil, err
+		}
 		walletExists, err := loader.WalletExists()
 		if err != nil {
 			return nil, err
@@ -142,7 +154,106 @@ func New(cfg Config) (*BtcWallet, error) {
 		chain:         cfg.ChainSource,
 		netParams:     cfg.NetParams,
 		chainKeyScope: chainKeyScope,
+		blockCache:    blockCache,
 	}, nil
+}
+
+// loaderCfg holds optional wallet loader configuration.
+type loaderCfg struct {
+	dbDirPath      string
+	noFreelistSync bool
+	dbTimeout      time.Duration
+	useLocalDB     bool
+	externalDB     kvdb.Backend
+}
+
+// LoaderOption is a functional option to update the optional loader config.
+type LoaderOption func(*loaderCfg)
+
+// LoaderWithLocalWalletDB configures the wallet loader to use the local db.
+func LoaderWithLocalWalletDB(dbDirPath string, noFreelistSync bool,
+	dbTimeout time.Duration) LoaderOption {
+
+	return func(cfg *loaderCfg) {
+		cfg.dbDirPath = dbDirPath
+		cfg.noFreelistSync = noFreelistSync
+		cfg.dbTimeout = dbTimeout
+		cfg.useLocalDB = true
+	}
+}
+
+// LoaderWithExternalWalletDB configures the wallet loadr to use an external db.
+func LoaderWithExternalWalletDB(db kvdb.Backend) LoaderOption {
+	return func(cfg *loaderCfg) {
+		cfg.externalDB = db
+	}
+}
+
+// NewWalletLoader constructs a wallet loader.
+func NewWalletLoader(chainParams *chaincfg.Params, recoveryWindow uint32,
+	opts ...LoaderOption) (*wallet.Loader, error) {
+
+	cfg := &loaderCfg{}
+
+	// Apply all functional options.
+	for _, o := range opts {
+		o(cfg)
+	}
+
+	if cfg.externalDB != nil && cfg.useLocalDB {
+		return nil, fmt.Errorf("wallet can either be in the local or " +
+			"an external db")
+	}
+
+	if cfg.externalDB != nil {
+		loader, err := base.NewLoaderWithDB(
+			chainParams, recoveryWindow, cfg.externalDB,
+			func() (bool, error) {
+				return externalWalletExists(cfg.externalDB)
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decorate wallet db with out own key such that we
+		// can always check whether the wallet exists or not.
+		loader.OnWalletCreated(onWalletCreated)
+		return loader, nil
+	}
+
+	return base.NewLoader(
+		chainParams, cfg.dbDirPath, cfg.noFreelistSync,
+		cfg.dbTimeout, recoveryWindow,
+	), nil
+}
+
+// externalWalletExists is a helper function that we use to template btcwallet's
+// Loader in order to be able check if the wallet database has been initialized
+// in an external DB.
+func externalWalletExists(db kvdb.Backend) (bool, error) {
+	exists := false
+	err := kvdb.View(db, func(tx kvdb.RTx) error {
+		metaBucket := tx.ReadBucket([]byte(walletMetaBucket))
+		if metaBucket != nil {
+			walletReady := metaBucket.Get([]byte(walletReadyKey))
+			exists = string(walletReady) == walletReadyKey
+		}
+
+		return nil
+	}, func() {})
+
+	return exists, err
+}
+
+// onWalletCreated is executed when btcwallet creates the wallet the first time.
+func onWalletCreated(tx kvdb.RwTx) error {
+	metaBucket, err := tx.CreateTopLevelBucket([]byte(walletMetaBucket))
+	if err != nil {
+		return err
+	}
+
+	return metaBucket.Put([]byte(walletReadyKey), []byte(walletReadyKey))
 }
 
 // BackEnd returns the underlying ChainService's name as a string.
@@ -484,7 +595,7 @@ func (b *BtcWallet) ImportPublicKey(pubKey *btcec.PublicKey,
 //
 // This is a part of the WalletController interface.
 func (b *BtcWallet) SendOutputs(outputs []*wire.TxOut,
-	feeRate chainfee.SatPerKWeight, minconf int32, label string) (*wire.MsgTx, error) {
+	feeRate chainfee.SatPerKWeight, minConfs int32, label string) (*wire.MsgTx, error) {
 
 	// Convert our fee rate from sat/kw to sat/kb since it's required by
 	// SendOutputs.
@@ -495,13 +606,13 @@ func (b *BtcWallet) SendOutputs(outputs []*wire.TxOut,
 		return nil, lnwallet.ErrNoOutputs
 	}
 
-	// Sanity check minconf.
-	if minconf < 0 {
+	// Sanity check minConfs.
+	if minConfs < 0 {
 		return nil, lnwallet.ErrInvalidMinconf
 	}
 
 	return b.wallet.SendOutputs(
-		outputs, nil, defaultAccount, minconf, feeSatPerKB, label,
+		outputs, nil, defaultAccount, minConfs, feeSatPerKB, label,
 	)
 }
 
@@ -519,7 +630,8 @@ func (b *BtcWallet) SendOutputs(outputs []*wire.TxOut,
 //
 // This is a part of the WalletController interface.
 func (b *BtcWallet) CreateSimpleTx(outputs []*wire.TxOut,
-	feeRate chainfee.SatPerKWeight, dryRun bool) (*txauthor.AuthoredTx, error) {
+	feeRate chainfee.SatPerKWeight, minConfs int32,
+	dryRun bool) (*txauthor.AuthoredTx, error) {
 
 	// The fee rate is passed in using units of sat/kw, so we'll convert
 	// this to sat/KB as the CreateSimpleTx method requires this unit.
@@ -529,6 +641,12 @@ func (b *BtcWallet) CreateSimpleTx(outputs []*wire.TxOut,
 	if len(outputs) < 1 {
 		return nil, lnwallet.ErrNoOutputs
 	}
+
+	// Sanity check minConfs.
+	if minConfs < 0 {
+		return nil, lnwallet.ErrInvalidMinconf
+	}
+
 	for _, output := range outputs {
 		// When checking an output for things like dusty-ness, we'll
 		// use the default mempool relay fee rather than the target
@@ -544,7 +662,7 @@ func (b *BtcWallet) CreateSimpleTx(outputs []*wire.TxOut,
 	}
 
 	return b.wallet.CreateSimpleTx(
-		nil, defaultAccount, outputs, 1, feeSatPerKB, dryRun,
+		nil, defaultAccount, outputs, minConfs, feeSatPerKB, dryRun,
 	)
 }
 
@@ -608,11 +726,11 @@ func (b *BtcWallet) ReleaseOutput(id wtxmgr.LockID, op wire.OutPoint) error {
 }
 
 // ListUnspentWitness returns all unspent outputs which are version 0 witness
-// programs. The 'minconfirms' and 'maxconfirms' parameters indicate the minimum
+// programs. The 'minConfs' and 'maxConfs' parameters indicate the minimum
 // and maximum number of confirmations an output needs in order to be returned
-// by this method. Passing -1 as 'minconfirms' indicates that even unconfirmed
-// outputs should be returned. Using MaxInt32 as 'maxconfirms' implies returning
-// all outputs with at least 'minconfirms'. The account parameter serves as a
+// by this method. Passing -1 as 'minConfs' indicates that even unconfirmed
+// outputs should be returned. Using MaxInt32 as 'maxConfs' implies returning
+// all outputs with at least 'minConfs'. The account parameter serves as a
 // filter to retrieve the unspent outputs for a specific account.  When empty,
 // the unspent outputs of all wallet accounts are returned.
 //
