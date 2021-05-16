@@ -20,7 +20,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing/route"
 	"github.com/stretchr/testify/require"

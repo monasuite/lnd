@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/lightningnetwork/lnd/clock"
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 )
 
 const (

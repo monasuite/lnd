@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcutil"
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/cluster"
 	"github.com/monasuite/lnd/lncfg"
 	"github.com/monasuite/lnd/lnrpc"

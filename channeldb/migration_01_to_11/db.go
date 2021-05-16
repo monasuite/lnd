@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 )
 
 const (

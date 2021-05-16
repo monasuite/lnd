@@ -27,6 +27,8 @@ import (
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/cert"
 	"github.com/lightningnetwork/lnd/clock"
+	"github.com/lightningnetwork/lnd/healthcheck"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/queue"
 	"github.com/lightningnetwork/lnd/ticker"
 	"github.com/monasuite/lnd/autopilot"
@@ -36,13 +38,11 @@ import (
 	"github.com/monasuite/lnd/chanbackup"
 	"github.com/monasuite/lnd/chanfitness"
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/channelnotifier"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/discovery"
 	"github.com/monasuite/lnd/feature"
 	"github.com/monasuite/lnd/funding"
-	"github.com/monasuite/lnd/healthcheck"
 	"github.com/monasuite/lnd/htlcswitch"
 	"github.com/monasuite/lnd/htlcswitch/hop"
 	"github.com/monasuite/lnd/input"
@@ -427,6 +427,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		HtlcHoldDuration:            invoices.DefaultHtlcHoldDuration,
 		Clock:                       clock.NewDefaultClock(),
 		AcceptKeySend:               cfg.AcceptKeySend,
+		AcceptAMP:                   cfg.AcceptAMP,
 		GcCanceledInvoicesOnStartup: cfg.GcCanceledInvoicesOnStartup,
 		GcCanceledInvoicesOnTheFly:  cfg.GcCanceledInvoicesOnTheFly,
 		KeysendHoldTime:             cfg.KeysendHoldTime,
@@ -441,11 +442,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		writePool:      writePool,
 		readPool:       readPool,
 		chansToRestore: chansToRestore,
-
-		invoices: invoices.NewRegistry(
-			remoteChanDB, invoices.NewInvoiceExpiryWatcher(clock.NewDefaultClock()),
-			&registryConfig,
-		),
 
 		channelNotifier: channelnotifier.New(remoteChanDB),
 
@@ -483,10 +479,18 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		subscribers: make(map[uint64]*preimageSubscriber),
 	}
 
-	_, currentHeight, err := s.cc.ChainIO.GetBestBlock()
+	currentHash, currentHeight, err := s.cc.ChainIO.GetBestBlock()
 	if err != nil {
 		return nil, err
 	}
+
+	expiryWatcher := invoices.NewInvoiceExpiryWatcher(
+		clock.NewDefaultClock(), cfg.Invoices.HoldExpiryDelta,
+		uint32(currentHeight), currentHash, cc.ChainNotifier,
+	)
+	s.invoices = invoices.NewRegistry(
+		remoteChanDB, expiryWatcher, &registryConfig,
+	)
 
 	s.htlcNotifier = htlcswitch.NewHtlcNotifier(time.Now)
 

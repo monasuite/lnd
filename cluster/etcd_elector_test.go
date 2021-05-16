@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monasuite/lnd/channeldb/kvdb/etcd"
+	"github.com/lightningnetwork/lnd/kvdb/etcd"
 	"github.com/stretchr/testify/require"
 )
 

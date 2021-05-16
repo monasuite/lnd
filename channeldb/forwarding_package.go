@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/lnwire"
 )
 

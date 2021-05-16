@@ -8,7 +8,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 
 	"github.com/monaarchives/btcwallet/snacl"
 	"github.com/monaarchives/btcwallet/walletdb"

@@ -3,12 +3,12 @@ package channeldb
 import (
 	"github.com/btcsuite/btclog"
 	"github.com/monasuite/lnd/build"
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	mig "github.com/monasuite/lnd/channeldb/migration"
 	"github.com/monasuite/lnd/channeldb/migration12"
 	"github.com/monasuite/lnd/channeldb/migration13"
 	"github.com/monasuite/lnd/channeldb/migration16"
 	"github.com/monasuite/lnd/channeldb/migration_01_to_11"
+	"github.com/lightningnetwork/lnd/kvdb"
 )
 
 // log is a logger that is initialized with no output filters.  This

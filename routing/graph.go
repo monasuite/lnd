@@ -1,8 +1,8 @@
 package routing
 
 import (
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing/route"
 )

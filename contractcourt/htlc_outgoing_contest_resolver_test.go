@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/lntest/mock"
 	"github.com/monasuite/lnd/lntypes"

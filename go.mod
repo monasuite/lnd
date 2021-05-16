@@ -9,6 +9,7 @@ require (
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f
 	github.com/btcsuite/btcutil v1.0.3-0.20201208143702-a53e38424cce
 	github.com/btcsuite/btcutil/psbt v1.0.3-0.20201208143702-a53e38424cce
+	github.com/btcsuite/btcwallet/walletdb v1.3.5-0.20210513043850-3a2f12e3a954
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
@@ -41,6 +42,8 @@ require (
 	github.com/lightningnetwork/lightning-onion v1.0.2-0.20200501022730-3c8c8d0b89ea
 	github.com/lightningnetwork/lnd/cert v1.0.3
 	github.com/lightningnetwork/lnd/clock v1.0.1
+	github.com/lightningnetwork/lnd/healthcheck v1.0.0
+	github.com/lightningnetwork/lnd/kvdb v1.0.0 // indirect
 	github.com/lightningnetwork/lnd/queue v1.0.4
 	github.com/lightningnetwork/lnd/ticker v1.0.0
 	github.com/mattn/go-runewidth v0.0.9 // indirect
@@ -50,22 +53,19 @@ require (
 	github.com/monaarchives/btcwallet v0.12.3-0.20210428051406-624ec292cf88
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.1-0.20210428051406-624ec292cf88
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.1-0.20210426201341-0066ab20ddd4
-	github.com/monaarchives/btcwallet/walletdb v1.3.4
+	github.com/monaarchives/btcwallet/walletdb v1.3.4 // indirect
 	github.com/monaarchives/btcwallet/wtxmgr v1.2.1-0.20210426201341-0066ab20ddd4
 	github.com/monasuite/monad v0.22.3-beta.0.20201009204152-fdfc222c5098
 	github.com/monasuite/neutrino v0.12.1-0.20210512130738-55d776e8fe3e
 	github.com/prometheus/client_golang v1.0.0
-	github.com/soheilhy/cmux v0.1.4 // indirect
-	github.com/stretchr/testify v1.5.1
+	github.com/stretchr/testify v1.7.0
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20190109142713-0ad062ec5ee5 // indirect
 	github.com/tv42/zbase32 v0.0.0-20160707012821-501572607d02
 	github.com/urfave/cli v1.20.0
-	go.etcd.io/bbolt v1.3.5-0.20200615073812-232d8fc87f50
 	go.etcd.io/etcd v3.4.14+incompatible
 	go.uber.org/zap v1.14.1 // indirect
 	golang.org/x/crypto v0.0.0-20200709230013-948cd5f35899
-	golang.org/x/net v0.0.0-20200226121028-0de0cce0169b
-	golang.org/x/sys v0.0.0-20200202164722-d101bd2416d5
+	golang.org/x/net v0.0.0-20200520004742-59133d7f0dd7
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2
 	google.golang.org/grpc v1.29.1
 	google.golang.org/protobuf v1.23.0
@@ -82,6 +82,10 @@ replace github.com/lightningnetwork/lnd/queue => ./queue
 replace github.com/lightningnetwork/lnd/cert => ./cert
 
 replace github.com/lightningnetwork/lnd/clock => ./clock
+
+replace github.com/lightningnetwork/lnd/healthcheck => ./healthcheck
+
+replace github.com/lightningnetwork/lnd/kvdb => ./kvdb
 
 replace git.schwanenlied.me/yawning/bsaes.git => github.com/Yawning/bsaes v0.0.0-20180720073208-c0276d75487e
 

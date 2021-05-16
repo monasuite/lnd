@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monaarchives/btcwallet/walletdb"
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/lnwire"
 )
 

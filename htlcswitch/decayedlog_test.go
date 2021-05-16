@@ -9,7 +9,7 @@ import (
 
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/monasuite/lnd/chainntnfs"
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/lntest/mock"
 )
 

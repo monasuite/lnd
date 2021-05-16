@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/stretchr/testify/require"
 )
 

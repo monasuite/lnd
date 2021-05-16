@@ -8,7 +8,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	bitcoinCfg "github.com/btcsuite/btcd/chaincfg"
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/zpay32"
 	monacoinCfg "github.com/monasuite/monad/chaincfg"
 )

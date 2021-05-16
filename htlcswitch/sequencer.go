@@ -5,7 +5,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 )
 
 // defaultSequenceBatchSize specifies the window of sequence numbers that are

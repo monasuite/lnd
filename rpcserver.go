@@ -36,7 +36,6 @@ import (
 	"github.com/monasuite/lnd/chanbackup"
 	"github.com/monasuite/lnd/chanfitness"
 	"github.com/monasuite/lnd/channeldb"
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/channelnotifier"
 	"github.com/monasuite/lnd/contractcourt"
 	"github.com/monasuite/lnd/discovery"
@@ -47,6 +46,7 @@ import (
 	"github.com/monasuite/lnd/input"
 	"github.com/monasuite/lnd/invoices"
 	"github.com/monasuite/lnd/keychain"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/labels"
 	"github.com/monasuite/lnd/lncfg"
 	"github.com/monasuite/lnd/lnrpc"
@@ -661,6 +661,9 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 	genInvoiceFeatures := func() *lnwire.FeatureVector {
 		return s.featureMgr.Get(feature.SetInvoice)
 	}
+	genAmpInvoiceFeatures := func() *lnwire.FeatureVector {
+		return s.featureMgr.Get(feature.SetInvoiceAmp)
+	}
 
 	var (
 		subServers     []lnrpc.SubServer
@@ -677,7 +680,8 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 		s.htlcSwitch, r.cfg.ActiveNetParams.Params, s.chanRouter,
 		routerBackend, s.nodeSigner, s.localChanDB, s.remoteChanDB,
 		s.sweeper, tower, s.towerClient, s.anchorTowerClient,
-		r.cfg.net.ResolveTCPAddr, genInvoiceFeatures, rpcsLog,
+		r.cfg.net.ResolveTCPAddr, genInvoiceFeatures,
+		genAmpInvoiceFeatures, rpcsLog,
 	)
 	if err != nil {
 		return err
@@ -2506,6 +2510,17 @@ func (r *rpcServer) GetInfo(ctx context.Context,
 		return nil, fmt.Errorf("unable to sync PoV of the wallet "+
 			"with current best block in the main chain: %v", err)
 	}
+
+	// The router has a lot of work to do for each block. So it might be
+	// possible that it isn't yet up to date with the most recent block,
+	// even if the wallet is. This can happen in environments with high CPU
+	// load (such as parallel itests). Since the `synced_to_chain` flag in
+	// the response of this call is used by many wallets (and also our
+	// itests) to make sure everything's up to date, we add the router's
+	// state to it. So the flag will only toggle to true once the router was
+	// also able to catch up.
+	routerHeight := r.server.chanRouter.SyncedHeight()
+	isSynced = isSynced && uint32(bestHeight) == routerHeight
 
 	network := lncfg.NormalizeNetwork(r.cfg.ActiveNetParams.Name)
 	activeChains := make([]*lnrpc.Chain, r.cfg.registeredChains.NumActiveChains())
@@ -4359,6 +4374,15 @@ func (r *rpcServer) extractPaymentIntent(rpcPayReq *rpcPaymentRequest) (rpcPayme
 		payIntent.cltvDelta = uint16(r.cfg.Bitcoin.TimeLockDelta)
 	}
 
+	// Do bounds checking with the block padding so the router isn't left
+	// with a zombie payment in case the user messes up.
+	err = routing.ValidateCLTVLimit(
+		payIntent.cltvLimit, payIntent.cltvDelta, true,
+	)
+	if err != nil {
+		return payIntent, err
+	}
+
 	// If the user is manually specifying payment details, then the payment
 	// hash may be encoded as a string.
 	switch {
@@ -4785,6 +4809,9 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		GenInvoiceFeatures: func() *lnwire.FeatureVector {
 			return r.server.featureMgr.Get(feature.SetInvoice)
 		},
+		GenAmpInvoiceFeatures: func() *lnwire.FeatureVector {
+			return r.server.featureMgr.Get(feature.SetInvoiceAmp)
+		},
 	}
 
 	value, err := lnrpc.UnmarshallAmt(invoice.Value, invoice.ValueMsat)
@@ -4806,6 +4833,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		CltvExpiry:      invoice.CltvExpiry,
 		Private:         invoice.Private,
 		RouteHints:      routeHints,
+		Amp:             invoice.IsAmp,
 	}
 
 	if invoice.RPreimage != nil {

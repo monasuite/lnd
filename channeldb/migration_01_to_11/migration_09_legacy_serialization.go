@@ -7,8 +7,8 @@ import (
 	"io"
 	"sort"
 
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/lntypes"
 )
 

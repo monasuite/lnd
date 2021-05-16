@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/monasuite/lnd/channeldb/kvdb"
-	"github.com/monasuite/lnd/channeldb/kvdb/etcd"
+	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb/etcd"
 )
 
 const (

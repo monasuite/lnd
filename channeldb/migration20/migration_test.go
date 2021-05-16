@@ -3,8 +3,8 @@ package migration20
 import (
 	"testing"
 
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/channeldb/migtest"
+	"github.com/lightningnetwork/lnd/kvdb"
 )
 
 var (

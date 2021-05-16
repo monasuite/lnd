@@ -8,9 +8,9 @@ import (
 
 	bitcoinCfg "github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
 	"github.com/monasuite/lnd/channeldb/migration_01_to_11/zpay32"
+	"github.com/lightningnetwork/lnd/kvdb"
 	monacoinCfg "github.com/monasuite/monad/chaincfg"
 )
 

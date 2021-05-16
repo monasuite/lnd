@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 )
 
 // DumpDB dumps go code describing the contents of the database to stdout. This

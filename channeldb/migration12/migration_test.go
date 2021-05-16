@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/channeldb/migration12"
 	"github.com/monasuite/lnd/channeldb/migtest"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/lntypes"
 )
 

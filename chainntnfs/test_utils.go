@@ -23,7 +23,7 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monaarchives/btcwallet/walletdb"
-	"github.com/monasuite/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/neutrino"
 )
 

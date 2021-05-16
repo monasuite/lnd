@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	"github.com/monasuite/lnd/channeldb/migration"
 	"github.com/monasuite/lnd/channeldb/migtest"
+	"github.com/lightningnetwork/lnd/kvdb"
 )
 
 // TestCreateTLB asserts that a CreateTLB properly initializes a new top-level

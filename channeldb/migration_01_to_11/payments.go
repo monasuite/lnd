@@ -11,8 +11,8 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/tlv"
 )

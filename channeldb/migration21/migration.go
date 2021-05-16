@@ -5,11 +5,11 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/monasuite/lnd/channeldb/kvdb"
 	lnwire "github.com/monasuite/lnd/channeldb/migration/lnwire21"
 	"github.com/monasuite/lnd/channeldb/migration21/common"
 	"github.com/monasuite/lnd/channeldb/migration21/current"
 	"github.com/monasuite/lnd/channeldb/migration21/legacy"
+	"github.com/lightningnetwork/lnd/kvdb"
 )
 
 var (

@@ -5,7 +5,7 @@ package kvdb
 import (
 	"fmt"
 
-	"github.com/monasuite/lnd/channeldb/kvdb/etcd"
+	"github.com/lightningnetwork/lnd/kvdb/etcd"
 )
 
 // TestBackend is conditionally set to bdb when the kvdb_etcd build tag is
