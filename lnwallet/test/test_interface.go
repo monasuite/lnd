@@ -31,8 +31,8 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monaarchives/btcwallet/walletdb"
+	// bdb database
 	_ "github.com/monaarchives/btcwallet/walletdb/bdb"
-	"github.com/monasuite/neutrino"
 	"github.com/monasuite/lnd/blockcache"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chainntnfs/btcdnotify"
@@ -46,6 +46,7 @@ import (
 	"github.com/monasuite/lnd/lnwallet/chainfee"
 	"github.com/monasuite/lnd/lnwallet/chanfunding"
 	"github.com/monasuite/lnd/lnwire"
+	"github.com/monasuite/neutrino"
 	"github.com/stretchr/testify/require"
 )
 
