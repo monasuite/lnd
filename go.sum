@@ -248,6 +248,8 @@ github.com/monaarchives/btcwallet v0.12.3-0.20201204234238-41a2879e3f27 h1:rBlO/
 github.com/monaarchives/btcwallet v0.12.3-0.20201204234238-41a2879e3f27/go.mod h1:CEiJxitElPisUEgpSBtCNNUUkl3doM/WkFrfUU69oJ4=
 github.com/monaarchives/btcwallet v0.12.3-0.20210428051406-624ec292cf88 h1:MiHDJzwMnXtNaoEQUeeleAWPTlA24eRKlF2wG52fDTA=
 github.com/monaarchives/btcwallet v0.12.3-0.20210428051406-624ec292cf88/go.mod h1:lyrf+kQfMevCTCgzEXgF4zo0GGJ/xM1DRizqorH8z4s=
+github.com/monaarchives/btcwallet v0.12.3-0.20210518164441-124224e5e9af h1:5SjHAeL4dR8nVXhuzAbZeu7NWh4/KbohO1LVtiBA+dM=
+github.com/monaarchives/btcwallet v0.12.3-0.20210518164441-124224e5e9af/go.mod h1:33d7XOTUtcTOe3MQQUOEDbc/pVCJwNNdeVSOTjKzfJc=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0 h1:ksF3WKNj2SJX3yVWUuANQlS23Xe+9jpY1rrWlp9SalU=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.0/go.mod h1:AtTKdIUCYgF07/DoNnJKJ8Sde4TN7nxS3AcqTf59Ea4=
 github.com/monaarchives/btcwallet/wallet/txauthor v1.0.1-0.20210428051406-624ec292cf88 h1:n/ytwbZ1pYYAOh4I2bFX3GJ+tC4Y/HtR00KlXfIy93E=
@@ -265,6 +267,8 @@ github.com/monaarchives/btcwallet/walletdb v1.2.0/go.mod h1:36eHRDquWOXxu/zPvc7p
 github.com/monaarchives/btcwallet/walletdb v1.3.3/go.mod h1:cTxlRgu7vsHZ+3HZSPaMzWKrZlmy+ux7HajNTOhCpZk=
 github.com/monaarchives/btcwallet/walletdb v1.3.4 h1:lWlJClSLLEJMWW0FHc3erCWrdAvFKGHmgbX89eJOjAc=
 github.com/monaarchives/btcwallet/walletdb v1.3.4/go.mod h1:cTxlRgu7vsHZ+3HZSPaMzWKrZlmy+ux7HajNTOhCpZk=
+github.com/monaarchives/btcwallet/walletdb v1.3.5 h1:Lai9BevM31t2Q5E1LzU1R63fScvHDbCHkDqkx5WkGhU=
+github.com/monaarchives/btcwallet/walletdb v1.3.5/go.mod h1:cTxlRgu7vsHZ+3HZSPaMzWKrZlmy+ux7HajNTOhCpZk=
 github.com/monaarchives/btcwallet/wtxmgr v1.0.0/go.mod h1:XqMElePwLqnOJAd1MzG54vVo5Byo9NMutl6WNYfG79U=
 github.com/monaarchives/btcwallet/wtxmgr v1.2.0 h1:nQ0V3Y8+z+0tN0jm0uXo+xmFaB6BDANMPLQo0uXOwCI=
 github.com/monaarchives/btcwallet/wtxmgr v1.2.0/go.mod h1:gul6CfWnsuDQ1OFcPsstWG0M6iqI7qMYoNyBsCni3VA=
@@ -296,6 +300,8 @@ github.com/monasuite/neutrino v0.12.1-0.20210507082827-40497acc613d h1:ZIkZcdwsV
 github.com/monasuite/neutrino v0.12.1-0.20210507082827-40497acc613d/go.mod h1:D/VfbRsZuvPqtGJ5sPx/CeKWc6jKsyL4nfl1ABY6ep0=
 github.com/monasuite/neutrino v0.12.1-0.20210512130738-55d776e8fe3e h1:k9Wis69ZrVdusbp2oi4WEKnvh6aQH6SXecyKYMovXNY=
 github.com/monasuite/neutrino v0.12.1-0.20210512130738-55d776e8fe3e/go.mod h1:Jaii9dGdoaJKjdKGvPgH4CQezoOrttPdhH81WRJRe/s=
+github.com/monasuite/neutrino v0.12.1-0.20210518162651-649d614556c1 h1:toCakeaq6YLMBOufdHH6hphPk1dFFiuIG7AlPE7IXcU=
+github.com/monasuite/neutrino v0.12.1-0.20210518162651-649d614556c1/go.mod h1:Jaii9dGdoaJKjdKGvPgH4CQezoOrttPdhH81WRJRe/s=
 github.com/mwitkow/go-conntrack v0.0.0-20161129095857-cc309e4a2223/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
 github.com/olekukonko/tablewriter v0.0.0-20170122224234-a0225b3f23b5/go.mod h1:vsDQFd/mU46D+Z4whnwzcISnGGzXWMclvtLoiIKAKIo=
 github.com/onsi/ginkgo v1.6.0/go.mod h1:lLunBs/Ym6LB5Z9jYTR76FiuTmxDTDusOGeTQH+WWjE=
