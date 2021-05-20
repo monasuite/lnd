@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/watchtower/blob"
 )
 

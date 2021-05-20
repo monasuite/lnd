@@ -1,8 +1,8 @@
 package wtdb
 
 import (
-	"github.com/monasuite/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/monasuite/lnd/channeldb"
 )
 
 // migration is a function which takes a prior outdated version of the database
