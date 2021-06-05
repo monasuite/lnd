@@ -19,8 +19,8 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/monasuite/lnd/batch"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/monasuite/lnd/batch"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/routing/route"
 )

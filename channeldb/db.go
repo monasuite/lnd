@@ -12,6 +12,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd/clock"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monaarchives/btcwallet/walletdb"
 	mig "github.com/monasuite/lnd/channeldb/migration"
 	"github.com/monasuite/lnd/channeldb/migration12"
@@ -20,7 +21,6 @@ import (
 	"github.com/monasuite/lnd/channeldb/migration20"
 	"github.com/monasuite/lnd/channeldb/migration21"
 	"github.com/monasuite/lnd/channeldb/migration_01_to_11"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/lnwire"
 )
 
