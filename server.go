@@ -1760,6 +1760,12 @@ func (s *server) Start() error {
 				chainreg.BitcoinTestnetGenesis,
 			)
 		}
+		if s.cfg.Bitcoin.Active && s.cfg.Bitcoin.SigNet {
+			setSeedList(
+				s.cfg.Bitcoin.DNSSeeds,
+				chainreg.BitcoinSignetGenesis,
+			)
+		}
 		if s.cfg.Monacoin.Active && s.cfg.Monacoin.MainNet {
 			setSeedList(
 				s.cfg.Monacoin.DNSSeeds,

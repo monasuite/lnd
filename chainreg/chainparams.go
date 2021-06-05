@@ -102,11 +102,10 @@ var BitcoinSimNetParams = BitcoinNetParams{
 	CoinType: keychain.CoinTypeTestnet,
 }
 
-// BitcoinSigNetParams contains parameters specific to the signature version of the
-// test network.
+// BitcoinSigNetParams contains parameters specific to the signet test network.
 var BitcoinSigNetParams = BitcoinNetParams{
-	Params:   &bitcoinCfg.TestNet3Params,
-	RPCPort:  "38334",
+	Params:   &bitcoinCfg.SigNetParams,
+	RPCPort:  "38332",
 	CoinType: keychain.CoinTypeTestnet,
 }
 

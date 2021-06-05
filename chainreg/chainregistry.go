@@ -113,6 +113,10 @@ type Config struct {
 
 	// LoaderOptions holds functional wallet db loader options.
 	LoaderOptions []btcwallet.LoaderOption
+
+	// CoinSelectionStrategy is the strategy that is used for selecting
+	// coins when funding a transaction.
+	CoinSelectionStrategy wallet.CoinSelectionStrategy
 }
 
 const (
@@ -278,14 +282,15 @@ func NewChainControl(cfg *Config, blockCache *blockcache.BlockCache) (
 	}
 
 	walletConfig := &btcwallet.Config{
-		PrivatePass:    cfg.PrivateWalletPw,
-		PublicPass:     cfg.PublicWalletPw,
-		Birthday:       cfg.Birthday,
-		RecoveryWindow: cfg.RecoveryWindow,
-		NetParams:      cfg.ActiveNetParams.Params,
-		CoinType:       cfg.ActiveNetParams.CoinType,
-		Wallet:         cfg.Wallet,
-		LoaderOptions:  cfg.LoaderOptions,
+		PrivatePass:           cfg.PrivateWalletPw,
+		PublicPass:            cfg.PublicWalletPw,
+		Birthday:              cfg.Birthday,
+		RecoveryWindow:        cfg.RecoveryWindow,
+		NetParams:             cfg.ActiveNetParams.Params,
+		CoinType:              cfg.ActiveNetParams.CoinType,
+		Wallet:                cfg.Wallet,
+		LoaderOptions:         cfg.LoaderOptions,
+		CoinSelectionStrategy: cfg.CoinSelectionStrategy,
 	}
 
 	var err error
@@ -373,14 +378,19 @@ func NewChainControl(cfg *Config, blockCache *blockcache.BlockCache) (
 			rpcPort -= 2
 			bitcoindHost = fmt.Sprintf("%v:%d",
 				bitcoindMode.RPCHost, rpcPort)
-			if (cfg.Bitcoin.Active && cfg.Bitcoin.RegTest) ||
+			if (cfg.Bitcoin.Active &&
+				(cfg.Bitcoin.RegTest || cfg.Bitcoin.SigNet)) ||
 				(cfg.Monacoin.Active && cfg.Monacoin.RegTest) {
+
 				conn, err := net.Dial("tcp", bitcoindHost)
 				if err != nil || conn == nil {
-					if cfg.Bitcoin.Active && cfg.Bitcoin.RegTest {
+					switch {
+					case cfg.Bitcoin.Active && cfg.Bitcoin.RegTest:
 						rpcPort = 18443
-					} else if cfg.Monacoin.Active && cfg.Monacoin.RegTest {
+					case cfg.Monacoin.Active && cfg.Monacoin.RegTest:
 						rpcPort = 19443
+					case cfg.Bitcoin.Active && cfg.Bitcoin.SigNet:
+						rpcPort = 38332
 					}
 					bitcoindHost = fmt.Sprintf("%v:%d",
 						bitcoindMode.RPCHost,
@@ -734,15 +744,6 @@ func getBitcoindHealthCheckCmd(client *rpcclient.Client) (string, error) {
 }
 
 var (
-	// BitcoinSignetGenesis is the genesis hash of Bitcoin's testnet
-	// chain.
-	BitcoinSignetGenesis = chainhash.Hash([chainhash.HashSize]byte{
-		0xf6, 0x1e, 0xee, 0x3b, 0x63, 0xa3, 0x80, 0xa4,
-		0x77, 0xa0, 0x63, 0xaf, 0x32, 0xb2, 0xbb, 0xc9,
-		0x7c, 0x9f, 0xf9, 0xf0, 0x1f, 0x2c, 0x42, 0x25,
-		0xe9, 0x73, 0x98, 0x81, 0x08, 0x00, 0x00, 0x00,
-	})
-
 	// BitcoinTestnetGenesis is the genesis hash of Bitcoin's testnet
 	// chain.
 	BitcoinTestnetGenesis = chainhash.Hash([chainhash.HashSize]byte{
@@ -750,6 +751,14 @@ var (
 		0x08, 0xf4, 0xa3, 0x0f, 0xd9, 0xce, 0xc3, 0xae,
 		0xba, 0x79, 0x97, 0x20, 0x84, 0xe9, 0x0e, 0xad,
 		0x01, 0xea, 0x33, 0x09, 0x00, 0x00, 0x00, 0x00,
+	})
+
+	// BitcoinSignetGenesis is the genesis hash of Bitcoin's signet chain.
+	BitcoinSignetGenesis = chainhash.Hash([chainhash.HashSize]byte{
+		0xf6, 0x1e, 0xee, 0x3b, 0x63, 0xa3, 0x80, 0xa4,
+		0x77, 0xa0, 0x63, 0xaf, 0x32, 0xb2, 0xbb, 0xc9,
+		0x7c, 0x9f, 0xf9, 0xf0, 0x1f, 0x2c, 0x42, 0x25,
+		0xe9, 0x73, 0x98, 0x81, 0x08, 0x00, 0x00, 0x00,
 	})
 
 	// BitcoinMainnetGenesis is the genesis hash of Bitcoin's main chain.
@@ -812,17 +821,17 @@ var (
 			},
 		},
 
-		BitcoinSignetGenesis: {
-			{
-				"ln.signet.secp.tech",
-				"lseed.wakiyamap.dev",
-			},
-		},
-
 		BitcoinTestnetGenesis: {
 			{
 				"test.nodes.lightning.directory",
 				"soa.nodes.lightning.directory",
+			},
+		},
+
+		BitcoinSignetGenesis: {
+			{
+				"ln.signet.secp.tech",
+				"lseed.wakiyamap.dev",
 			},
 		},
 

@@ -5,6 +5,7 @@
 package lnd
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcutil"
 	flags "github.com/jessevdk/go-flags"
 	"github.com/monasuite/lnd/autopilot"
@@ -153,6 +155,10 @@ const (
 	// channel state updates that is accumulated before signing a new
 	// commitment.
 	defaultChannelCommitBatchSize = 10
+
+	// defaultCoinSelectionStrategy is the coin selection strategy that is
+	// used by default to fund transactions.
+	defaultCoinSelectionStrategy = "largest"
 )
 
 var (
@@ -295,6 +301,8 @@ type Config struct {
 	WalletUnlockPasswordFile string `long:"wallet-unlock-password-file" description:"The full path to a file (or pipe/device) that contains the password for unlocking the wallet; if set, no unlocking through RPC is possible and lnd will exit if no wallet exists or the password is incorrect"`
 
 	ResetWalletTransactions bool `long:"reset-wallet-transactions" description:"Removes all transaction history from the on-chain wallet on startup, forcing a full chain rescan starting at the wallet's birthday. Implements the same functionality as btcwallet's dropwtxmgr command. Should be set to false after successful execution to avoid rescanning on every restart of lnd."`
+
+	CoinSelectionStrategy string `long:"coin-selection-strategy" description:"The strategy to use for selecting coins for wallet transactions." choice:"largest" choice:"random"`
 
 	PaymentsExpirationGracePeriod time.Duration `long:"payments-expiration-grace-period" description:"A period to wait before force closing channels with outgoing htlcs that have timed-out and are a result of this node initiated payments."`
 	TrickleDelay                  int           `long:"trickledelay" description:"Time in milliseconds between each release of announcements to the network"`
@@ -546,6 +554,7 @@ func DefaultConfig() Config {
 		ActiveNetParams:         chainreg.BitcoinTestNetParams,
 		ChannelCommitInterval:   defaultChannelCommitInterval,
 		ChannelCommitBatchSize:  defaultChannelCommitBatchSize,
+		CoinSelectionStrategy:   defaultCoinSelectionStrategy,
 	}
 }
 
@@ -951,6 +960,10 @@ func ValidateConfig(cfg Config, usageMessage string,
 			numNets++
 			monaParams = chainreg.MonacoinSimNetParams
 		}
+		if cfg.Monacoin.SigNet {
+			return nil, fmt.Errorf("%s: monacoin.signet is not "+
+				"supported", funcName)
+		}
 
 		if numNets > 1 {
 			str := "%s: The mainnet, testnet, and simnet params " +
@@ -1019,7 +1032,6 @@ func ValidateConfig(cfg Config, usageMessage string,
 		// number of network flags passed; assign active network params
 		// while we're at it.
 		numNets := 0
-		var signetParams chainreg.BitcoinNetParams
 		if cfg.Bitcoin.MainNet {
 			numNets++
 			cfg.ActiveNetParams = chainreg.BitcoinMainNetParams
@@ -1038,8 +1050,42 @@ func ValidateConfig(cfg Config, usageMessage string,
 		}
 		if cfg.Bitcoin.SigNet {
 			numNets++
-			signetParams = chainreg.BitcoinSigNetParams
-			chainreg.ApplySignetParams(&cfg.ActiveNetParams, &signetParams)
+			cfg.ActiveNetParams = chainreg.BitcoinSigNetParams
+
+			// Let the user overwrite the default signet parameters.
+			// The challenge defines the actual signet network to
+			// join and the seed nodes are needed for network
+			// discovery.
+			sigNetChallenge := chaincfg.DefaultSignetChallenge
+			sigNetSeeds := chaincfg.DefaultSignetDNSSeeds
+			if cfg.Bitcoin.SigNetChallenge != "" {
+				challenge, err := hex.DecodeString(
+					cfg.Bitcoin.SigNetChallenge,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("%s: Invalid "+
+						"signet challenge, hex decode "+
+						"failed: %v", funcName, err)
+				}
+				sigNetChallenge = challenge
+			}
+
+			if len(cfg.Bitcoin.SigNetSeedNode) > 0 {
+				sigNetSeeds = make([]chaincfg.DNSSeed, len(
+					cfg.Bitcoin.SigNetSeedNode,
+				))
+				for idx, seed := range cfg.Bitcoin.SigNetSeedNode {
+					sigNetSeeds[idx] = chaincfg.DNSSeed{
+						Host:         seed,
+						HasFiltering: false,
+					}
+				}
+			}
+
+			chainParams := chaincfg.CustomSignetParams(
+				sigNetChallenge, sigNetSeeds,
+			)
+			cfg.ActiveNetParams.Params = &chainParams
 		}
 		if numNets > 1 {
 			str := "%s: The mainnet, testnet, regtest, and " +
@@ -1712,7 +1758,7 @@ func extractBitcoindRPCParams(networkName string,
 	switch networkName {
 	case "mainnet":
 		chainDir = ""
-	case "regtest", "testnet3":
+	case "regtest", "testnet3", "signet":
 		chainDir = networkName
 	default:
 		return "", "", "", "", fmt.Errorf("unexpected networkname %v", networkName)

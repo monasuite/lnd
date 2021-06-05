@@ -5,11 +5,12 @@ require (
 	github.com/NebulousLabs/fastrand v0.0.0-20181203155948-6fb6489aac4e // indirect
 	github.com/NebulousLabs/go-upnp v0.0.0-20180202185039-29b680b06c82
 	github.com/Yawning/aez v0.0.0-20180114000226-4dad034d9db2
-	github.com/btcsuite/btcd v0.21.0-beta.0.20210506225145-0ec4bdc1b8e1
+	github.com/btcsuite/btcd v0.21.0-beta.0.20210513141527-ee5896bad5be
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f
-	github.com/btcsuite/btcutil v1.0.3-0.20201208143702-a53e38424cce
-	github.com/btcsuite/btcutil/psbt v1.0.3-0.20201208143702-a53e38424cce
-	github.com/btcsuite/btcwallet/walletdb v1.3.5-0.20210513043850-3a2f12e3a954
+	github.com/btcsuite/btcutil v1.0.3-0.20210527170813-e2ba6805a890
+	github.com/btcsuite/btcutil/psbt v1.0.3-0.20210527170813-e2ba6805a890
+	github.com/btcsuite/btcwallet v0.12.0 // indirect
+	github.com/btcsuite/btcwallet/walletdb v1.3.5
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
@@ -50,9 +51,10 @@ require (
 	github.com/mattn/goveralls v0.0.6 // indirect
 	github.com/miekg/dns v0.0.0-20171125082028-79bfde677fa8
 	github.com/modern-go/reflect2 v1.0.1 // indirect
-	github.com/monaarchives/btcwallet v0.12.3-0.20210518164441-124224e5e9af
+	github.com/monaarchives/btcwallet v0.12.3-0.20210605204925-f89b1b3c2527
 	github.com/monaarchives/btcwallet/wallet/txauthor v1.0.1-0.20210428051406-624ec292cf88
 	github.com/monaarchives/btcwallet/wallet/txrules v1.0.1-0.20210426201341-0066ab20ddd4
+	github.com/monaarchives/btcwallet/wallet/txsizes v1.0.1-0.20210605204925-f89b1b3c2527 // indirect
 	github.com/monaarchives/btcwallet/walletdb v1.3.5 // indirect
 	github.com/monaarchives/btcwallet/wtxmgr v1.2.1-0.20210426201341-0066ab20ddd4
 	github.com/monasuite/monad v0.22.3-beta.0.20201009204152-fdfc222c5098
