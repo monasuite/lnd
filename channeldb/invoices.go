@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/feature"
 	"github.com/monasuite/lnd/htlcswitch/hop"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/lntypes"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/record"
