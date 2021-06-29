@@ -4,8 +4,8 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/monasuite/lnd/channeldb/migtest"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/monasuite/lnd/channeldb/migtest"
 )
 
 var (

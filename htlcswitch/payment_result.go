@@ -7,8 +7,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/monasuite/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/lnwire"
 	"github.com/monasuite/lnd/multimutex"
 )

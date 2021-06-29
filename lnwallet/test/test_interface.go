@@ -31,8 +31,10 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monaarchives/btcwallet/chain"
 	"github.com/monaarchives/btcwallet/walletdb"
+
 	// bdb database
 	_ "github.com/monaarchives/btcwallet/walletdb/bdb"
+
 	"github.com/monasuite/lnd/blockcache"
 	"github.com/monasuite/lnd/chainntnfs"
 	"github.com/monasuite/lnd/chainntnfs/btcdnotify"

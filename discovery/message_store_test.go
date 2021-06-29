@@ -10,8 +10,8 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/monasuite/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/monasuite/lnd/channeldb"
 	"github.com/monasuite/lnd/lnwire"
 )
 

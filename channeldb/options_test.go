@@ -3,8 +3,8 @@ package channeldb_test
 import (
 	"testing"
 
-	"github.com/monasuite/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/monasuite/lnd/channeldb"
 	"github.com/stretchr/testify/require"
 )
 
