@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monaarchives/btcwallet/snacl"
 	"github.com/monaarchives/btcwallet/waddrmgr"
 	"github.com/monaarchives/btcwallet/wallet"
 	"github.com/monasuite/lnd/aezeed"
 	"github.com/monasuite/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/monasuite/lnd/lnrpc"
 	"github.com/monasuite/lnd/lnwallet"
 	"github.com/monasuite/lnd/lnwallet/btcwallet"
