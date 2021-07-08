@@ -433,10 +433,7 @@ func testChannelBackupUpdates(net *lntest.NetworkHarness, t *harnessTest) {
 		backupDir, chanbackup.DefaultBackupFileName,
 	)
 	carolArgs := fmt.Sprintf("--backupfilepath=%v", backupFilePath)
-	carol, err := net.NewNode("carol", []string{carolArgs})
-	if err != nil {
-		t.Fatalf("unable to create new node: %v", err)
-	}
+	carol := net.NewNode(t.t, "carol", []string{carolArgs})
 	defer shutdownAndAssert(net, t, carol)
 
 	// Next, we'll register for streaming notifications for changes to the
@@ -480,9 +477,7 @@ func testChannelBackupUpdates(net *lntest.NetworkHarness, t *harnessTest) {
 	// With Carol up, we'll now connect her to Alice, and open a channel
 	// between them.
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	if err := net.ConnectNodes(ctxt, carol, net.Alice); err != nil {
-		t.Fatalf("unable to connect carol to alice: %v", err)
-	}
+	net.ConnectNodes(ctxt, t.t, carol, net.Alice)
 
 	// Next, we'll open two channels between Alice and Carol back to back.
 	var chanPoints []*lnrpc.ChannelPoint
@@ -605,18 +600,13 @@ func testExportChannelBackup(net *lntest.NetworkHarness, t *harnessTest) {
 	// First, we'll create our primary test node: Carol. We'll use Carol to
 	// open channels and also export backups that we'll examine throughout
 	// the test.
-	carol, err := net.NewNode("carol", nil)
-	if err != nil {
-		t.Fatalf("unable to create new node: %v", err)
-	}
+	carol := net.NewNode(t.t, "carol", nil)
 	defer shutdownAndAssert(net, t, carol)
 
 	// With Carol up, we'll now connect her to Alice, and open a channel
 	// between them.
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	if err := net.ConnectNodes(ctxt, carol, net.Alice); err != nil {
-		t.Fatalf("unable to connect carol to alice: %v", err)
-	}
+	net.ConnectNodes(ctxt, t.t, carol, net.Alice)
 
 	// Next, we'll open two channels between Alice and Carol back to back.
 	var chanPoints []*lnrpc.ChannelPoint
@@ -849,24 +839,16 @@ func testChanRestoreScenario(t *harnessTest, net *lntest.NetworkHarness,
 	defer func() {
 		shutdownAndAssert(net, t, dave)
 	}()
-	carol, err := net.NewNode("carol", nodeArgs)
-	if err != nil {
-		t.Fatalf("unable to make new node: %v", err)
-	}
+	carol := net.NewNode(t.t, "carol", nodeArgs)
 	defer shutdownAndAssert(net, t, carol)
 
 	// Now that our new nodes are created, we'll give them some coins for
 	// channel opening and anchor sweeping.
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	err = net.SendCoins(ctxt, btcutil.SatoshiPerBitcoin, carol)
-	if err != nil {
-		t.Fatalf("unable to send coins to dave: %v", err)
-	}
+	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, carol)
+
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	err = net.SendCoins(ctxt, btcutil.SatoshiPerBitcoin, dave)
-	if err != nil {
-		t.Fatalf("unable to send coins to dave: %v", err)
-	}
+	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, dave)
 
 	var from, to *lntest.HarnessNode
 	if testCase.initiator {
@@ -877,9 +859,7 @@ func testChanRestoreScenario(t *harnessTest, net *lntest.NetworkHarness,
 
 	// Next, we'll connect Dave to Carol, and open a new channel to her
 	// with a portion pushed.
-	if err := net.ConnectNodes(ctxt, dave, carol); err != nil {
-		t.Fatalf("unable to connect dave to carol: %v", err)
-	}
+	net.ConnectNodes(ctxt, t.t, dave, carol)
 
 	// We will either open a confirmed or unconfirmed channel, depending on
 	// the requirements of the test case.
@@ -1100,10 +1080,7 @@ func testChanRestoreScenario(t *harnessTest, net *lntest.NetworkHarness,
 	// Now that we have our new node up, we expect that it'll re-connect to
 	// Carol automatically based on the restored backup.
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	err = net.EnsureConnected(ctxt, dave, carol)
-	if err != nil {
-		t.Fatalf("node didn't connect after recovery: %v", err)
-	}
+	net.EnsureConnected(ctxt, t.t, dave, carol)
 
 	// TODO(roasbeef): move dave restarts?
 

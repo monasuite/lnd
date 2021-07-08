@@ -27,8 +27,6 @@ import (
 	"github.com/monasuite/lnd/lnwire"
 )
 
-var zeroHash chainhash.Hash
-
 var (
 	// ErrChanClosing is returned when a caller attempts to close a channel
 	// that has already been closed or is in the process of being closed.
@@ -4924,7 +4922,49 @@ func (lc *LightningChannel) AddHTLC(htlc *lnwire.UpdateAddHTLC,
 	lc.Lock()
 	defer lc.Unlock()
 
-	pd := &PaymentDescriptor{
+	pd := lc.htlcAddDescriptor(htlc, openKey)
+	if err := lc.validateAddHtlc(pd); err != nil {
+		return 0, err
+	}
+
+	lc.localUpdateLog.appendHtlc(pd)
+
+	return pd.HtlcIndex, nil
+}
+
+// MayAddOutgoingHtlc validates whether we can add an outgoing htlc to this
+// channel. We don't have a value or circuit for this htlc, because we just
+// want to test that we have slots for a potential htlc so we use a "mock"
+// htlc to validate a potential commitment state with one more outgoing htlc.
+func (lc *LightningChannel) MayAddOutgoingHtlc() error {
+	lc.Lock()
+	defer lc.Unlock()
+
+	// Create a "mock" outgoing htlc, using the smallest amount we can add
+	// to the commitment so that we validate commitment slots rather than
+	// available balance, since our actual htlc amount is unknown at this
+	// stage.
+	pd := lc.htlcAddDescriptor(
+		&lnwire.UpdateAddHTLC{
+			Amount: lc.channelState.LocalChanCfg.MinHTLC,
+		},
+		&channeldb.CircuitKey{},
+	)
+
+	if err := lc.validateAddHtlc(pd); err != nil {
+		lc.log.Debugf("May add outgoing htlc rejected: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// htlcAddDescriptor returns a payment descriptor for the htlc and open key
+// provided to add to our local update log.
+func (lc *LightningChannel) htlcAddDescriptor(htlc *lnwire.UpdateAddHTLC,
+	openKey *channeldb.CircuitKey) *PaymentDescriptor {
+
+	return &PaymentDescriptor{
 		EntryType:      Add,
 		RHash:          PaymentHash(htlc.PaymentHash),
 		Timeout:        htlc.Expiry,
@@ -4934,7 +4974,11 @@ func (lc *LightningChannel) AddHTLC(htlc *lnwire.UpdateAddHTLC,
 		OnionBlob:      htlc.OnionBlob[:],
 		OpenCircuitKey: openKey,
 	}
+}
 
+// validateAddHtlc validates the addition of an outgoing htlc to our local and
+// remote commitments.
+func (lc *LightningChannel) validateAddHtlc(pd *PaymentDescriptor) error {
 	// Make sure adding this HTLC won't violate any of the constraints we
 	// must keep on the commitment transactions.
 	remoteACKedIndex := lc.localCommitChain.tail().theirMessageIndex
@@ -4945,7 +4989,7 @@ func (lc *LightningChannel) AddHTLC(htlc *lnwire.UpdateAddHTLC,
 		remoteACKedIndex, lc.localUpdateLog.logIndex, true, pd, nil,
 	)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
 	// We must also check whether it can be added to our own commitment
@@ -4958,12 +5002,10 @@ func (lc *LightningChannel) AddHTLC(htlc *lnwire.UpdateAddHTLC,
 		false, pd, nil,
 	)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
-	lc.localUpdateLog.appendHtlc(pd)
-
-	return pd.HtlcIndex, nil
+	return nil
 }
 
 // ReceiveHTLC adds an HTLC to the state machine's remote update log. This
@@ -6362,16 +6404,33 @@ func (lc *LightningChannel) CompleteCooperativeClose(
 	return closeTx, ourBalance, nil
 }
 
-// NewAnchorResolutions returns the anchor resolutions for all currently valid
-// commitment transactions. Because we have no view on the mempool, we can only
-// blindly anchor all of these txes down.
-func (lc *LightningChannel) NewAnchorResolutions() ([]*AnchorResolution,
+// AnchorResolutions is a set of anchor resolutions that's being used when
+// sweeping anchors during local channel force close.
+type AnchorResolutions struct {
+	// Local is the anchor resolution for the local commitment tx.
+	Local *AnchorResolution
+
+	// Remote is the anchor resolution for the remote commitment tx.
+	Remote *AnchorResolution
+
+	// RemotePending is the anchor resolution for the remote pending
+	// commitment tx. The value will be non-nil iff we've created a new
+	// commitment tx for the remote party which they haven't ACKed yet.
+	RemotePending *AnchorResolution
+}
+
+// NewAnchorResolutions returns a set of anchor resolutions wrapped in the
+// struct AnchorResolutions. Because we have no view on the mempool, we can
+// only blindly anchor all of these txes down. Caller needs to check the
+// returned values against nil to decide whether there exists an anchor
+// resolution for local/remote/pending remote commitment txes.
+func (lc *LightningChannel) NewAnchorResolutions() (*AnchorResolutions,
 	error) {
 
 	lc.Lock()
 	defer lc.Unlock()
 
-	var resolutions []*AnchorResolution
+	resolutions := &AnchorResolutions{}
 
 	// Add anchor for local commitment tx, if any.
 	localRes, err := NewAnchorResolution(
@@ -6380,9 +6439,7 @@ func (lc *LightningChannel) NewAnchorResolutions() ([]*AnchorResolution,
 	if err != nil {
 		return nil, err
 	}
-	if localRes != nil {
-		resolutions = append(resolutions, localRes)
-	}
+	resolutions.Local = localRes
 
 	// Add anchor for remote commitment tx, if any.
 	remoteRes, err := NewAnchorResolution(
@@ -6391,9 +6448,7 @@ func (lc *LightningChannel) NewAnchorResolutions() ([]*AnchorResolution,
 	if err != nil {
 		return nil, err
 	}
-	if remoteRes != nil {
-		resolutions = append(resolutions, remoteRes)
-	}
+	resolutions.Remote = remoteRes
 
 	// Add anchor for remote pending commitment tx, if any.
 	remotePendingCommit, err := lc.channelState.RemoteCommitChainTip()
@@ -6409,10 +6464,7 @@ func (lc *LightningChannel) NewAnchorResolutions() ([]*AnchorResolution,
 		if err != nil {
 			return nil, err
 		}
-
-		if remotePendingRes != nil {
-			resolutions = append(resolutions, remotePendingRes)
-		}
+		resolutions.RemotePending = remotePendingRes
 	}
 
 	return resolutions, nil

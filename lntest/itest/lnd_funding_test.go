@@ -37,26 +37,22 @@ func testBasicChannelFunding(net *lntest.NetworkHarness, t *harnessTest) {
 		// preferentially signal the legacy commitment format.  We do
 		// the same for Dave shortly below.
 		carolArgs := carolCommitType.Args()
-		carol, err := net.NewNode("Carol", carolArgs)
-		require.NoError(t.t, err, "unable to create new node")
+		carol := net.NewNode(t.t, "Carol", carolArgs)
 		defer shutdownAndAssert(net, t, carol)
 
 		// Each time, we'll send Carol a new set of coins in order to
 		// fund the channel.
 		ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-		err = net.SendCoins(ctxt, btcutil.SatoshiPerBitcoin, carol)
-		require.NoError(t.t, err, "unable to send coins to carol")
+		net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, carol)
 
 		daveArgs := daveCommitType.Args()
-		dave, err := net.NewNode("Dave", daveArgs)
-		require.NoError(t.t, err, "unable to create new node")
+		dave := net.NewNode(t.t, "Dave", daveArgs)
 		defer shutdownAndAssert(net, t, dave)
 
 		// Before we start the test, we'll ensure both sides are
 		// connected to the funding flow can properly be executed.
 		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-		err = net.EnsureConnected(ctxt, carol, dave)
-		require.NoError(t.t, err, "unable to connect peers")
+		net.EnsureConnected(ctxt, t.t, carol, dave)
 
 		carolChan, daveChan, closeChan, err := basicChannelFundingTest(
 			t, net, carol, dave, nil,
@@ -260,14 +256,12 @@ func testUnconfirmedChannelFunding(net *lntest.NetworkHarness, t *harnessTest) {
 	)
 
 	// We'll start off by creating a node for Carol.
-	carol, err := net.NewNode("Carol", nil)
-	require.NoError(t.t, err, "unable to create carol's node")
+	carol := net.NewNode(t.t, "Carol", nil)
 	defer shutdownAndAssert(net, t, carol)
 
 	// We'll send her some confirmed funds.
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	err = net.SendCoins(ctxt, 2*chanAmt, carol)
-	require.NoError(t.t, err, "unable to send coins to carol")
+	net.SendCoins(ctxt, t.t, 2*chanAmt, carol)
 
 	// Now let Carol send some funds to herself, making a unconfirmed
 	// change output.
@@ -295,8 +289,7 @@ func testUnconfirmedChannelFunding(net *lntest.NetworkHarness, t *harnessTest) {
 	// as she doesn't have any other funds since it's a new node.
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	err = net.ConnectNodes(ctxt, carol, net.Alice)
-	require.NoError(t.t, err, "unable to connect carol to alice")
+	net.ConnectNodes(ctxt, t.t, carol, net.Alice)
 
 	chanOpenUpdate := openChannelStream(
 		ctxt, t, net, carol, net.Alice,
@@ -385,25 +378,21 @@ func testExternalFundingChanPoint(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// First, we'll create two new nodes that we'll use to open channel
 	// between for this test.
-	carol, err := net.NewNode("carol", nil)
-	require.NoError(t.t, err)
+	carol := net.NewNode(t.t, "carol", nil)
 	defer shutdownAndAssert(net, t, carol)
 
-	dave, err := net.NewNode("dave", nil)
-	require.NoError(t.t, err)
+	dave := net.NewNode(t.t, "dave", nil)
 	defer shutdownAndAssert(net, t, dave)
 
 	// Carol will be funding the channel, so we'll send some coins over to
 	// her and ensure they have enough confirmations before we proceed.
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	err = net.SendCoins(ctxt, btcutil.SatoshiPerBitcoin, carol)
-	require.NoError(t.t, err)
+	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, carol)
 
 	// Before we start the test, we'll ensure both sides are connected to
 	// the funding flow can properly be executed.
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	err = net.EnsureConnected(ctxt, carol, dave)
-	require.NoError(t.t, err)
+	net.EnsureConnected(ctxt, t.t, carol, dave)
 
 	// At this point, we're ready to simulate our external channel funding
 	// flow. To start with, we'll create a pending channel with a shim for

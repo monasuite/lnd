@@ -257,41 +257,21 @@ func newMppTestContext(t *harnessTest,
 
 	ctxb := context.Background()
 
-	alice, err := net.NewNode("alice", nil)
-	if err != nil {
-		t.Fatalf("unable to create alice: %v", err)
-	}
-
-	bob, err := net.NewNode("bob", []string{"--accept-amp"})
-	if err != nil {
-		t.Fatalf("unable to create bob: %v", err)
-	}
+	alice := net.NewNode(t.t, "alice", nil)
+	bob := net.NewNode(t.t, "bob", []string{"--accept-amp"})
 
 	// Create a five-node context consisting of Alice, Bob and three new
 	// nodes.
-	carol, err := net.NewNode("carol", nil)
-	if err != nil {
-		t.Fatalf("unable to create carol: %v", err)
-	}
-
-	dave, err := net.NewNode("dave", nil)
-	if err != nil {
-		t.Fatalf("unable to create dave: %v", err)
-	}
-
-	eve, err := net.NewNode("eve", nil)
-	if err != nil {
-		t.Fatalf("unable to create eve: %v", err)
-	}
+	carol := net.NewNode(t.t, "carol", nil)
+	dave := net.NewNode(t.t, "dave", nil)
+	eve := net.NewNode(t.t, "eve", nil)
 
 	// Connect nodes to ensure propagation of channels.
 	nodes := []*lntest.HarnessNode{alice, bob, carol, dave, eve}
 	for i := 0; i < len(nodes); i++ {
 		for j := i + 1; j < len(nodes); j++ {
 			ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-			if err := net.EnsureConnected(ctxt, nodes[i], nodes[j]); err != nil {
-				t.Fatalf("unable to connect nodes: %v", err)
-			}
+			net.EnsureConnected(ctxt, t.t, nodes[i], nodes[j])
 		}
 	}
 
@@ -314,10 +294,7 @@ func (c *mppTestContext) openChannel(from, to *lntest.HarnessNode, chanSize btcu
 	ctxb := context.Background()
 
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	err := c.net.SendCoins(ctxt, btcutil.SatoshiPerBitcoin, from)
-	if err != nil {
-		c.t.Fatalf("unable to send coins : %v", err)
-	}
+	c.net.SendCoins(ctxt, c.t.t, btcutil.SatoshiPerBitcoin, from)
 
 	ctxt, _ = context.WithTimeout(ctxb, channelOpenTimeout)
 	chanPoint := openChannelAndAssert(

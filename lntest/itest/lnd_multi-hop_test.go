@@ -81,23 +81,15 @@ func testMultiHopHtlcClaims(net *lntest.NetworkHarness, t *harnessTest) {
 			ht := newHarnessTest(t, net)
 
 			args := commitType.Args()
-			alice, err := net.NewNode("Alice", args)
-			if err != nil {
-				t.Fatalf("unable to create new node: %v", err)
-			}
+			alice := net.NewNode(t, "Alice", args)
 			defer shutdownAndAssert(net, ht, alice)
 
-			bob, err := net.NewNode("Bob", args)
-			if err != nil {
-				t.Fatalf("unable to create new node: %v", err)
-			}
+			bob := net.NewNode(t, "Bob", args)
 			defer shutdownAndAssert(net, ht, bob)
 
 			ctxb := context.Background()
 			ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-			if err := net.ConnectNodes(ctxt, alice, bob); err != nil {
-				t.Fatalf("unable to connect alice to bob: %v", err)
-			}
+			net.ConnectNodes(ctxt, t, alice, bob)
 
 			for _, subTest := range subTests {
 				subTest := subTest
@@ -217,24 +209,15 @@ func createThreeHopNetwork(t *harnessTest, net *lntest.NetworkHarness,
 	ctxb := context.Background()
 
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	err := net.EnsureConnected(ctxt, alice, bob)
-	if err != nil {
-		t.Fatalf("unable to connect peers: %v", err)
-	}
+	net.EnsureConnected(ctxt, t.t, alice, bob)
 
 	// Make sure there are enough utxos for anchoring.
 	for i := 0; i < 2; i++ {
 		ctxt, _ = context.WithTimeout(context.Background(), defaultTimeout)
-		err = net.SendCoins(ctxt, btcutil.SatoshiPerBitcoin, alice)
-		if err != nil {
-			t.Fatalf("unable to send coins to Alice: %v", err)
-		}
+		net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, alice)
 
 		ctxt, _ = context.WithTimeout(context.Background(), defaultTimeout)
-		err = net.SendCoins(ctxt, btcutil.SatoshiPerBitcoin, bob)
-		if err != nil {
-			t.Fatalf("unable to send coins to Bob: %v", err)
-		}
+		net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, bob)
 	}
 
 	// We'll start the test by creating a channel between Alice and Bob,
@@ -249,7 +232,7 @@ func createThreeHopNetwork(t *harnessTest, net *lntest.NetworkHarness,
 	)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	err = alice.WaitForNetworkChannelOpen(ctxt, aliceChanPoint)
+	err := alice.WaitForNetworkChannelOpen(ctxt, aliceChanPoint)
 	if err != nil {
 		t.Fatalf("alice didn't report channel: %v", err)
 	}
@@ -267,14 +250,10 @@ func createThreeHopNetwork(t *harnessTest, net *lntest.NetworkHarness,
 	if carolHodl {
 		carolFlags = append(carolFlags, "--hodl.exit-settle")
 	}
-	carol, err := net.NewNode("Carol", carolFlags)
-	if err != nil {
-		t.Fatalf("unable to create new node: %v", err)
-	}
+	carol := net.NewNode(t.t, "Carol", carolFlags)
+
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	if err := net.ConnectNodes(ctxt, bob, carol); err != nil {
-		t.Fatalf("unable to connect bob to carol: %v", err)
-	}
+	net.ConnectNodes(ctxt, t.t, bob, carol)
 
 	// Make sure Carol has enough utxos for anchoring. Because the anchor by
 	// itself often doesn't meet the dust limit, a utxo from the wallet
@@ -282,10 +261,7 @@ func createThreeHopNetwork(t *harnessTest, net *lntest.NetworkHarness,
 	// positively-yielding transaction.
 	for i := 0; i < 2; i++ {
 		ctxt, _ = context.WithTimeout(context.Background(), defaultTimeout)
-		err = net.SendCoins(ctxt, btcutil.SatoshiPerBitcoin, carol)
-		if err != nil {
-			t.Fatalf("unable to send coins to Carol: %v", err)
-		}
+		net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, carol)
 	}
 
 	// We'll then create a channel from Bob to Carol. After this channel is

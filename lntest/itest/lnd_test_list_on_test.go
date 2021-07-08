@@ -108,6 +108,10 @@ var allTestCases = []*testCase{
 		test: testPrivateChannels,
 	},
 	{
+		name: "private channel update policy",
+		test: testUpdateChannelPolicyForPrivateChannel,
+	},
+	{
 		name: "invoice routing hints",
 		test: testInvoiceRoutingHints,
 	},
@@ -235,6 +239,10 @@ var allTestCases = []*testCase{
 		test: testHoldInvoiceForceClose,
 	},
 	{
+		name: "commitment deadline",
+		test: testCommitmentTransactionDeadline,
+	},
+	{
 		name: "cpfp",
 		test: testCPFP,
 	},
@@ -321,5 +329,9 @@ var allTestCases = []*testCase{
 	{
 		name: "etcd_failover",
 		test: testEtcdFailover,
+	},
+	{
+		name: "max htlc pathfind",
+		test: testMaxHtlcPathfind,
 	},
 }

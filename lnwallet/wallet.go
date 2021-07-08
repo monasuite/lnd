@@ -12,6 +12,7 @@ import (
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -594,33 +595,11 @@ func (l *LightningWallet) PsbtFundingVerify(pendingChanID [32]byte,
 			"reservation ID %v", pid)
 	}
 
-	// Now the the PSBT has been verified, we can again check whether the
-	// value reserved for anchor fee bumping is respected.
-	numAnchors, err := l.currentNumAnchorChans()
-	if err != nil {
-		return err
-	}
-
-	// If this commit type is an anchor channel we add that to our counter,
-	// but only if we are contributing funds to the channel. This is done
-	// to still allow incoming channels even though we have no UTXOs
-	// available, as in bootstrapping phases. We only count public
-	// channels.
+	// Now the the PSBT has been populated and verified, we can again check
+	// whether the value reserved for anchor fee bumping is respected.
 	isPublic := pendingReservation.partialState.ChannelFlags&lnwire.FFAnnounceChannel != 0
-	if pendingReservation.partialState.ChanType.HasAnchors() &&
-		intent.LocalFundingAmt() > 0 && isPublic {
-		numAnchors++
-	}
-
-	// We check the reserve value again, this should already have been
-	// checked for regular FullIntents, but now the PSBT intent is also
-	// populated.
-	return l.WithCoinSelectLock(func() error {
-		_, err := l.CheckReservedValue(
-			intent.Inputs(), intent.Outputs(), numAnchors,
-		)
-		return err
-	})
+	hasAnchors := pendingReservation.partialState.ChanType.HasAnchors()
+	return l.enforceNewReservedValue(intent, isPublic, hasAnchors)
 }
 
 // PsbtFundingFinalize looks up a previously registered funding intent by its
@@ -808,38 +787,15 @@ func (l *LightningWallet) handleFundingReserveRequest(req *InitFundingReserveMsg
 
 	// Now that we have a funding intent, we'll check whether funding a
 	// channel using it would violate our reserved value for anchor channel
-	// fee bumping. We first get our current number of anchor channels.
-	numAnchors, err := l.currentNumAnchorChans()
-	if err != nil {
-		fundingIntent.Cancel()
-
-		req.err <- err
-		req.resp <- nil
-		return
-	}
-
-	// If this commit type is an anchor channel we add that to our counter,
-	// but only if we are contributing funds to the channel. This is done
-	// to still allow incoming channels even though we have no UTXOs
-	// available, as in bootstrapping phases. We only count public
-	// channels.
-	isPublic := req.Flags&lnwire.FFAnnounceChannel != 0
-	if req.CommitType == CommitmentTypeAnchorsZeroFeeHtlcTx &&
-		fundingIntent.LocalFundingAmt() > 0 && isPublic {
-		numAnchors++
-	}
-
+	// fee bumping.
+	//
 	// Check the reserved value using the inputs and outputs given by the
-	// intent. Not that for the PSBT intent type we don't yet have the
-	// funding tx ready, so this will always pass. We'll do another check
+	// intent. Note that for the PSBT intent type we don't yet have the
+	// funding tx ready, so this will always pass.  We'll do another check
 	// when the PSBT has been verified.
-	err = l.WithCoinSelectLock(func() error {
-		_, err := l.CheckReservedValue(
-			fundingIntent.Inputs(), fundingIntent.Outputs(),
-			numAnchors,
-		)
-		return err
-	})
+	isPublic := req.Flags&lnwire.FFAnnounceChannel != 0
+	hasAnchors := req.CommitType == CommitmentTypeAnchorsZeroFeeHtlcTx
+	err = l.enforceNewReservedValue(fundingIntent, isPublic, hasAnchors)
 	if err != nil {
 		fundingIntent.Cancel()
 
@@ -890,6 +846,42 @@ func (l *LightningWallet) handleFundingReserveRequest(req *InitFundingReserveMsg
 	// completed, or canceled.
 	req.resp <- reservation
 	req.err <- nil
+}
+
+// enforceReservedValue enforces that the wallet, upon a new channel being
+// opened, meets the minimum amount of funds required for each advertised anchor
+// channel.
+//
+// We only enforce the reserve if we are contributing funds to the channel. This
+// is done to still allow incoming channels even though we have no UTXOs
+// available, as in bootstrapping phases.
+func (l *LightningWallet) enforceNewReservedValue(fundingIntent chanfunding.Intent,
+	isPublic, hasAnchors bool) error {
+
+	// Only enforce the reserve when an advertised channel is being opened
+	// in which we are contributing funds to. This ensures we never dip
+	// below the reserve.
+	if !isPublic || fundingIntent.LocalFundingAmt() == 0 {
+		return nil
+	}
+
+	numAnchors, err := l.currentNumAnchorChans()
+	if err != nil {
+		return err
+	}
+
+	// Add the to-be-opened channel.
+	if hasAnchors {
+		numAnchors++
+	}
+
+	return l.WithCoinSelectLock(func() error {
+		_, err := l.CheckReservedValue(
+			fundingIntent.Inputs(), fundingIntent.Outputs(),
+			numAnchors,
+		)
+		return err
+	})
 }
 
 // currentNumAnchorChans returns the current number of non-private anchor
@@ -1255,6 +1247,16 @@ func (l *LightningWallet) handleContributionMsg(req *addContributionMsg) {
 	pendingReservation.Lock()
 	defer pendingReservation.Unlock()
 
+	// If UpfrontShutdownScript is set, validate that it is a valid script.
+	shutdown := req.contribution.UpfrontShutdown
+	if len(shutdown) > 0 {
+		// Validate the shutdown script.
+		if !validateUpfrontShutdown(shutdown, &l.Cfg.NetParams) {
+			req.err <- fmt.Errorf("invalid shutdown script")
+			return
+		}
+	}
+
 	// Some temporary variables to cut down on the resolution verbosity.
 	pendingReservation.theirContribution = req.contribution
 	theirContribution := req.contribution
@@ -1560,6 +1562,17 @@ func (l *LightningWallet) handleSingleContribution(req *addSingleContributionMsg
 
 	// TODO(roasbeef): verify sanity of remote party's parameters, fail if
 	// disagree
+
+	// Validate that the remote's UpfrontShutdownScript is a valid script
+	// if it's set.
+	shutdown := req.contribution.UpfrontShutdown
+	if len(shutdown) > 0 {
+		// Validate the shutdown script.
+		if !validateUpfrontShutdown(shutdown, &l.Cfg.NetParams) {
+			req.err <- fmt.Errorf("invalid shutdown script")
+			return
+		}
+	}
 
 	// Simply record the counterparty's contribution into the pending
 	// reservation data as they'll be solely funding the channel entirely.
@@ -2131,4 +2144,27 @@ func (s *shimKeyRing) DeriveNextKey(keyFam keychain.KeyFamily) (keychain.KeyDesc
 	}
 
 	return *fundingKeys.LocalKey, nil
+}
+
+// validateUpfrontShutdown checks whether the provided upfront_shutdown_script
+// is of a valid type that we accept.
+func validateUpfrontShutdown(shutdown lnwire.DeliveryAddress,
+	params *chaincfg.Params) bool {
+
+	// We don't need to worry about a large UpfrontShutdownScript since it
+	// was already checked in lnwire when decoding from the wire.
+	scriptClass, _, _, _ := txscript.ExtractPkScriptAddrs(shutdown, params)
+
+	switch scriptClass {
+	case txscript.PubKeyHashTy,
+		txscript.WitnessV0PubKeyHashTy,
+		txscript.ScriptHashTy,
+		txscript.WitnessV0ScriptHashTy:
+		// The above four types are permitted according to BOLT#02.
+		// Everything else is disallowed.
+		return true
+
+	default:
+		return false
+	}
 }

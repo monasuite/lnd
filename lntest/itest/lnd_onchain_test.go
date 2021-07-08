@@ -32,10 +32,7 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 	// send to Bob.
 	ctxb := context.Background()
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	err := net.SendCoins(ctxt, btcutil.SatoshiPerBitcoin, net.Alice)
-	if err != nil {
-		t.Fatalf("unable to send coins to alice: %v", err)
-	}
+	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, net.Alice)
 
 	// Create an address for Bob to send the coins to.
 	addrReq := &lnrpc.NewAddressRequest{
@@ -172,37 +169,31 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 	// Start two nodes supporting anchor channels.
 	args := commitTypeAnchors.Args()
-	alice, err := net.NewNode("Alice", args)
-	require.NoError(t.t, err)
-
+	alice := net.NewNode(t.t, "Alice", args)
 	defer shutdownAndAssert(net, t, alice)
 
-	bob, err := net.NewNode("Bob", args)
-	require.NoError(t.t, err)
-
+	bob := net.NewNode(t.t, "Bob", args)
 	defer shutdownAndAssert(net, t, bob)
 
 	ctxb := context.Background()
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	err = net.ConnectNodes(ctxt, alice, bob)
-	require.NoError(t.t, err)
+	net.ConnectNodes(ctxt, t.t, alice, bob)
 
-	// Send just enough coins for Alice to open a channel without a change output.
+	// Send just enough coins for Alice to open a channel without a change
+	// output.
 	const (
 		chanAmt = 1000000
 		feeEst  = 8000
 	)
 
 	ctxt, _ = context.WithTimeout(context.Background(), defaultTimeout)
-	err = net.SendCoins(ctxt, chanAmt+feeEst, alice)
-	require.NoError(t.t, err)
+	net.SendCoins(ctxt, t.t, chanAmt+feeEst, alice)
 
-	// Alice opens a channel that would consume all the funds in her
 	// wallet, without a change output. This should not be allowed.
 	resErr := lnwallet.ErrReservedValueInvalidated.Error()
 
 	ctxt, _ = context.WithTimeout(context.Background(), defaultTimeout)
-	_, err = net.OpenChannel(
+	_, err := net.OpenChannel(
 		ctxt, alice, bob,
 		lntest.OpenChannelParams{
 			Amt: chanAmt,
@@ -215,20 +206,45 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 	// Alice opens a smaller channel. This works since it will have a
 	// change output.
 	ctxt, _ = context.WithTimeout(context.Background(), defaultTimeout)
-	aliceChanPoint := openChannelAndAssert(
+	aliceChanPoint1 := openChannelAndAssert(
 		ctxt, t, net, alice, bob,
 		lntest.OpenChannelParams{
-			Amt: chanAmt / 2,
+			Amt: chanAmt / 4,
 		},
 	)
 
-	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	err = alice.WaitForNetworkChannelOpen(ctxt, aliceChanPoint)
-	require.NoError(t.t, err)
+	// If Alice tries to open another anchor channel to Bob, Bob should not
+	// reject it as he is not contributing any funds.
+	aliceChanPoint2 := openChannelAndAssert(
+		ctxt, t, net, alice, bob, lntest.OpenChannelParams{
+			Amt: chanAmt / 4,
+		},
+	)
 
-	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	err = bob.WaitForNetworkChannelOpen(ctxt, aliceChanPoint)
+	// Similarly, if Alice tries to open a legacy channel to Bob, Bob should
+	// not reject it as he is not contributing any funds. We'll restart Bob
+	// to remove his support for anchors.
+	err = net.RestartNode(bob, nil)
 	require.NoError(t.t, err)
+	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
+	aliceChanPoint3 := openChannelAndAssert(
+		ctxt, t, net, alice, bob, lntest.OpenChannelParams{
+			Amt: chanAmt / 4,
+		},
+	)
+
+	chanPoints := []*lnrpc.ChannelPoint{
+		aliceChanPoint1, aliceChanPoint2, aliceChanPoint3,
+	}
+	for _, chanPoint := range chanPoints {
+		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
+		err = alice.WaitForNetworkChannelOpen(ctxt, chanPoint)
+		require.NoError(t.t, err)
+
+		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
+		err = bob.WaitForNetworkChannelOpen(ctxt, chanPoint)
+		require.NoError(t.t, err)
+	}
 
 	// Alice tries to send all coins to an internal address. This is
 	// allowed, since the final wallet balance will still be above the
@@ -326,7 +342,9 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Alice closes channel, should now be allowed to send everything to an
 	// external address.
-	closeChannelAndAssert(ctxt, t, net, alice, aliceChanPoint, false)
+	for _, chanPoint := range chanPoints {
+		closeChannelAndAssert(ctxt, t, net, alice, chanPoint, false)
+	}
 
 	newBalance := waitForConfirmedBalance()
 	if newBalance <= aliceBalance {
@@ -348,11 +366,11 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 	// generated above.
 	block = mineBlocks(t, net, 1, 1)[0]
 
-	// The sweep transaction should have two inputs, the change output from
-	// the previous sweep, and the output from the coop closed channel.
+	// The sweep transaction should have four inputs, the change output from
+	// the previous sweep, and the outputs from the coop closed channels.
 	sweepTx = block.Transactions[1]
-	if len(sweepTx.TxIn) != 2 {
-		t.Fatalf("expected 2 inputs instead have %v", len(sweepTx.TxIn))
+	if len(sweepTx.TxIn) != 4 {
+		t.Fatalf("expected 4 inputs instead have %v", len(sweepTx.TxIn))
 	}
 
 	// It should have a single output.

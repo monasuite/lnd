@@ -30,17 +30,12 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 	)
 
 	// Create carol, and clean up when the test finishes.
-	carol, err := net.NewNode("Carol", nil)
-	if err != nil {
-		t.Fatalf("unable to create new nodes: %v", err)
-	}
+	carol := net.NewNode(t.t, "Carol", nil)
 	defer shutdownAndAssert(net, t, carol)
 
 	// Connect Alice to Carol.
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	if err := net.ConnectNodes(ctxb, net.Alice, carol); err != nil {
-		t.Fatalf("unable to connect alice to carol: %v", err)
-	}
+	net.ConnectNodes(ctxb, t.t, net.Alice, carol)
 
 	// Open a channel between Alice and Carol which is private so that we
 	// cover the addition of hop hints for hold invoices.
@@ -56,7 +51,7 @@ func testHoldInvoicePersistence(net *lntest.NetworkHarness, t *harnessTest) {
 	// Wait for Alice and Carol to receive the channel edge from the
 	// funding manager.
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	err = net.Alice.WaitForNetworkChannelOpen(ctxt, chanPointAlice)
+	err := net.Alice.WaitForNetworkChannelOpen(ctxt, chanPointAlice)
 	if err != nil {
 		t.Fatalf("alice didn't see the alice->carol channel before "+
 			"timeout: %v", err)

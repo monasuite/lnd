@@ -25,32 +25,26 @@ func testPsbtChanFunding(net *lntest.NetworkHarness, t *harnessTest) {
 	// First, we'll create two new nodes that we'll use to open channels
 	// between for this test. Dave gets some coins that will be used to
 	// fund the PSBT, just to make sure that Carol has an empty wallet.
-	carol, err := net.NewNode("carol", nil)
-	require.NoError(t.t, err)
+	carol := net.NewNode(t.t, "carol", nil)
 	defer shutdownAndAssert(net, t, carol)
 
-	dave, err := net.NewNode("dave", nil)
-	require.NoError(t.t, err)
+	dave := net.NewNode(t.t, "dave", nil)
 	defer shutdownAndAssert(net, t, dave)
-	err = net.SendCoins(ctxb, btcutil.SatoshiPerBitcoin, dave)
-	if err != nil {
-		t.Fatalf("unable to send coins to dave: %v", err)
-	}
+
+	net.SendCoins(ctxb, t.t, btcutil.SatoshiPerBitcoin, dave)
 
 	// Before we start the test, we'll ensure both sides are connected so
 	// the funding flow can be properly executed.
 	ctxt, cancel := context.WithTimeout(ctxb, defaultTimeout)
 	defer cancel()
-	err = net.EnsureConnected(ctxt, carol, dave)
-	require.NoError(t.t, err)
-	err = net.EnsureConnected(ctxt, carol, net.Alice)
-	require.NoError(t.t, err)
+	net.EnsureConnected(ctxt, t.t, carol, dave)
+	net.EnsureConnected(ctxt, t.t, carol, net.Alice)
 
 	// At this point, we can begin our PSBT channel funding workflow. We'll
 	// start by generating a pending channel ID externally that will be used
 	// to track this new funding type.
 	var pendingChanID [32]byte
-	_, err = rand.Read(pendingChanID[:])
+	_, err := rand.Read(pendingChanID[:])
 	require.NoError(t.t, err)
 
 	// We'll also test batch funding of two channels so we need another ID.
